@@ -1,0 +1,57 @@
+table:
+  name: assessment_score_rules
+  schema: public
+object_relationships:
+  - name: updated_by
+    using:
+      foreign_key_constraint_on: updated_by_id
+insert_permissions:
+  - role: super_admin
+    permission:
+      check: {}
+      columns:
+        - created_at
+        - id
+        - items
+        - updated_at
+        - updated_by_id
+        - version
+select_permissions:
+  - role: site_manager
+    permission:
+      columns:
+        - created_at
+        - id
+        - items
+        - updated_at
+        - updated_by_id
+        - version
+      filter: {}
+      allow_aggregations: true
+  - role: super_admin
+    permission:
+      columns:
+        - created_at
+        - id
+        - items
+        - updated_at
+        - updated_by_id
+        - version
+      filter: {}
+      allow_aggregations: true
+update_permissions:
+  - role: super_admin
+    permission:
+      columns:
+        - created_at
+        - id
+        - items
+        - updated_at
+        - updated_by_id
+        - version
+      filter: {}
+      check: {}
+delete_permissions:
+  - role: super_admin
+    permission:
+      filter: {}

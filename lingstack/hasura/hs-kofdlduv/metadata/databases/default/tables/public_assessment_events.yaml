@@ -1,0 +1,156 @@
+table:
+  name: assessment_events
+  schema: public
+object_relationships:
+  - name: created_by
+    using:
+      foreign_key_constraint_on: created_by_id
+  - name: service_case
+    using:
+      foreign_key_constraint_on: service_case_id
+  - name: user
+    using:
+      foreign_key_constraint_on: user_id
+insert_permissions:
+  - role: site_manager
+    permission:
+      check: {}
+      columns:
+        - amount
+        - category
+        - content
+        - created_at
+        - created_by_id
+        - id
+        - month
+        - qty
+        - remark
+        - service_case_id
+        - unit
+        - unit_amount
+        - updated_at
+        - user_id
+  - role: super_admin
+    permission:
+      check: {}
+      columns:
+        - amount
+        - category
+        - content
+        - created_at
+        - created_by_id
+        - id
+        - month
+        - qty
+        - remark
+        - service_case_id
+        - unit
+        - unit_amount
+        - updated_at
+        - user_id
+select_permissions:
+  - role: inspector
+    permission:
+      columns:
+        - amount
+        - category
+        - content
+        - created_at
+        - created_by_id
+        - id
+        - month
+        - qty
+        - remark
+        - service_case_id
+        - unit
+        - unit_amount
+        - updated_at
+        - user_id
+      filter:
+        user_id:
+          _eq: X-Hasura-User-Id
+      allow_aggregations: true
+  - role: site_manager
+    permission:
+      columns:
+        - amount
+        - category
+        - content
+        - created_at
+        - created_by_id
+        - id
+        - month
+        - qty
+        - remark
+        - service_case_id
+        - unit
+        - unit_amount
+        - updated_at
+        - user_id
+      filter: {}
+      allow_aggregations: true
+  - role: super_admin
+    permission:
+      columns:
+        - amount
+        - category
+        - content
+        - created_at
+        - created_by_id
+        - id
+        - month
+        - qty
+        - remark
+        - service_case_id
+        - unit
+        - unit_amount
+        - updated_at
+        - user_id
+      filter: {}
+      allow_aggregations: true
+update_permissions:
+  - role: site_manager
+    permission:
+      columns:
+        - amount
+        - category
+        - content
+        - created_at
+        - created_by_id
+        - id
+        - month
+        - qty
+        - remark
+        - service_case_id
+        - unit
+        - unit_amount
+        - updated_at
+        - user_id
+      filter: {}
+      check: {}
+  - role: super_admin
+    permission:
+      columns:
+        - amount
+        - category
+        - content
+        - created_at
+        - created_by_id
+        - id
+        - month
+        - qty
+        - remark
+        - service_case_id
+        - unit
+        - unit_amount
+        - updated_at
+        - user_id
+      filter: {}
+      check: {}
+delete_permissions:
+  - role: site_manager
+    permission:
+      filter: {}
+  - role: super_admin
+    permission:
+      filter: {}

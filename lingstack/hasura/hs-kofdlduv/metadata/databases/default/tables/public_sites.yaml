@@ -1,0 +1,304 @@
+table:
+  name: sites
+  schema: public
+object_relationships:
+  - name: manager
+    using:
+      foreign_key_constraint_on: manager_id
+array_relationships:
+  - name: devices
+    using:
+      foreign_key_constraint_on:
+        column: site_id
+        table:
+          name: devices
+          schema: public
+  - name: inspection_tasks
+    using:
+      foreign_key_constraint_on:
+        column: site_id
+        table:
+          name: inspection_tasks
+          schema: public
+  - name: inspection_templates
+    using:
+      foreign_key_constraint_on:
+        column: site_id
+        table:
+          name: inspection_templates
+          schema: public
+  - name: service_cases
+    using:
+      foreign_key_constraint_on:
+        column: site_id
+        table:
+          name: service_cases
+          schema: public
+  - name: site_members
+    using:
+      foreign_key_constraint_on:
+        column: site_id
+        table:
+          name: site_members
+          schema: public
+insert_permissions:
+  - role: inspector
+    permission:
+      check:
+        _or:
+          - manager_id:
+              _eq: X-Hasura-User-Id
+          - site_members:
+              status:
+                _eq: active
+              user_id:
+                _eq: X-Hasura-User-Id
+      columns:
+        - address
+        - city
+        - code
+        - created_at
+        - deleted_at
+        - district
+        - id
+        - inspection_radius_meters
+        - latitude
+        - longitude
+        - manager_id
+        - name
+        - province
+        - status
+  - role: site_manager
+    permission:
+      check:
+        _or:
+          - manager_id:
+              _eq: X-Hasura-User-Id
+          - site_members:
+              status:
+                _eq: active
+              user_id:
+                _eq: X-Hasura-User-Id
+      columns:
+        - address
+        - city
+        - code
+        - created_at
+        - deleted_at
+        - district
+        - id
+        - inspection_radius_meters
+        - latitude
+        - longitude
+        - manager_id
+        - name
+        - province
+        - status
+  - role: super_admin
+    permission:
+      check: {}
+      columns:
+        - address
+        - city
+        - code
+        - created_at
+        - deleted_at
+        - district
+        - id
+        - inspection_radius_meters
+        - latitude
+        - longitude
+        - manager_id
+        - name
+        - province
+        - status
+select_permissions:
+  - role: inspector
+    permission:
+      columns:
+        - address
+        - city
+        - code
+        - created_at
+        - deleted_at
+        - district
+        - id
+        - inspection_radius_meters
+        - latitude
+        - longitude
+        - manager_id
+        - name
+        - province
+        - status
+      filter:
+        _or:
+          - manager_id:
+              _eq: X-Hasura-User-Id
+          - site_members:
+              status:
+                _eq: active
+              user_id:
+                _eq: X-Hasura-User-Id
+      allow_aggregations: true
+  - role: site_manager
+    permission:
+      columns:
+        - address
+        - city
+        - code
+        - created_at
+        - deleted_at
+        - district
+        - id
+        - inspection_radius_meters
+        - latitude
+        - longitude
+        - manager_id
+        - name
+        - province
+        - status
+      filter:
+        _or:
+          - manager_id:
+              _eq: X-Hasura-User-Id
+          - site_members:
+              status:
+                _eq: active
+              user_id:
+                _eq: X-Hasura-User-Id
+      allow_aggregations: true
+  - role: super_admin
+    permission:
+      columns:
+        - address
+        - city
+        - code
+        - created_at
+        - deleted_at
+        - district
+        - id
+        - inspection_radius_meters
+        - latitude
+        - longitude
+        - manager_id
+        - name
+        - province
+        - status
+      filter: {}
+      allow_aggregations: true
+update_permissions:
+  - role: inspector
+    permission:
+      columns:
+        - address
+        - city
+        - code
+        - created_at
+        - deleted_at
+        - district
+        - id
+        - inspection_radius_meters
+        - latitude
+        - longitude
+        - manager_id
+        - name
+        - province
+        - status
+      filter:
+        _or:
+          - manager_id:
+              _eq: X-Hasura-User-Id
+          - site_members:
+              status:
+                _eq: active
+              user_id:
+                _eq: X-Hasura-User-Id
+      check:
+        _or:
+          - manager_id:
+              _eq: X-Hasura-User-Id
+          - site_members:
+              status:
+                _eq: active
+              user_id:
+                _eq: X-Hasura-User-Id
+  - role: site_manager
+    permission:
+      columns:
+        - address
+        - city
+        - code
+        - created_at
+        - deleted_at
+        - district
+        - id
+        - inspection_radius_meters
+        - latitude
+        - longitude
+        - manager_id
+        - name
+        - province
+        - status
+      filter:
+        _or:
+          - manager_id:
+              _eq: X-Hasura-User-Id
+          - site_members:
+              status:
+                _eq: active
+              user_id:
+                _eq: X-Hasura-User-Id
+      check:
+        _or:
+          - manager_id:
+              _eq: X-Hasura-User-Id
+          - site_members:
+              status:
+                _eq: active
+              user_id:
+                _eq: X-Hasura-User-Id
+  - role: super_admin
+    permission:
+      columns:
+        - address
+        - city
+        - code
+        - created_at
+        - deleted_at
+        - district
+        - id
+        - inspection_radius_meters
+        - latitude
+        - longitude
+        - manager_id
+        - name
+        - province
+        - status
+      filter: {}
+      check: {}
+delete_permissions:
+  - role: inspector
+    permission:
+      filter:
+        _or:
+          - manager_id:
+              _eq: X-Hasura-User-Id
+          - site_members:
+              status:
+                _eq: active
+              user_id:
+                _eq: X-Hasura-User-Id
+  - role: site_manager
+    permission:
+      filter:
+        _or:
+          - manager_id:
+              _eq: X-Hasura-User-Id
+          - site_members:
+              status:
+                _eq: active
+              user_id:
+                _eq: X-Hasura-User-Id
+  - role: super_admin
+    permission:
+      filter: {}

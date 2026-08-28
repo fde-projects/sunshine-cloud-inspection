@@ -1,0 +1,542 @@
+table:
+  name: users
+  schema: public
+object_relationships:
+  - name: created_by
+    using:
+      foreign_key_constraint_on: created_by_id
+array_relationships:
+  - name: ai_hard_rules
+    using:
+      foreign_key_constraint_on:
+        column: updated_by_id
+        table:
+          name: ai_hard_rules
+          schema: public
+  - name: assessment_events
+    using:
+      foreign_key_constraint_on:
+        column: user_id
+        table:
+          name: assessment_events
+          schema: public
+  - name: assessment_events_by_created_by
+    using:
+      foreign_key_constraint_on:
+        column: created_by_id
+        table:
+          name: assessment_events
+          schema: public
+  - name: assessment_score_rules
+    using:
+      foreign_key_constraint_on:
+        column: updated_by_id
+        table:
+          name: assessment_score_rules
+          schema: public
+  - name: assessments
+    using:
+      foreign_key_constraint_on:
+        column: updated_by_id
+        table:
+          name: assessments
+          schema: public
+  - name: assessments_by_user
+    using:
+      foreign_key_constraint_on:
+        column: user_id
+        table:
+          name: assessments
+          schema: public
+  - name: case_assignments
+    using:
+      foreign_key_constraint_on:
+        column: assign_by_id
+        table:
+          name: case_assignments
+          schema: public
+  - name: case_assignments_by_inspector
+    using:
+      foreign_key_constraint_on:
+        column: inspector_id
+        table:
+          name: case_assignments
+          schema: public
+  - name: case_expense_claims
+    using:
+      foreign_key_constraint_on:
+        column: review_by_id
+        table:
+          name: case_expense_claims
+          schema: public
+  - name: case_expense_claims_by_inspector
+    using:
+      foreign_key_constraint_on:
+        column: inspector_id
+        table:
+          name: case_expense_claims
+          schema: public
+  - name: case_perf_shares
+    using:
+      foreign_key_constraint_on:
+        column: inspector_id
+        table:
+          name: case_perf_shares
+          schema: public
+  - name: case_performances
+    using:
+      foreign_key_constraint_on:
+        column: reviewer_id
+        table:
+          name: case_performances
+          schema: public
+  - name: case_performances_by_deduct_by
+    using:
+      foreign_key_constraint_on:
+        column: deduct_by_id
+        table:
+          name: case_performances
+          schema: public
+  - name: case_performances_by_deduction_review_by
+    using:
+      foreign_key_constraint_on:
+        column: deduction_review_by_id
+        table:
+          name: case_performances
+          schema: public
+  - name: case_performances_by_inspector
+    using:
+      foreign_key_constraint_on:
+        column: inspector_id
+        table:
+          name: case_performances
+          schema: public
+  - name: case_work_units
+    using:
+      foreign_key_constraint_on:
+        column: inspector_id
+        table:
+          name: case_work_units
+          schema: public
+  - name: change_logs
+    using:
+      foreign_key_constraint_on:
+        column: operator_id
+        table:
+          name: change_logs
+          schema: public
+  - name: import_batches
+    using:
+      foreign_key_constraint_on:
+        column: operator_id
+        table:
+          name: import_batches
+          schema: public
+  - name: inspection_records
+    using:
+      foreign_key_constraint_on:
+        column: approved_by_id
+        table:
+          name: inspection_records
+          schema: public
+  - name: inspection_tasks
+    using:
+      foreign_key_constraint_on:
+        column: created_by_id
+        table:
+          name: inspection_tasks
+          schema: public
+  - name: inspection_tasks_by_inspector
+    using:
+      foreign_key_constraint_on:
+        column: inspector_id
+        table:
+          name: inspection_tasks
+          schema: public
+  - name: item_price_mappings
+    using:
+      foreign_key_constraint_on:
+        column: created_by_id
+        table:
+          name: item_price_mappings
+          schema: public
+  - name: monthly_settlements
+    using:
+      foreign_key_constraint_on:
+        column: locked_by_id
+        table:
+          name: monthly_settlements
+          schema: public
+  - name: monthly_settlements_by_user
+    using:
+      foreign_key_constraint_on:
+        column: user_id
+        table:
+          name: monthly_settlements
+          schema: public
+  - name: price_library
+    using:
+      foreign_key_constraint_on:
+        column: created_by_id
+        table:
+          name: price_library
+          schema: public
+  - name: service_cases
+    using:
+      foreign_key_constraint_on:
+        column: assign_by_id
+        table:
+          name: service_cases
+          schema: public
+  - name: service_cases_by_inspector
+    using:
+      foreign_key_constraint_on:
+        column: inspector_id
+        table:
+          name: service_cases
+          schema: public
+  - name: site_members
+    using:
+      foreign_key_constraint_on:
+        column: user_id
+        table:
+          name: site_members
+          schema: public
+  - name: sites
+    using:
+      foreign_key_constraint_on:
+        column: manager_id
+        table:
+          name: sites
+          schema: public
+  - name: users
+    using:
+      foreign_key_constraint_on:
+        column: created_by_id
+        table:
+          name: users
+          schema: public
+insert_permissions:
+  - role: inspector
+    permission:
+      check:
+        id:
+          _eq: X-Hasura-User-Id
+      columns:
+        - avatar
+        - created_at
+        - created_by_id
+        - email
+        - employee_no
+        - id
+        - org_unit
+        - phone
+        - real_name
+        - region
+        - role
+        - roles
+        - status
+        - updated_at
+        - username
+  - role: site_manager
+    permission:
+      check:
+        _or:
+          - id:
+              _eq: X-Hasura-User-Id
+          - created_by_id:
+              _eq: X-Hasura-User-Id
+          - site_members:
+              site:
+                _or:
+                  - manager_id:
+                      _eq: X-Hasura-User-Id
+                  - site_members:
+                      status:
+                        _eq: active
+                      user_id:
+                        _eq: X-Hasura-User-Id
+          - sites:
+              _or:
+                - manager_id:
+                    _eq: X-Hasura-User-Id
+                - site_members:
+                    status:
+                      _eq: active
+                    user_id:
+                      _eq: X-Hasura-User-Id
+      columns:
+        - id
+        - username
+        - real_name
+        - employee_no
+        - phone
+        - email
+        - avatar
+        - role
+        - roles
+        - status
+        - region
+        - org_unit
+        - created_by_id
+        - created_at
+        - updated_at
+        - password
+  - role: super_admin
+    permission:
+      check: {}
+      columns:
+        - id
+        - username
+        - real_name
+        - employee_no
+        - phone
+        - email
+        - avatar
+        - role
+        - roles
+        - status
+        - region
+        - org_unit
+        - created_by_id
+        - created_at
+        - updated_at
+        - password
+select_permissions:
+  - role: inspector
+    permission:
+      columns:
+        - avatar
+        - created_at
+        - created_by_id
+        - email
+        - employee_no
+        - id
+        - org_unit
+        - phone
+        - real_name
+        - region
+        - role
+        - roles
+        - status
+        - updated_at
+        - username
+      filter:
+        id:
+          _eq: X-Hasura-User-Id
+      allow_aggregations: true
+  - role: site_manager
+    permission:
+      columns:
+        - avatar
+        - created_at
+        - created_by_id
+        - email
+        - employee_no
+        - id
+        - org_unit
+        - phone
+        - real_name
+        - region
+        - role
+        - roles
+        - status
+        - updated_at
+        - username
+      filter:
+        _or:
+          - id:
+              _eq: X-Hasura-User-Id
+          - created_by_id:
+              _eq: X-Hasura-User-Id
+          - site_members:
+              site:
+                _or:
+                  - manager_id:
+                      _eq: X-Hasura-User-Id
+                  - site_members:
+                      status:
+                        _eq: active
+                      user_id:
+                        _eq: X-Hasura-User-Id
+          - sites:
+              _or:
+                - manager_id:
+                    _eq: X-Hasura-User-Id
+                - site_members:
+                    status:
+                      _eq: active
+                    user_id:
+                      _eq: X-Hasura-User-Id
+      allow_aggregations: true
+  - role: super_admin
+    permission:
+      columns:
+        - avatar
+        - created_at
+        - created_by_id
+        - email
+        - employee_no
+        - id
+        - org_unit
+        - phone
+        - real_name
+        - region
+        - role
+        - roles
+        - status
+        - updated_at
+        - username
+      filter: {}
+      allow_aggregations: true
+update_permissions:
+  - role: inspector
+    permission:
+      columns:
+        - avatar
+        - created_at
+        - created_by_id
+        - email
+        - employee_no
+        - id
+        - org_unit
+        - phone
+        - real_name
+        - region
+        - role
+        - roles
+        - status
+        - updated_at
+        - username
+      filter:
+        id:
+          _eq: X-Hasura-User-Id
+      check:
+        id:
+          _eq: X-Hasura-User-Id
+  - role: site_manager
+    permission:
+      columns:
+        - id
+        - username
+        - real_name
+        - employee_no
+        - phone
+        - email
+        - avatar
+        - role
+        - roles
+        - status
+        - region
+        - org_unit
+        - created_by_id
+        - created_at
+        - updated_at
+        - password
+      filter:
+        _or:
+          - id:
+              _eq: X-Hasura-User-Id
+          - created_by_id:
+              _eq: X-Hasura-User-Id
+          - site_members:
+              site:
+                _or:
+                  - manager_id:
+                      _eq: X-Hasura-User-Id
+                  - site_members:
+                      status:
+                        _eq: active
+                      user_id:
+                        _eq: X-Hasura-User-Id
+          - sites:
+              _or:
+                - manager_id:
+                    _eq: X-Hasura-User-Id
+                - site_members:
+                    status:
+                      _eq: active
+                    user_id:
+                      _eq: X-Hasura-User-Id
+      check:
+        _or:
+          - id:
+              _eq: X-Hasura-User-Id
+          - created_by_id:
+              _eq: X-Hasura-User-Id
+          - site_members:
+              site:
+                _or:
+                  - manager_id:
+                      _eq: X-Hasura-User-Id
+                  - site_members:
+                      status:
+                        _eq: active
+                      user_id:
+                        _eq: X-Hasura-User-Id
+          - sites:
+              _or:
+                - manager_id:
+                    _eq: X-Hasura-User-Id
+                - site_members:
+                    status:
+                      _eq: active
+                    user_id:
+                      _eq: X-Hasura-User-Id
+  - role: super_admin
+    permission:
+      columns:
+        - id
+        - username
+        - real_name
+        - employee_no
+        - phone
+        - email
+        - avatar
+        - role
+        - roles
+        - status
+        - region
+        - org_unit
+        - created_by_id
+        - created_at
+        - updated_at
+        - password
+      filter: {}
+      check: {}
+delete_permissions:
+  - role: inspector
+    permission:
+      filter:
+        id:
+          _eq: X-Hasura-User-Id
+  - role: site_manager
+    permission:
+      filter:
+        _or:
+          - id:
+              _eq: X-Hasura-User-Id
+          - created_by_id:
+              _eq: X-Hasura-User-Id
+          - site_members:
+              site:
+                _or:
+                  - manager_id:
+                      _eq: X-Hasura-User-Id
+                  - site_members:
+                      status:
+                        _eq: active
+                      user_id:
+                        _eq: X-Hasura-User-Id
+          - sites:
+              _or:
+                - manager_id:
+                    _eq: X-Hasura-User-Id
+                - site_members:
+                    status:
+                      _eq: active
+                    user_id:
+                      _eq: X-Hasura-User-Id
+  - role: super_admin
+    permission:
+      filter: {}

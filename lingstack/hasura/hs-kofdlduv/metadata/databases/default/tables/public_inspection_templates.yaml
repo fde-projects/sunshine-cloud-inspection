@@ -1,0 +1,298 @@
+table:
+  name: inspection_templates
+  schema: public
+object_relationships:
+  - name: site
+    using:
+      foreign_key_constraint_on: site_id
+array_relationships:
+  - name: service_cases
+    using:
+      foreign_key_constraint_on:
+        column: task_template_id
+        table:
+          name: service_cases
+          schema: public
+insert_permissions:
+  - role: inspector
+    permission:
+      check:
+        _or:
+          - is_global:
+              _eq: true
+          - site:
+              _or:
+                - manager_id:
+                    _eq: X-Hasura-User-Id
+                - site_members:
+                    status:
+                      _eq: active
+                    user_id:
+                      _eq: X-Hasura-User-Id
+      columns:
+        - assign_mode
+        - created_at
+        - device_type
+        - entries
+        - expense_enabled_default
+        - id
+        - is_global
+        - name
+        - product_lines
+        - site_id
+        - unit_label
+        - version
+  - role: site_manager
+    permission:
+      check:
+        _or:
+          - is_global:
+              _eq: true
+          - site:
+              _or:
+                - manager_id:
+                    _eq: X-Hasura-User-Id
+                - site_members:
+                    status:
+                      _eq: active
+                    user_id:
+                      _eq: X-Hasura-User-Id
+      columns:
+        - assign_mode
+        - created_at
+        - device_type
+        - entries
+        - expense_enabled_default
+        - id
+        - is_global
+        - name
+        - product_lines
+        - site_id
+        - unit_label
+        - version
+  - role: super_admin
+    permission:
+      check: {}
+      columns:
+        - assign_mode
+        - created_at
+        - device_type
+        - entries
+        - expense_enabled_default
+        - id
+        - is_global
+        - name
+        - product_lines
+        - site_id
+        - unit_label
+        - version
+select_permissions:
+  - role: inspector
+    permission:
+      columns:
+        - assign_mode
+        - created_at
+        - device_type
+        - entries
+        - expense_enabled_default
+        - id
+        - is_global
+        - name
+        - product_lines
+        - site_id
+        - unit_label
+        - version
+      filter:
+        _or:
+          - is_global:
+              _eq: true
+          - site:
+              _or:
+                - manager_id:
+                    _eq: X-Hasura-User-Id
+                - site_members:
+                    status:
+                      _eq: active
+                    user_id:
+                      _eq: X-Hasura-User-Id
+      allow_aggregations: true
+  - role: site_manager
+    permission:
+      columns:
+        - assign_mode
+        - created_at
+        - device_type
+        - entries
+        - expense_enabled_default
+        - id
+        - is_global
+        - name
+        - product_lines
+        - site_id
+        - unit_label
+        - version
+      filter:
+        _or:
+          - is_global:
+              _eq: true
+          - site:
+              _or:
+                - manager_id:
+                    _eq: X-Hasura-User-Id
+                - site_members:
+                    status:
+                      _eq: active
+                    user_id:
+                      _eq: X-Hasura-User-Id
+      allow_aggregations: true
+  - role: super_admin
+    permission:
+      columns:
+        - assign_mode
+        - created_at
+        - device_type
+        - entries
+        - expense_enabled_default
+        - id
+        - is_global
+        - name
+        - product_lines
+        - site_id
+        - unit_label
+        - version
+      filter: {}
+      allow_aggregations: true
+update_permissions:
+  - role: inspector
+    permission:
+      columns:
+        - assign_mode
+        - created_at
+        - device_type
+        - entries
+        - expense_enabled_default
+        - id
+        - is_global
+        - name
+        - product_lines
+        - site_id
+        - unit_label
+        - version
+      filter:
+        _or:
+          - is_global:
+              _eq: true
+          - site:
+              _or:
+                - manager_id:
+                    _eq: X-Hasura-User-Id
+                - site_members:
+                    status:
+                      _eq: active
+                    user_id:
+                      _eq: X-Hasura-User-Id
+      check:
+        _or:
+          - is_global:
+              _eq: true
+          - site:
+              _or:
+                - manager_id:
+                    _eq: X-Hasura-User-Id
+                - site_members:
+                    status:
+                      _eq: active
+                    user_id:
+                      _eq: X-Hasura-User-Id
+  - role: site_manager
+    permission:
+      columns:
+        - assign_mode
+        - created_at
+        - device_type
+        - entries
+        - expense_enabled_default
+        - id
+        - is_global
+        - name
+        - product_lines
+        - site_id
+        - unit_label
+        - version
+      filter:
+        _or:
+          - is_global:
+              _eq: true
+          - site:
+              _or:
+                - manager_id:
+                    _eq: X-Hasura-User-Id
+                - site_members:
+                    status:
+                      _eq: active
+                    user_id:
+                      _eq: X-Hasura-User-Id
+      check:
+        _or:
+          - is_global:
+              _eq: true
+          - site:
+              _or:
+                - manager_id:
+                    _eq: X-Hasura-User-Id
+                - site_members:
+                    status:
+                      _eq: active
+                    user_id:
+                      _eq: X-Hasura-User-Id
+  - role: super_admin
+    permission:
+      columns:
+        - assign_mode
+        - created_at
+        - device_type
+        - entries
+        - expense_enabled_default
+        - id
+        - is_global
+        - name
+        - product_lines
+        - site_id
+        - unit_label
+        - version
+      filter: {}
+      check: {}
+delete_permissions:
+  - role: inspector
+    permission:
+      filter:
+        _or:
+          - is_global:
+              _eq: true
+          - site:
+              _or:
+                - manager_id:
+                    _eq: X-Hasura-User-Id
+                - site_members:
+                    status:
+                      _eq: active
+                    user_id:
+                      _eq: X-Hasura-User-Id
+  - role: site_manager
+    permission:
+      filter:
+        _or:
+          - is_global:
+              _eq: true
+          - site:
+              _or:
+                - manager_id:
+                    _eq: X-Hasura-User-Id
+                - site_members:
+                    status:
+                      _eq: active
+                    user_id:
+                      _eq: X-Hasura-User-Id
+  - role: super_admin
+    permission:
+      filter: {}

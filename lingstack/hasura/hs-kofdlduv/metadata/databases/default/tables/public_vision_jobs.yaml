@@ -1,0 +1,218 @@
+table:
+  name: vision_jobs
+  schema: public
+object_relationships:
+  - name: inspection_record
+    using:
+      foreign_key_constraint_on: inspection_record_id
+insert_permissions:
+  - role: inspector
+    permission:
+      check:
+        inspection_record:
+          task:
+            inspector_id:
+              _eq: X-Hasura-User-Id
+      columns:
+        - attempts
+        - created_at
+        - error_message
+        - id
+        - inspection_record_id
+        - result
+        - status
+        - template_entry_id
+        - updated_at
+  - role: site_manager
+    permission:
+      check:
+        inspection_record:
+          task:
+            site:
+              _or:
+                - manager_id:
+                    _eq: X-Hasura-User-Id
+                - site_members:
+                    status:
+                      _eq: active
+                    user_id:
+                      _eq: X-Hasura-User-Id
+      columns:
+        - attempts
+        - created_at
+        - error_message
+        - id
+        - inspection_record_id
+        - result
+        - status
+        - template_entry_id
+        - updated_at
+  - role: super_admin
+    permission:
+      check: {}
+      columns:
+        - attempts
+        - created_at
+        - error_message
+        - id
+        - inspection_record_id
+        - result
+        - status
+        - template_entry_id
+        - updated_at
+select_permissions:
+  - role: inspector
+    permission:
+      columns:
+        - attempts
+        - created_at
+        - error_message
+        - id
+        - inspection_record_id
+        - result
+        - status
+        - template_entry_id
+        - updated_at
+      filter:
+        inspection_record:
+          task:
+            inspector_id:
+              _eq: X-Hasura-User-Id
+      allow_aggregations: true
+  - role: site_manager
+    permission:
+      columns:
+        - attempts
+        - created_at
+        - error_message
+        - id
+        - inspection_record_id
+        - result
+        - status
+        - template_entry_id
+        - updated_at
+      filter:
+        inspection_record:
+          task:
+            site:
+              _or:
+                - manager_id:
+                    _eq: X-Hasura-User-Id
+                - site_members:
+                    status:
+                      _eq: active
+                    user_id:
+                      _eq: X-Hasura-User-Id
+      allow_aggregations: true
+  - role: super_admin
+    permission:
+      columns:
+        - attempts
+        - created_at
+        - error_message
+        - id
+        - inspection_record_id
+        - result
+        - status
+        - template_entry_id
+        - updated_at
+      filter: {}
+      allow_aggregations: true
+update_permissions:
+  - role: inspector
+    permission:
+      columns:
+        - attempts
+        - created_at
+        - error_message
+        - id
+        - inspection_record_id
+        - result
+        - status
+        - template_entry_id
+        - updated_at
+      filter:
+        inspection_record:
+          task:
+            inspector_id:
+              _eq: X-Hasura-User-Id
+      check:
+        inspection_record:
+          task:
+            inspector_id:
+              _eq: X-Hasura-User-Id
+  - role: site_manager
+    permission:
+      columns:
+        - attempts
+        - created_at
+        - error_message
+        - id
+        - inspection_record_id
+        - result
+        - status
+        - template_entry_id
+        - updated_at
+      filter:
+        inspection_record:
+          task:
+            site:
+              _or:
+                - manager_id:
+                    _eq: X-Hasura-User-Id
+                - site_members:
+                    status:
+                      _eq: active
+                    user_id:
+                      _eq: X-Hasura-User-Id
+      check:
+        inspection_record:
+          task:
+            site:
+              _or:
+                - manager_id:
+                    _eq: X-Hasura-User-Id
+                - site_members:
+                    status:
+                      _eq: active
+                    user_id:
+                      _eq: X-Hasura-User-Id
+  - role: super_admin
+    permission:
+      columns:
+        - attempts
+        - created_at
+        - error_message
+        - id
+        - inspection_record_id
+        - result
+        - status
+        - template_entry_id
+        - updated_at
+      filter: {}
+      check: {}
+delete_permissions:
+  - role: inspector
+    permission:
+      filter:
+        inspection_record:
+          task:
+            inspector_id:
+              _eq: X-Hasura-User-Id
+  - role: site_manager
+    permission:
+      filter:
+        inspection_record:
+          task:
+            site:
+              _or:
+                - manager_id:
+                    _eq: X-Hasura-User-Id
+                - site_members:
+                    status:
+                      _eq: active
+                    user_id:
+                      _eq: X-Hasura-User-Id
+  - role: super_admin
+    permission:
+      filter: {}

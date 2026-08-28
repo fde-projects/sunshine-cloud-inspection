@@ -1,0 +1,255 @@
+table:
+  name: inspection_records
+  schema: public
+object_relationships:
+  - name: approved_by
+    using:
+      foreign_key_constraint_on: approved_by_id
+  - name: task
+    using:
+      foreign_key_constraint_on: task_id
+array_relationships:
+  - name: vision_jobs
+    using:
+      foreign_key_constraint_on:
+        column: inspection_record_id
+        table:
+          name: vision_jobs
+          schema: public
+insert_permissions:
+  - role: inspector
+    permission:
+      check:
+        task:
+          inspector_id:
+            _eq: X-Hasura-User-Id
+      columns:
+        - approved_at
+        - approved_by_id
+        - audit_trail
+        - created_at
+        - device_type
+        - entries
+        - id
+        - location
+        - reject_reason
+        - report_photos
+        - status
+        - submitted_at
+        - task_id
+  - role: site_manager
+    permission:
+      check:
+        task:
+          site:
+            _or:
+              - manager_id:
+                  _eq: X-Hasura-User-Id
+              - site_members:
+                  status:
+                    _eq: active
+                  user_id:
+                    _eq: X-Hasura-User-Id
+      columns:
+        - approved_at
+        - approved_by_id
+        - audit_trail
+        - created_at
+        - device_type
+        - entries
+        - id
+        - location
+        - reject_reason
+        - report_photos
+        - status
+        - submitted_at
+        - task_id
+  - role: super_admin
+    permission:
+      check: {}
+      columns:
+        - approved_at
+        - approved_by_id
+        - audit_trail
+        - created_at
+        - device_type
+        - entries
+        - id
+        - location
+        - reject_reason
+        - report_photos
+        - status
+        - submitted_at
+        - task_id
+select_permissions:
+  - role: inspector
+    permission:
+      columns:
+        - approved_at
+        - approved_by_id
+        - audit_trail
+        - created_at
+        - device_type
+        - entries
+        - id
+        - location
+        - reject_reason
+        - report_photos
+        - status
+        - submitted_at
+        - task_id
+      filter:
+        task:
+          inspector_id:
+            _eq: X-Hasura-User-Id
+      allow_aggregations: true
+  - role: site_manager
+    permission:
+      columns:
+        - approved_at
+        - approved_by_id
+        - audit_trail
+        - created_at
+        - device_type
+        - entries
+        - id
+        - location
+        - reject_reason
+        - report_photos
+        - status
+        - submitted_at
+        - task_id
+      filter:
+        task:
+          site:
+            _or:
+              - manager_id:
+                  _eq: X-Hasura-User-Id
+              - site_members:
+                  status:
+                    _eq: active
+                  user_id:
+                    _eq: X-Hasura-User-Id
+      allow_aggregations: true
+  - role: super_admin
+    permission:
+      columns:
+        - approved_at
+        - approved_by_id
+        - audit_trail
+        - created_at
+        - device_type
+        - entries
+        - id
+        - location
+        - reject_reason
+        - report_photos
+        - status
+        - submitted_at
+        - task_id
+      filter: {}
+      allow_aggregations: true
+update_permissions:
+  - role: inspector
+    permission:
+      columns:
+        - approved_at
+        - approved_by_id
+        - audit_trail
+        - created_at
+        - device_type
+        - entries
+        - id
+        - location
+        - reject_reason
+        - report_photos
+        - status
+        - submitted_at
+        - task_id
+      filter:
+        task:
+          inspector_id:
+            _eq: X-Hasura-User-Id
+      check:
+        task:
+          inspector_id:
+            _eq: X-Hasura-User-Id
+  - role: site_manager
+    permission:
+      columns:
+        - approved_at
+        - approved_by_id
+        - audit_trail
+        - created_at
+        - device_type
+        - entries
+        - id
+        - location
+        - reject_reason
+        - report_photos
+        - status
+        - submitted_at
+        - task_id
+      filter:
+        task:
+          site:
+            _or:
+              - manager_id:
+                  _eq: X-Hasura-User-Id
+              - site_members:
+                  status:
+                    _eq: active
+                  user_id:
+                    _eq: X-Hasura-User-Id
+      check:
+        task:
+          site:
+            _or:
+              - manager_id:
+                  _eq: X-Hasura-User-Id
+              - site_members:
+                  status:
+                    _eq: active
+                  user_id:
+                    _eq: X-Hasura-User-Id
+  - role: super_admin
+    permission:
+      columns:
+        - approved_at
+        - approved_by_id
+        - audit_trail
+        - created_at
+        - device_type
+        - entries
+        - id
+        - location
+        - reject_reason
+        - report_photos
+        - status
+        - submitted_at
+        - task_id
+      filter: {}
+      check: {}
+delete_permissions:
+  - role: inspector
+    permission:
+      filter:
+        task:
+          inspector_id:
+            _eq: X-Hasura-User-Id
+  - role: site_manager
+    permission:
+      filter:
+        task:
+          site:
+            _or:
+              - manager_id:
+                  _eq: X-Hasura-User-Id
+              - site_members:
+                  status:
+                    _eq: active
+                  user_id:
+                    _eq: X-Hasura-User-Id
+  - role: super_admin
+    permission:
+      filter: {}

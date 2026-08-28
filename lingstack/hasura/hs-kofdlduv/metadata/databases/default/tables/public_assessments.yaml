@@ -1,0 +1,202 @@
+table:
+  name: assessments
+  schema: public
+object_relationships:
+  - name: updated_by
+    using:
+      foreign_key_constraint_on: updated_by_id
+  - name: user
+    using:
+      foreign_key_constraint_on: user_id
+insert_permissions:
+  - role: site_manager
+    permission:
+      check: {}
+      columns:
+        - correction_amount
+        - correction_reason
+        - created_at
+        - event_penalty
+        - id
+        - internal_score
+        - month
+        - other_subsidy
+        - rank_group
+        - rank_result
+        - reward_amount
+        - score_detail
+        - site_rank_result
+        - subsidy_remark
+        - sungrow_score
+        - tool_subsidy
+        - total_score
+        - updated_at
+        - updated_by_id
+        - user_id
+        - user_role
+  - role: super_admin
+    permission:
+      check: {}
+      columns:
+        - correction_amount
+        - correction_reason
+        - created_at
+        - event_penalty
+        - id
+        - internal_score
+        - month
+        - other_subsidy
+        - rank_group
+        - rank_result
+        - reward_amount
+        - score_detail
+        - site_rank_result
+        - subsidy_remark
+        - sungrow_score
+        - tool_subsidy
+        - total_score
+        - updated_at
+        - updated_by_id
+        - user_id
+        - user_role
+select_permissions:
+  - role: inspector
+    permission:
+      columns:
+        - correction_amount
+        - correction_reason
+        - created_at
+        - event_penalty
+        - id
+        - internal_score
+        - month
+        - other_subsidy
+        - rank_group
+        - rank_result
+        - reward_amount
+        - score_detail
+        - site_rank_result
+        - subsidy_remark
+        - sungrow_score
+        - tool_subsidy
+        - total_score
+        - updated_at
+        - updated_by_id
+        - user_id
+        - user_role
+      filter:
+        user_id:
+          _eq: X-Hasura-User-Id
+      allow_aggregations: true
+  - role: site_manager
+    permission:
+      columns:
+        - correction_amount
+        - correction_reason
+        - created_at
+        - event_penalty
+        - id
+        - internal_score
+        - month
+        - other_subsidy
+        - rank_group
+        - rank_result
+        - reward_amount
+        - score_detail
+        - site_rank_result
+        - subsidy_remark
+        - sungrow_score
+        - tool_subsidy
+        - total_score
+        - updated_at
+        - updated_by_id
+        - user_id
+        - user_role
+      filter: {}
+      allow_aggregations: true
+  - role: super_admin
+    permission:
+      columns:
+        - correction_amount
+        - correction_reason
+        - created_at
+        - event_penalty
+        - id
+        - internal_score
+        - month
+        - other_subsidy
+        - rank_group
+        - rank_result
+        - reward_amount
+        - score_detail
+        - site_rank_result
+        - subsidy_remark
+        - sungrow_score
+        - tool_subsidy
+        - total_score
+        - updated_at
+        - updated_by_id
+        - user_id
+        - user_role
+      filter: {}
+      allow_aggregations: true
+update_permissions:
+  - role: site_manager
+    permission:
+      columns:
+        - correction_amount
+        - correction_reason
+        - created_at
+        - event_penalty
+        - id
+        - internal_score
+        - month
+        - other_subsidy
+        - rank_group
+        - rank_result
+        - reward_amount
+        - score_detail
+        - site_rank_result
+        - subsidy_remark
+        - sungrow_score
+        - tool_subsidy
+        - total_score
+        - updated_at
+        - updated_by_id
+        - user_id
+        - user_role
+      filter: {}
+      check: {}
+  - role: super_admin
+    permission:
+      columns:
+        - correction_amount
+        - correction_reason
+        - created_at
+        - event_penalty
+        - id
+        - internal_score
+        - month
+        - other_subsidy
+        - rank_group
+        - rank_result
+        - reward_amount
+        - score_detail
+        - site_rank_result
+        - subsidy_remark
+        - sungrow_score
+        - tool_subsidy
+        - total_score
+        - updated_at
+        - updated_by_id
+        - user_id
+        - user_role
+      filter: {}
+      check: {}
+delete_permissions:
+  - role: site_manager
+    permission:
+      filter: {}
+  - role: super_admin
+    permission:
+      filter: {}

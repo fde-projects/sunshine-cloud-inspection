@@ -1,0 +1,196 @@
+table:
+  name: po_items
+  schema: public
+object_relationships:
+  - name: po_order
+    using:
+      foreign_key_constraint_on: po_order_id
+insert_permissions:
+  - role: site_manager
+    permission:
+      check:
+        po_order:
+          service_case:
+            site:
+              _or:
+                - manager_id:
+                    _eq: X-Hasura-User-Id
+                - site_members:
+                    status:
+                      _eq: active
+                    user_id:
+                      _eq: X-Hasura-User-Id
+      columns:
+        - created_at
+        - id
+        - item_category
+        - item_code
+        - item_desc
+        - item_name
+        - item_perf
+        - item_revenue
+        - perf_price
+        - po_order_id
+        - price_status
+        - qty
+        - settle_price
+        - source_row
+        - unit
+        - updated_at
+  - role: super_admin
+    permission:
+      check: {}
+      columns:
+        - created_at
+        - id
+        - item_category
+        - item_code
+        - item_desc
+        - item_name
+        - item_perf
+        - item_revenue
+        - perf_price
+        - po_order_id
+        - price_status
+        - qty
+        - settle_price
+        - source_row
+        - unit
+        - updated_at
+select_permissions:
+  - role: site_manager
+    permission:
+      columns:
+        - created_at
+        - id
+        - item_category
+        - item_code
+        - item_desc
+        - item_name
+        - item_perf
+        - item_revenue
+        - perf_price
+        - po_order_id
+        - price_status
+        - qty
+        - settle_price
+        - source_row
+        - unit
+        - updated_at
+      filter:
+        po_order:
+          service_case:
+            site:
+              _or:
+                - manager_id:
+                    _eq: X-Hasura-User-Id
+                - site_members:
+                    status:
+                      _eq: active
+                    user_id:
+                      _eq: X-Hasura-User-Id
+      allow_aggregations: true
+  - role: super_admin
+    permission:
+      columns:
+        - created_at
+        - id
+        - item_category
+        - item_code
+        - item_desc
+        - item_name
+        - item_perf
+        - item_revenue
+        - perf_price
+        - po_order_id
+        - price_status
+        - qty
+        - settle_price
+        - source_row
+        - unit
+        - updated_at
+      filter: {}
+      allow_aggregations: true
+update_permissions:
+  - role: site_manager
+    permission:
+      columns:
+        - created_at
+        - id
+        - item_category
+        - item_code
+        - item_desc
+        - item_name
+        - item_perf
+        - item_revenue
+        - perf_price
+        - po_order_id
+        - price_status
+        - qty
+        - settle_price
+        - source_row
+        - unit
+        - updated_at
+      filter:
+        po_order:
+          service_case:
+            site:
+              _or:
+                - manager_id:
+                    _eq: X-Hasura-User-Id
+                - site_members:
+                    status:
+                      _eq: active
+                    user_id:
+                      _eq: X-Hasura-User-Id
+      check:
+        po_order:
+          service_case:
+            site:
+              _or:
+                - manager_id:
+                    _eq: X-Hasura-User-Id
+                - site_members:
+                    status:
+                      _eq: active
+                    user_id:
+                      _eq: X-Hasura-User-Id
+  - role: super_admin
+    permission:
+      columns:
+        - created_at
+        - id
+        - item_category
+        - item_code
+        - item_desc
+        - item_name
+        - item_perf
+        - item_revenue
+        - perf_price
+        - po_order_id
+        - price_status
+        - qty
+        - settle_price
+        - source_row
+        - unit
+        - updated_at
+      filter: {}
+      check: {}
+delete_permissions:
+  - role: site_manager
+    permission:
+      filter:
+        po_order:
+          service_case:
+            site:
+              _or:
+                - manager_id:
+                    _eq: X-Hasura-User-Id
+                - site_members:
+                    status:
+                      _eq: active
+                    user_id:
+                      _eq: X-Hasura-User-Id
+  - role: super_admin
+    permission:
+      filter: {}

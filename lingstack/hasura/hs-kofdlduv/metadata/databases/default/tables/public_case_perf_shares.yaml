@@ -1,0 +1,161 @@
+table:
+  name: case_perf_shares
+  schema: public
+object_relationships:
+  - name: inspector
+    using:
+      foreign_key_constraint_on: inspector_id
+  - name: service_case
+    using:
+      foreign_key_constraint_on: service_case_id
+insert_permissions:
+  - role: site_manager
+    permission:
+      check:
+        service_case:
+          site:
+            _or:
+              - manager_id:
+                  _eq: X-Hasura-User-Id
+              - site_members:
+                  status:
+                    _eq: active
+                  user_id:
+                    _eq: X-Hasura-User-Id
+      columns:
+        - completed_units
+        - created_at
+        - id
+        - inspector_id
+        - perf_amount
+        - service_case_id
+        - share_ratio
+        - updated_at
+  - role: super_admin
+    permission:
+      check: {}
+      columns:
+        - completed_units
+        - created_at
+        - id
+        - inspector_id
+        - perf_amount
+        - service_case_id
+        - share_ratio
+        - updated_at
+select_permissions:
+  - role: inspector
+    permission:
+      columns:
+        - completed_units
+        - created_at
+        - id
+        - inspector_id
+        - perf_amount
+        - service_case_id
+        - share_ratio
+        - updated_at
+      filter:
+        inspector_id:
+          _eq: X-Hasura-User-Id
+      allow_aggregations: true
+  - role: site_manager
+    permission:
+      columns:
+        - completed_units
+        - created_at
+        - id
+        - inspector_id
+        - perf_amount
+        - service_case_id
+        - share_ratio
+        - updated_at
+      filter:
+        service_case:
+          site:
+            _or:
+              - manager_id:
+                  _eq: X-Hasura-User-Id
+              - site_members:
+                  status:
+                    _eq: active
+                  user_id:
+                    _eq: X-Hasura-User-Id
+      allow_aggregations: true
+  - role: super_admin
+    permission:
+      columns:
+        - completed_units
+        - created_at
+        - id
+        - inspector_id
+        - perf_amount
+        - service_case_id
+        - share_ratio
+        - updated_at
+      filter: {}
+      allow_aggregations: true
+update_permissions:
+  - role: site_manager
+    permission:
+      columns:
+        - completed_units
+        - created_at
+        - id
+        - inspector_id
+        - perf_amount
+        - service_case_id
+        - share_ratio
+        - updated_at
+      filter:
+        service_case:
+          site:
+            _or:
+              - manager_id:
+                  _eq: X-Hasura-User-Id
+              - site_members:
+                  status:
+                    _eq: active
+                  user_id:
+                    _eq: X-Hasura-User-Id
+      check:
+        service_case:
+          site:
+            _or:
+              - manager_id:
+                  _eq: X-Hasura-User-Id
+              - site_members:
+                  status:
+                    _eq: active
+                  user_id:
+                    _eq: X-Hasura-User-Id
+  - role: super_admin
+    permission:
+      columns:
+        - completed_units
+        - created_at
+        - id
+        - inspector_id
+        - perf_amount
+        - service_case_id
+        - share_ratio
+        - updated_at
+      filter: {}
+      check: {}
+delete_permissions:
+  - role: site_manager
+    permission:
+      filter:
+        service_case:
+          site:
+            _or:
+              - manager_id:
+                  _eq: X-Hasura-User-Id
+              - site_members:
+                  status:
+                    _eq: active
+                  user_id:
+                    _eq: X-Hasura-User-Id
+  - role: super_admin
+    permission:
+      filter: {}

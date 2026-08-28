@@ -1,0 +1,291 @@
+table:
+  name: inspection_tasks
+  schema: public
+object_relationships:
+  - name: created_by
+    using:
+      foreign_key_constraint_on: created_by_id
+  - name: device
+    using:
+      foreign_key_constraint_on: device_id
+  - name: inspector
+    using:
+      foreign_key_constraint_on: inspector_id
+  - name: service_case
+    using:
+      foreign_key_constraint_on: service_case_id
+  - name: site
+    using:
+      foreign_key_constraint_on: site_id
+  - name: work_unit
+    using:
+      foreign_key_constraint_on: work_unit_id
+array_relationships:
+  - name: case_work_units
+    using:
+      foreign_key_constraint_on:
+        column: inspection_task_id
+        table:
+          name: case_work_units
+          schema: public
+  - name: inspection_records
+    using:
+      foreign_key_constraint_on:
+        column: task_id
+        table:
+          name: inspection_records
+          schema: public
+insert_permissions:
+  - role: inspector
+    permission:
+      check:
+        inspector_id:
+          _eq: X-Hasura-User-Id
+      columns:
+        - ai_enabled
+        - completed_at
+        - created_at
+        - created_by_id
+        - device_id
+        - id
+        - inspector_id
+        - planned_date
+        - service_case_id
+        - site_id
+        - started_at
+        - status
+        - task_name
+        - task_type
+        - template_snapshot
+        - work_unit_id
+  - role: site_manager
+    permission:
+      check:
+        site:
+          _or:
+            - manager_id:
+                _eq: X-Hasura-User-Id
+            - site_members:
+                status:
+                  _eq: active
+                user_id:
+                  _eq: X-Hasura-User-Id
+      columns:
+        - ai_enabled
+        - completed_at
+        - created_at
+        - created_by_id
+        - device_id
+        - id
+        - inspector_id
+        - planned_date
+        - service_case_id
+        - site_id
+        - started_at
+        - status
+        - task_name
+        - task_type
+        - template_snapshot
+        - work_unit_id
+  - role: super_admin
+    permission:
+      check: {}
+      columns:
+        - ai_enabled
+        - completed_at
+        - created_at
+        - created_by_id
+        - device_id
+        - id
+        - inspector_id
+        - planned_date
+        - service_case_id
+        - site_id
+        - started_at
+        - status
+        - task_name
+        - task_type
+        - template_snapshot
+        - work_unit_id
+select_permissions:
+  - role: inspector
+    permission:
+      columns:
+        - ai_enabled
+        - completed_at
+        - created_at
+        - created_by_id
+        - device_id
+        - id
+        - inspector_id
+        - planned_date
+        - service_case_id
+        - site_id
+        - started_at
+        - status
+        - task_name
+        - task_type
+        - template_snapshot
+        - work_unit_id
+      filter:
+        inspector_id:
+          _eq: X-Hasura-User-Id
+      allow_aggregations: true
+  - role: site_manager
+    permission:
+      columns:
+        - ai_enabled
+        - completed_at
+        - created_at
+        - created_by_id
+        - device_id
+        - id
+        - inspector_id
+        - planned_date
+        - service_case_id
+        - site_id
+        - started_at
+        - status
+        - task_name
+        - task_type
+        - template_snapshot
+        - work_unit_id
+      filter:
+        site:
+          _or:
+            - manager_id:
+                _eq: X-Hasura-User-Id
+            - site_members:
+                status:
+                  _eq: active
+                user_id:
+                  _eq: X-Hasura-User-Id
+      allow_aggregations: true
+  - role: super_admin
+    permission:
+      columns:
+        - ai_enabled
+        - completed_at
+        - created_at
+        - created_by_id
+        - device_id
+        - id
+        - inspector_id
+        - planned_date
+        - service_case_id
+        - site_id
+        - started_at
+        - status
+        - task_name
+        - task_type
+        - template_snapshot
+        - work_unit_id
+      filter: {}
+      allow_aggregations: true
+update_permissions:
+  - role: inspector
+    permission:
+      columns:
+        - ai_enabled
+        - completed_at
+        - created_at
+        - created_by_id
+        - device_id
+        - id
+        - inspector_id
+        - planned_date
+        - service_case_id
+        - site_id
+        - started_at
+        - status
+        - task_name
+        - task_type
+        - template_snapshot
+        - work_unit_id
+      filter:
+        inspector_id:
+          _eq: X-Hasura-User-Id
+      check:
+        inspector_id:
+          _eq: X-Hasura-User-Id
+  - role: site_manager
+    permission:
+      columns:
+        - ai_enabled
+        - completed_at
+        - created_at
+        - created_by_id
+        - device_id
+        - id
+        - inspector_id
+        - planned_date
+        - service_case_id
+        - site_id
+        - started_at
+        - status
+        - task_name
+        - task_type
+        - template_snapshot
+        - work_unit_id
+      filter:
+        site:
+          _or:
+            - manager_id:
+                _eq: X-Hasura-User-Id
+            - site_members:
+                status:
+                  _eq: active
+                user_id:
+                  _eq: X-Hasura-User-Id
+      check:
+        site:
+          _or:
+            - manager_id:
+                _eq: X-Hasura-User-Id
+            - site_members:
+                status:
+                  _eq: active
+                user_id:
+                  _eq: X-Hasura-User-Id
+  - role: super_admin
+    permission:
+      columns:
+        - ai_enabled
+        - completed_at
+        - created_at
+        - created_by_id
+        - device_id
+        - id
+        - inspector_id
+        - planned_date
+        - service_case_id
+        - site_id
+        - started_at
+        - status
+        - task_name
+        - task_type
+        - template_snapshot
+        - work_unit_id
+      filter: {}
+      check: {}
+delete_permissions:
+  - role: inspector
+    permission:
+      filter:
+        inspector_id:
+          _eq: X-Hasura-User-Id
+  - role: site_manager
+    permission:
+      filter:
+        site:
+          _or:
+            - manager_id:
+                _eq: X-Hasura-User-Id
+            - site_members:
+                status:
+                  _eq: active
+                user_id:
+                  _eq: X-Hasura-User-Id
+  - role: super_admin
+    permission:
+      filter: {}

@@ -1,0 +1,284 @@
+table:
+  name: case_expense_claims
+  schema: public
+object_relationships:
+  - name: inspector
+    using:
+      foreign_key_constraint_on: inspector_id
+  - name: review_by
+    using:
+      foreign_key_constraint_on: review_by_id
+  - name: service_case
+    using:
+      foreign_key_constraint_on: service_case_id
+  - name: work_unit
+    using:
+      foreign_key_constraint_on: work_unit_id
+insert_permissions:
+  - role: inspector
+    permission:
+      check:
+        inspector_id:
+          _eq: X-Hasura-User-Id
+      columns:
+        - amount
+        - claim_amount
+        - created_at
+        - id
+        - inspector_id
+        - line_items
+        - month
+        - note
+        - review_at
+        - review_by_id
+        - review_note
+        - service_case_id
+        - status
+        - trip_skipped
+        - updated_at
+        - voucher_urls
+        - work_unit_id
+  - role: site_manager
+    permission:
+      check:
+        service_case:
+          site:
+            _or:
+              - manager_id:
+                  _eq: X-Hasura-User-Id
+              - site_members:
+                  status:
+                    _eq: active
+                  user_id:
+                    _eq: X-Hasura-User-Id
+      columns:
+        - amount
+        - claim_amount
+        - created_at
+        - id
+        - inspector_id
+        - line_items
+        - month
+        - note
+        - review_at
+        - review_by_id
+        - review_note
+        - service_case_id
+        - status
+        - trip_skipped
+        - updated_at
+        - voucher_urls
+        - work_unit_id
+  - role: super_admin
+    permission:
+      check: {}
+      columns:
+        - amount
+        - claim_amount
+        - created_at
+        - id
+        - inspector_id
+        - line_items
+        - month
+        - note
+        - review_at
+        - review_by_id
+        - review_note
+        - service_case_id
+        - status
+        - trip_skipped
+        - updated_at
+        - voucher_urls
+        - work_unit_id
+select_permissions:
+  - role: inspector
+    permission:
+      columns:
+        - amount
+        - claim_amount
+        - created_at
+        - id
+        - inspector_id
+        - line_items
+        - month
+        - note
+        - review_at
+        - review_by_id
+        - review_note
+        - service_case_id
+        - status
+        - trip_skipped
+        - updated_at
+        - voucher_urls
+        - work_unit_id
+      filter:
+        inspector_id:
+          _eq: X-Hasura-User-Id
+      allow_aggregations: true
+  - role: site_manager
+    permission:
+      columns:
+        - amount
+        - claim_amount
+        - created_at
+        - id
+        - inspector_id
+        - line_items
+        - month
+        - note
+        - review_at
+        - review_by_id
+        - review_note
+        - service_case_id
+        - status
+        - trip_skipped
+        - updated_at
+        - voucher_urls
+        - work_unit_id
+      filter:
+        service_case:
+          site:
+            _or:
+              - manager_id:
+                  _eq: X-Hasura-User-Id
+              - site_members:
+                  status:
+                    _eq: active
+                  user_id:
+                    _eq: X-Hasura-User-Id
+      allow_aggregations: true
+  - role: super_admin
+    permission:
+      columns:
+        - amount
+        - claim_amount
+        - created_at
+        - id
+        - inspector_id
+        - line_items
+        - month
+        - note
+        - review_at
+        - review_by_id
+        - review_note
+        - service_case_id
+        - status
+        - trip_skipped
+        - updated_at
+        - voucher_urls
+        - work_unit_id
+      filter: {}
+      allow_aggregations: true
+update_permissions:
+  - role: inspector
+    permission:
+      columns:
+        - amount
+        - claim_amount
+        - created_at
+        - id
+        - inspector_id
+        - line_items
+        - month
+        - note
+        - review_at
+        - review_by_id
+        - review_note
+        - service_case_id
+        - status
+        - trip_skipped
+        - updated_at
+        - voucher_urls
+        - work_unit_id
+      filter:
+        inspector_id:
+          _eq: X-Hasura-User-Id
+      check:
+        inspector_id:
+          _eq: X-Hasura-User-Id
+  - role: site_manager
+    permission:
+      columns:
+        - amount
+        - claim_amount
+        - created_at
+        - id
+        - inspector_id
+        - line_items
+        - month
+        - note
+        - review_at
+        - review_by_id
+        - review_note
+        - service_case_id
+        - status
+        - trip_skipped
+        - updated_at
+        - voucher_urls
+        - work_unit_id
+      filter:
+        service_case:
+          site:
+            _or:
+              - manager_id:
+                  _eq: X-Hasura-User-Id
+              - site_members:
+                  status:
+                    _eq: active
+                  user_id:
+                    _eq: X-Hasura-User-Id
+      check:
+        service_case:
+          site:
+            _or:
+              - manager_id:
+                  _eq: X-Hasura-User-Id
+              - site_members:
+                  status:
+                    _eq: active
+                  user_id:
+                    _eq: X-Hasura-User-Id
+  - role: super_admin
+    permission:
+      columns:
+        - amount
+        - claim_amount
+        - created_at
+        - id
+        - inspector_id
+        - line_items
+        - month
+        - note
+        - review_at
+        - review_by_id
+        - review_note
+        - service_case_id
+        - status
+        - trip_skipped
+        - updated_at
+        - voucher_urls
+        - work_unit_id
+      filter: {}
+      check: {}
+delete_permissions:
+  - role: inspector
+    permission:
+      filter:
+        inspector_id:
+          _eq: X-Hasura-User-Id
+  - role: site_manager
+    permission:
+      filter:
+        service_case:
+          site:
+            _or:
+              - manager_id:
+                  _eq: X-Hasura-User-Id
+              - site_members:
+                  status:
+                    _eq: active
+                  user_id:
+                    _eq: X-Hasura-User-Id
+  - role: super_admin
+    permission:
+      filter: {}

@@ -1,0 +1,105 @@
+table:
+  name: price_library
+  schema: public
+object_relationships:
+  - name: created_by
+    using:
+      foreign_key_constraint_on: created_by_id
+insert_permissions:
+  - role: super_admin
+    permission:
+      check: {}
+      columns:
+        - change_remark
+        - coop_type
+        - created_at
+        - created_by_id
+        - effective_date
+        - id
+        - item_code
+        - item_desc
+        - item_name
+        - price_type
+        - product_model
+        - region
+        - scene
+        - status
+        - unit
+        - unit_price
+        - updated_at
+        - work_hours
+select_permissions:
+  - role: site_manager
+    permission:
+      columns:
+        - change_remark
+        - coop_type
+        - created_at
+        - created_by_id
+        - effective_date
+        - id
+        - item_code
+        - item_desc
+        - item_name
+        - price_type
+        - product_model
+        - region
+        - scene
+        - status
+        - unit
+        - unit_price
+        - updated_at
+        - work_hours
+      filter: {}
+      allow_aggregations: true
+  - role: super_admin
+    permission:
+      columns:
+        - change_remark
+        - coop_type
+        - created_at
+        - created_by_id
+        - effective_date
+        - id
+        - item_code
+        - item_desc
+        - item_name
+        - price_type
+        - product_model
+        - region
+        - scene
+        - status
+        - unit
+        - unit_price
+        - updated_at
+        - work_hours
+      filter: {}
+      allow_aggregations: true
+update_permissions:
+  - role: super_admin
+    permission:
+      columns:
+        - change_remark
+        - coop_type
+        - created_at
+        - created_by_id
+        - effective_date
+        - id
+        - item_code
+        - item_desc
+        - item_name
+        - price_type
+        - product_model
+        - region
+        - scene
+        - status
+        - unit
+        - unit_price
+        - updated_at
+        - work_hours
+      filter: {}
+      check: {}
+delete_permissions:
+  - role: super_admin
+    permission:
+      filter: {}

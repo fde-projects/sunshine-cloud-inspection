@@ -1,0 +1,109 @@
+table:
+  name: change_logs
+  schema: public
+object_relationships:
+  - name: operator
+    using:
+      foreign_key_constraint_on: operator_id
+insert_permissions:
+  - role: site_manager
+    permission:
+      check:
+        operator_id:
+          _eq: X-Hasura-User-Id
+      columns:
+        - created_at
+        - entity_id
+        - entity_type
+        - field
+        - id
+        - new_value
+        - old_value
+        - operator_id
+        - reason
+  - role: super_admin
+    permission:
+      check: {}
+      columns:
+        - created_at
+        - entity_id
+        - entity_type
+        - field
+        - id
+        - new_value
+        - old_value
+        - operator_id
+        - reason
+select_permissions:
+  - role: site_manager
+    permission:
+      columns:
+        - created_at
+        - entity_id
+        - entity_type
+        - field
+        - id
+        - new_value
+        - old_value
+        - operator_id
+        - reason
+      filter:
+        operator_id:
+          _eq: X-Hasura-User-Id
+      allow_aggregations: true
+  - role: super_admin
+    permission:
+      columns:
+        - created_at
+        - entity_id
+        - entity_type
+        - field
+        - id
+        - new_value
+        - old_value
+        - operator_id
+        - reason
+      filter: {}
+      allow_aggregations: true
+update_permissions:
+  - role: site_manager
+    permission:
+      columns:
+        - created_at
+        - entity_id
+        - entity_type
+        - field
+        - id
+        - new_value
+        - old_value
+        - operator_id
+        - reason
+      filter:
+        operator_id:
+          _eq: X-Hasura-User-Id
+      check:
+        operator_id:
+          _eq: X-Hasura-User-Id
+  - role: super_admin
+    permission:
+      columns:
+        - created_at
+        - entity_id
+        - entity_type
+        - field
+        - id
+        - new_value
+        - old_value
+        - operator_id
+        - reason
+      filter: {}
+      check: {}
+delete_permissions:
+  - role: site_manager
+    permission:
+      filter:
+        operator_id:
+          _eq: X-Hasura-User-Id
+  - role: super_admin
+    permission:
+      filter: {}

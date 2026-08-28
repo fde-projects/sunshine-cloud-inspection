@@ -1,0 +1,73 @@
+table:
+  name: item_price_mappings
+  schema: public
+object_relationships:
+  - name: created_by
+    using:
+      foreign_key_constraint_on: created_by_id
+insert_permissions:
+  - role: super_admin
+    permission:
+      check: {}
+      columns:
+        - confidence
+        - created_at
+        - created_by_id
+        - id
+        - mapping_type
+        - normalized_source
+        - source_item_name
+        - status
+        - target_item_code
+        - updated_at
+select_permissions:
+  - role: site_manager
+    permission:
+      columns:
+        - confidence
+        - created_at
+        - created_by_id
+        - id
+        - mapping_type
+        - normalized_source
+        - source_item_name
+        - status
+        - target_item_code
+        - updated_at
+      filter: {}
+      allow_aggregations: true
+  - role: super_admin
+    permission:
+      columns:
+        - confidence
+        - created_at
+        - created_by_id
+        - id
+        - mapping_type
+        - normalized_source
+        - source_item_name
+        - status
+        - target_item_code
+        - updated_at
+      filter: {}
+      allow_aggregations: true
+update_permissions:
+  - role: super_admin
+    permission:
+      columns:
+        - confidence
+        - created_at
+        - created_by_id
+        - id
+        - mapping_type
+        - normalized_source
+        - source_item_name
+        - status
+        - target_item_code
+        - updated_at
+      filter: {}
+      check: {}
+delete_permissions:
+  - role: super_admin
+    permission:
+      filter: {}

@@ -1,0 +1,289 @@
+table:
+  name: po_orders
+  schema: public
+object_relationships:
+  - name: import_batch
+    using:
+      foreign_key_constraint_on: import_batch_id
+  - name: service_case
+    using:
+      foreign_key_constraint_on: service_case_id
+array_relationships:
+  - name: po_items
+    using:
+      foreign_key_constraint_on:
+        column: po_order_id
+        table:
+          name: po_items
+          schema: public
+insert_permissions:
+  - role: site_manager
+    permission:
+      check:
+        _or:
+          - service_case:
+              site:
+                _or:
+                  - manager_id:
+                      _eq: X-Hasura-User-Id
+                  - site_members:
+                      status:
+                        _eq: active
+                      user_id:
+                        _eq: X-Hasura-User-Id
+          - service_case_id:
+              _is_null: true
+      columns:
+        - created_at
+        - demand_date
+        - demand_desc
+        - demand_type
+        - demander
+        - dingtalk_created_at
+        - dingtalk_updated_at
+        - duration_req
+        - fault_level
+        - fault_phenomenon
+        - gsp_case_no
+        - id
+        - import_batch_id
+        - match_status
+        - po_no
+        - po_total_amount
+        - product_line
+        - product_model
+        - product_qty
+        - project_area
+        - project_country
+        - project_name
+        - project_region
+        - project_scene
+        - province
+        - service_case_id
+        - submitter
+        - updated_at
+  - role: super_admin
+    permission:
+      check: {}
+      columns:
+        - created_at
+        - demand_date
+        - demand_desc
+        - demand_type
+        - demander
+        - dingtalk_created_at
+        - dingtalk_updated_at
+        - duration_req
+        - fault_level
+        - fault_phenomenon
+        - gsp_case_no
+        - id
+        - import_batch_id
+        - match_status
+        - po_no
+        - po_total_amount
+        - product_line
+        - product_model
+        - product_qty
+        - project_area
+        - project_country
+        - project_name
+        - project_region
+        - project_scene
+        - province
+        - service_case_id
+        - submitter
+        - updated_at
+select_permissions:
+  - role: site_manager
+    permission:
+      columns:
+        - created_at
+        - demand_date
+        - demand_desc
+        - demand_type
+        - demander
+        - dingtalk_created_at
+        - dingtalk_updated_at
+        - duration_req
+        - fault_level
+        - fault_phenomenon
+        - gsp_case_no
+        - id
+        - import_batch_id
+        - match_status
+        - po_no
+        - po_total_amount
+        - product_line
+        - product_model
+        - product_qty
+        - project_area
+        - project_country
+        - project_name
+        - project_region
+        - project_scene
+        - province
+        - service_case_id
+        - submitter
+        - updated_at
+      filter:
+        _or:
+          - service_case:
+              site:
+                _or:
+                  - manager_id:
+                      _eq: X-Hasura-User-Id
+                  - site_members:
+                      status:
+                        _eq: active
+                      user_id:
+                        _eq: X-Hasura-User-Id
+          - service_case_id:
+              _is_null: true
+      allow_aggregations: true
+  - role: super_admin
+    permission:
+      columns:
+        - created_at
+        - demand_date
+        - demand_desc
+        - demand_type
+        - demander
+        - dingtalk_created_at
+        - dingtalk_updated_at
+        - duration_req
+        - fault_level
+        - fault_phenomenon
+        - gsp_case_no
+        - id
+        - import_batch_id
+        - match_status
+        - po_no
+        - po_total_amount
+        - product_line
+        - product_model
+        - product_qty
+        - project_area
+        - project_country
+        - project_name
+        - project_region
+        - project_scene
+        - province
+        - service_case_id
+        - submitter
+        - updated_at
+      filter: {}
+      allow_aggregations: true
+update_permissions:
+  - role: site_manager
+    permission:
+      columns:
+        - created_at
+        - demand_date
+        - demand_desc
+        - demand_type
+        - demander
+        - dingtalk_created_at
+        - dingtalk_updated_at
+        - duration_req
+        - fault_level
+        - fault_phenomenon
+        - gsp_case_no
+        - id
+        - import_batch_id
+        - match_status
+        - po_no
+        - po_total_amount
+        - product_line
+        - product_model
+        - product_qty
+        - project_area
+        - project_country
+        - project_name
+        - project_region
+        - project_scene
+        - province
+        - service_case_id
+        - submitter
+        - updated_at
+      filter:
+        _or:
+          - service_case:
+              site:
+                _or:
+                  - manager_id:
+                      _eq: X-Hasura-User-Id
+                  - site_members:
+                      status:
+                        _eq: active
+                      user_id:
+                        _eq: X-Hasura-User-Id
+          - service_case_id:
+              _is_null: true
+      check:
+        _or:
+          - service_case:
+              site:
+                _or:
+                  - manager_id:
+                      _eq: X-Hasura-User-Id
+                  - site_members:
+                      status:
+                        _eq: active
+                      user_id:
+                        _eq: X-Hasura-User-Id
+          - service_case_id:
+              _is_null: true
+  - role: super_admin
+    permission:
+      columns:
+        - created_at
+        - demand_date
+        - demand_desc
+        - demand_type
+        - demander
+        - dingtalk_created_at
+        - dingtalk_updated_at
+        - duration_req
+        - fault_level
+        - fault_phenomenon
+        - gsp_case_no
+        - id
+        - import_batch_id
+        - match_status
+        - po_no
+        - po_total_amount
+        - product_line
+        - product_model
+        - product_qty
+        - project_area
+        - project_country
+        - project_name
+        - project_region
+        - project_scene
+        - province
+        - service_case_id
+        - submitter
+        - updated_at
+      filter: {}
+      check: {}
+delete_permissions:
+  - role: site_manager
+    permission:
+      filter:
+        _or:
+          - service_case:
+              site:
+                _or:
+                  - manager_id:
+                      _eq: X-Hasura-User-Id
+                  - site_members:
+                      status:
+                        _eq: active
+                      user_id:
+                        _eq: X-Hasura-User-Id
+          - service_case_id:
+              _is_null: true
+  - role: super_admin
+    permission:
+      filter: {}

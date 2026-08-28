@@ -1,0 +1,473 @@
+table:
+  name: service_cases
+  schema: public
+object_relationships:
+  - name: assign_by
+    using:
+      foreign_key_constraint_on: assign_by_id
+  - name: case_performance
+    using:
+      foreign_key_constraint_on:
+        column: service_case_id
+        table:
+          name: case_performances
+          schema: public
+  - name: import_batch
+    using:
+      foreign_key_constraint_on: import_batch_id
+  - name: inspector
+    using:
+      foreign_key_constraint_on: inspector_id
+  - name: site
+    using:
+      foreign_key_constraint_on: site_id
+  - name: task_template
+    using:
+      foreign_key_constraint_on: task_template_id
+array_relationships:
+  - name: assessment_events
+    using:
+      foreign_key_constraint_on:
+        column: service_case_id
+        table:
+          name: assessment_events
+          schema: public
+  - name: case_assignments
+    using:
+      foreign_key_constraint_on:
+        column: service_case_id
+        table:
+          name: case_assignments
+          schema: public
+  - name: case_expense_claims
+    using:
+      foreign_key_constraint_on:
+        column: service_case_id
+        table:
+          name: case_expense_claims
+          schema: public
+  - name: case_perf_shares
+    using:
+      foreign_key_constraint_on:
+        column: service_case_id
+        table:
+          name: case_perf_shares
+          schema: public
+  - name: case_work_units
+    using:
+      foreign_key_constraint_on:
+        column: service_case_id
+        table:
+          name: case_work_units
+          schema: public
+  - name: inspection_tasks
+    using:
+      foreign_key_constraint_on:
+        column: service_case_id
+        table:
+          name: inspection_tasks
+          schema: public
+  - name: po_orders
+    using:
+      foreign_key_constraint_on:
+        column: service_case_id
+        table:
+          name: po_orders
+          schema: public
+insert_permissions:
+  - role: inspector
+    permission:
+      check:
+        _or:
+          - inspector_id:
+              _eq: X-Hasura-User-Id
+          - case_assignments:
+              inspector_id:
+                _eq: X-Hasura-User-Id
+      columns:
+        - assign_by_id
+        - assign_mode
+        - assign_remark
+        - assign_time
+        - city
+        - completed_units
+        - created_at
+        - creator
+        - expense_enabled
+        - finish_time
+        - gsp_case_no
+        - id
+        - import_batch_id
+        - inspector_id
+        - planned_units
+        - product_line
+        - project_name
+        - province
+        - region
+        - service_type
+        - site_desc
+        - site_id
+        - status
+        - task_template_id
+        - task_type
+        - unit_label
+        - updated_at
+        - version
+  - role: site_manager
+    permission:
+      check:
+        _or:
+          - site_id:
+              _is_null: true
+          - site:
+              _or:
+                - manager_id:
+                    _eq: X-Hasura-User-Id
+                - site_members:
+                    status:
+                      _eq: active
+                    user_id:
+                      _eq: X-Hasura-User-Id
+      columns:
+        - assign_by_id
+        - assign_mode
+        - assign_remark
+        - assign_time
+        - city
+        - completed_units
+        - created_at
+        - creator
+        - expense_enabled
+        - finish_time
+        - gsp_case_no
+        - id
+        - import_batch_id
+        - inspector_id
+        - planned_units
+        - product_line
+        - project_name
+        - province
+        - region
+        - service_type
+        - site_desc
+        - site_id
+        - status
+        - task_template_id
+        - task_type
+        - unit_label
+        - updated_at
+        - version
+  - role: super_admin
+    permission:
+      check: {}
+      columns:
+        - assign_by_id
+        - assign_mode
+        - assign_remark
+        - assign_time
+        - city
+        - completed_units
+        - created_at
+        - creator
+        - expense_enabled
+        - finish_time
+        - gsp_case_no
+        - id
+        - import_batch_id
+        - inspector_id
+        - planned_units
+        - product_line
+        - project_name
+        - province
+        - region
+        - service_type
+        - site_desc
+        - site_id
+        - status
+        - task_template_id
+        - task_type
+        - unit_label
+        - updated_at
+        - version
+select_permissions:
+  - role: inspector
+    permission:
+      columns:
+        - assign_by_id
+        - assign_mode
+        - assign_remark
+        - assign_time
+        - city
+        - completed_units
+        - created_at
+        - creator
+        - expense_enabled
+        - finish_time
+        - gsp_case_no
+        - id
+        - import_batch_id
+        - inspector_id
+        - planned_units
+        - product_line
+        - project_name
+        - province
+        - region
+        - service_type
+        - site_desc
+        - site_id
+        - status
+        - task_template_id
+        - task_type
+        - unit_label
+        - updated_at
+        - version
+      filter:
+        _or:
+          - inspector_id:
+              _eq: X-Hasura-User-Id
+          - case_assignments:
+              inspector_id:
+                _eq: X-Hasura-User-Id
+      allow_aggregations: true
+  - role: site_manager
+    permission:
+      columns:
+        - assign_by_id
+        - assign_mode
+        - assign_remark
+        - assign_time
+        - city
+        - completed_units
+        - created_at
+        - creator
+        - expense_enabled
+        - finish_time
+        - gsp_case_no
+        - id
+        - import_batch_id
+        - inspector_id
+        - planned_units
+        - product_line
+        - project_name
+        - province
+        - region
+        - service_type
+        - site_desc
+        - site_id
+        - status
+        - task_template_id
+        - task_type
+        - unit_label
+        - updated_at
+        - version
+      filter:
+        _or:
+          - site_id:
+              _is_null: true
+          - site:
+              _or:
+                - manager_id:
+                    _eq: X-Hasura-User-Id
+                - site_members:
+                    status:
+                      _eq: active
+                    user_id:
+                      _eq: X-Hasura-User-Id
+      allow_aggregations: true
+  - role: super_admin
+    permission:
+      columns:
+        - assign_by_id
+        - assign_mode
+        - assign_remark
+        - assign_time
+        - city
+        - completed_units
+        - created_at
+        - creator
+        - expense_enabled
+        - finish_time
+        - gsp_case_no
+        - id
+        - import_batch_id
+        - inspector_id
+        - planned_units
+        - product_line
+        - project_name
+        - province
+        - region
+        - service_type
+        - site_desc
+        - site_id
+        - status
+        - task_template_id
+        - task_type
+        - unit_label
+        - updated_at
+        - version
+      filter: {}
+      allow_aggregations: true
+update_permissions:
+  - role: inspector
+    permission:
+      columns:
+        - assign_by_id
+        - assign_mode
+        - assign_remark
+        - assign_time
+        - city
+        - completed_units
+        - created_at
+        - creator
+        - expense_enabled
+        - finish_time
+        - gsp_case_no
+        - id
+        - import_batch_id
+        - inspector_id
+        - planned_units
+        - product_line
+        - project_name
+        - province
+        - region
+        - service_type
+        - site_desc
+        - site_id
+        - status
+        - task_template_id
+        - task_type
+        - unit_label
+        - updated_at
+        - version
+      filter:
+        _or:
+          - inspector_id:
+              _eq: X-Hasura-User-Id
+          - case_assignments:
+              inspector_id:
+                _eq: X-Hasura-User-Id
+      check:
+        _or:
+          - inspector_id:
+              _eq: X-Hasura-User-Id
+          - case_assignments:
+              inspector_id:
+                _eq: X-Hasura-User-Id
+  - role: site_manager
+    permission:
+      columns:
+        - assign_by_id
+        - assign_mode
+        - assign_remark
+        - assign_time
+        - city
+        - completed_units
+        - created_at
+        - creator
+        - expense_enabled
+        - finish_time
+        - gsp_case_no
+        - id
+        - import_batch_id
+        - inspector_id
+        - planned_units
+        - product_line
+        - project_name
+        - province
+        - region
+        - service_type
+        - site_desc
+        - site_id
+        - status
+        - task_template_id
+        - task_type
+        - unit_label
+        - updated_at
+        - version
+      filter:
+        _or:
+          - site_id:
+              _is_null: true
+          - site:
+              _or:
+                - manager_id:
+                    _eq: X-Hasura-User-Id
+                - site_members:
+                    status:
+                      _eq: active
+                    user_id:
+                      _eq: X-Hasura-User-Id
+      check:
+        _or:
+          - site_id:
+              _is_null: true
+          - site:
+              _or:
+                - manager_id:
+                    _eq: X-Hasura-User-Id
+                - site_members:
+                    status:
+                      _eq: active
+                    user_id:
+                      _eq: X-Hasura-User-Id
+  - role: super_admin
+    permission:
+      columns:
+        - assign_by_id
+        - assign_mode
+        - assign_remark
+        - assign_time
+        - city
+        - completed_units
+        - created_at
+        - creator
+        - expense_enabled
+        - finish_time
+        - gsp_case_no
+        - id
+        - import_batch_id
+        - inspector_id
+        - planned_units
+        - product_line
+        - project_name
+        - province
+        - region
+        - service_type
+        - site_desc
+        - site_id
+        - status
+        - task_template_id
+        - task_type
+        - unit_label
+        - updated_at
+        - version
+      filter: {}
+      check: {}
+delete_permissions:
+  - role: inspector
+    permission:
+      filter:
+        _or:
+          - inspector_id:
+              _eq: X-Hasura-User-Id
+          - case_assignments:
+              inspector_id:
+                _eq: X-Hasura-User-Id
+  - role: site_manager
+    permission:
+      filter:
+        _or:
+          - site_id:
+              _is_null: true
+          - site:
+              _or:
+                - manager_id:
+                    _eq: X-Hasura-User-Id
+                - site_members:
+                    status:
+                      _eq: active
+                    user_id:
+                      _eq: X-Hasura-User-Id
+  - role: super_admin
+    permission:
+      filter: {}

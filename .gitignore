@@ -1,0 +1,43 @@
+# env / secrets
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# local tooling binaries
+.tools/
+
+# dependencies
+node_modules/
+.pnpm-store/
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# build / cache
+.next/
+out/
+dist/
+build/
+.turbo/
+*.tsbuildinfo
+.cache/
+
+# hasura
+lingstack/hasura/**/config.yaml.bak
+
+# ide / os
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db
+
+# logs / test
+*.log
+coverage/
+.nyc_output/
+
+# docker
+*.pid

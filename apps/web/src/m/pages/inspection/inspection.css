@@ -1,0 +1,636 @@
+.inspection-page {
+  --rv-primary-color: var(--h5-green);
+  min-height: 100vh;
+  padding-bottom: calc(96px + env(safe-area-inset-bottom));
+  color: var(--h5-ink);
+  background:
+    radial-gradient(circle at 100% 0, rgba(26, 154, 110, 0.1), transparent 260px),
+    transparent;
+}
+
+.inspection-header {
+  background: rgba(251, 252, 251, 0.9) !important;
+  box-shadow: 0 6px 22px rgba(24, 73, 55, 0.05);
+  backdrop-filter: blur(18px) saturate(1.15);
+}
+
+.inspection-body {
+  width: 100%;
+  padding: 14px 12px 22px;
+}
+
+.inspection-task-summary.rv-cell {
+  overflow: hidden;
+  padding: 15px 16px;
+  border: 1px solid var(--h5-line-soft);
+  border-radius: var(--h5-radius-lg);
+  background: var(--h5-surface-elevated);
+  box-shadow: var(--h5-shadow-soft);
+}
+
+.inspection-task-summary .rv-cell__title {
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.inspection-location-card,
+.inspection-progress-card {
+  box-shadow: var(--h5-shadow-soft);
+}
+
+.inspection-progress-card {
+  border: 1px solid var(--h5-line-soft);
+  border-radius: var(--h5-radius-lg) !important;
+  background: var(--h5-surface-elevated) !important;
+}
+
+.inspection-step-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 2px 1px 4px;
+}
+
+.inspection-step-strip > button {
+  min-height: 32px;
+  white-space: nowrap;
+  border-radius: 10px !important;
+  transition: transform 0.16s var(--h5-ease), background 0.16s ease;
+}
+
+.inspection-step-strip > button.is-trip {
+  border: 1px solid #087b59 !important;
+  font-weight: 650;
+}
+
+.inspection-current-card.rv-cell-group--inset {
+  margin: 0;
+  overflow: visible;
+  border: 1px solid var(--h5-line-soft);
+  border-radius: var(--h5-radius-xl);
+  background: #fff;
+  box-shadow: var(--h5-shadow);
+}
+
+.inspection-current-card > .rv-cell:first-child {
+  border-radius: 18px 18px 0 0;
+}
+
+.inspection-current-card .rv-cell-group__title {
+  padding-left: 4px;
+  color: #7c8e86;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.inspection-media-section {
+  margin: 0 16px;
+  padding: 17px 0;
+  border-top: 1px solid #edf2ef;
+}
+
+.inspection-media-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 13px;
+}
+
+.inspection-media-heading span {
+  color: #244a3d;
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.inspection-media-heading small {
+  color: #91a099;
+  font-size: 11px;
+}
+
+.inspection-sample-grid,
+.inspection-photo-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.inspection-sample-grid > .rv-image {
+  width: 100% !important;
+  height: auto !important;
+  aspect-ratio: 1;
+  border: 1px solid #e9efec;
+  border-radius: 12px;
+  background: #f4f7f5;
+}
+
+.inspection-media-empty,
+.inspection-photo-placeholder {
+  min-height: 92px;
+  display: grid;
+  place-items: center;
+  border: 1px dashed #cad9d2;
+  border-radius: 13px;
+  color: #8b9b94;
+  background: #f7faf8;
+  font-size: 12px;
+}
+.inspection-photo-placeholder.is-clickable {
+  width: 100%;
+  padding: 0;
+  cursor: pointer;
+  font: inherit;
+}
+.inspection-photo-placeholder.is-clickable:disabled {
+  opacity: 0.5;
+}
+.inspection-photo-placeholder strong {
+  font-size: 28px;
+  font-weight: 300;
+  color: #087b59;
+  line-height: 1;
+}
+
+/* 仅巡检网格内铺满格子；勿影响行程报销页的 72px 方块 */
+.inspection-photo-grid .trip-upload-add {
+  width: 100%;
+  aspect-ratio: 1;
+  min-height: 72px;
+  border: 1px dashed #9ec9b8;
+  border-radius: 12px;
+  background: #f7fcfa;
+  color: #087b59;
+  font-size: 28px;
+  font-weight: 300;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+.inspection-photo-grid .trip-upload-add:disabled {
+  opacity: 0.45;
+}
+.trip-ocr-link {
+  display: inline-block;
+  margin-top: 8px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: #087b59;
+  font-size: 13px;
+}
+.trip-ocr-link:disabled {
+  opacity: 0.55;
+}
+
+.inspection-photo-placeholder {
+  display: grid;
+  place-items: center;
+  aspect-ratio: 1;
+}
+
+.inspection-photo-placeholder strong {
+  color: #087b59;
+  font-size: 28px;
+  font-weight: 300;
+  line-height: 1;
+}
+
+.inspection-photo-thumb {
+  position: relative;
+  min-width: 0;
+  aspect-ratio: 1;
+  border-radius: 13px;
+  background: #eff4f1;
+}
+
+.inspection-photo-open {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  padding: 0;
+  display: block;
+  border: 1px solid #e6ede9;
+  border-radius: 13px;
+  background: #eff4f1;
+}
+
+.inspection-photo-open img,
+.inspection-photo-thumb.is-pending > img {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: cover;
+}
+
+.inspection-photo-remove {
+  position: absolute;
+  top: -7px;
+  right: -7px;
+  z-index: 3;
+  width: 27px;
+  height: 27px;
+  padding: 0;
+  border: 2px solid #fff;
+  border-radius: 50%;
+  color: #fff;
+  background: rgba(31, 49, 42, 0.82);
+  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.16);
+  font-size: 17px;
+  line-height: 22px;
+}
+
+.inspection-photo-retry {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 8px;
+  color: #8d4038;
+  background: #fff3f1;
+  font-size: 11px;
+  line-height: 1.5;
+  text-align: center;
+}
+
+.inspection-photo-thumb.is-pending {
+  overflow: hidden;
+}
+
+.inspection-photo-thumb.is-pending::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(to top, rgba(13, 67, 48, 0.52), transparent 65%);
+}
+
+.inspection-photo-thumb.is-pending > span {
+  position: absolute;
+  z-index: 2;
+  right: 9px;
+  bottom: 8px;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.inspection-upload-notice {
+  border: 1px solid rgba(15, 122, 88, 0.1);
+}
+
+.inspection-upload-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.inspection-upload-actions .rv-button {
+  width: 100%;
+  min-width: 0;
+  height: 50px;
+  padding: 0 8px;
+  white-space: nowrap;
+  font-size: 14px;
+  font-weight: 700;
+  border-radius: 12px !important;
+}
+
+.inspection-gallery-button {
+  border-color: #9bcbb8 !important;
+  color: #167657 !important;
+}
+
+.inspection-camera-button {
+  color: #fff !important;
+  border-color: transparent !important;
+  background: linear-gradient(135deg, var(--h5-green-bright), var(--h5-green-dark)) !important;
+  box-shadow: 0 9px 20px rgba(15, 122, 88, 0.2);
+}
+
+.inspection-upload-tip {
+  margin-top: 10px;
+  color: #86978f;
+  font-size: 11px;
+  line-height: 1.55;
+  text-align: center;
+}
+
+.inspection-ai-note {
+  border: 1px solid rgba(61, 125, 177, 0.1);
+}
+
+.inspection-manual-check {
+  margin: 0 16px 14px;
+  padding: 14px;
+  border: 1px solid #e1ebe6;
+  border-radius: 14px;
+  background: #fbfdfc;
+}
+
+.inspection-manual-check__heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.inspection-manual-check__heading strong {
+  display: block;
+  color: #203b31;
+  font-size: 14px;
+}
+
+.inspection-manual-check__heading span {
+  display: block;
+  margin-top: 4px;
+  color: #84938d;
+  font-size: 11px;
+}
+
+.inspection-manual-check__actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-top: 13px;
+}
+
+.inspection-manual-check__actions .rv-button {
+  height: 42px;
+  font-weight: 700;
+  border-radius: 11px !important;
+}
+
+.inspection-manual-check__actions .is-pass {
+  color: #fff;
+  border-color: var(--h5-green);
+  background: var(--h5-green);
+}
+
+.inspection-manual-check__actions .is-fail {
+  color: #fff;
+  border-color: var(--h5-danger);
+  background: var(--h5-danger);
+}
+
+.inspection-bottom-actions {
+  background: rgba(251, 252, 251, 0.94) !important;
+  box-shadow: 0 -10px 30px rgba(24, 73, 55, 0.08);
+  backdrop-filter: blur(18px) saturate(1.1);
+}
+
+.inspection-bottom-actions .rv-button--primary {
+  background: linear-gradient(135deg, var(--h5-green-bright), var(--h5-green-dark));
+  border-color: transparent;
+  box-shadow: 0 9px 22px rgba(15, 122, 88, 0.22);
+}
+
+.inspection-load-state {
+  width: calc(100% - 28px);
+  max-width: 430px;
+  margin: 64px auto 0;
+  padding: 34px 24px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  border: 1px solid var(--h5-line-soft);
+  border-radius: var(--h5-radius-xl);
+  background: #fff;
+  box-shadow: var(--h5-shadow);
+  text-align: center;
+}
+
+.inspection-load-icon {
+  width: 48px;
+  height: 48px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  color: #fff;
+  background: #d86453;
+  font-size: 25px;
+  font-weight: 800;
+}
+
+.inspection-load-state h2 {
+  margin: 17px 0 8px;
+  font-family: var(--h5-font-display);
+  font-size: 18px;
+}
+
+.inspection-load-state p {
+  margin: 0 0 20px;
+  color: #7c8e86;
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+.inspection-load-state .rv-button {
+  min-width: 180px;
+}
+
+.inspection-load-back {
+  margin-top: 15px;
+  border: 0;
+  color: #71837b;
+  background: transparent;
+}
+
+.inspection-loading-ring {
+  width: 42px;
+  height: 42px;
+  border: 4px solid #dce9e3;
+  border-top-color: var(--h5-green);
+  border-radius: 50%;
+  animation: inspection-spin 0.8s linear infinite;
+}
+
+@keyframes inspection-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (max-width: 360px) {
+  .inspection-body {
+    padding-right: 10px;
+    padding-left: 10px;
+  }
+
+  .inspection-media-section {
+    margin-right: 13px;
+    margin-left: 13px;
+  }
+
+  .inspection-sample-grid,
+  .inspection-photo-grid {
+    gap: 8px;
+  }
+
+  .inspection-upload-actions .rv-button {
+    font-size: 13px;
+  }
+}
+
+/* 行程嵌进产品线 */
+.trip-wizard-card {
+  margin: 12px 0;
+  padding: 14px;
+  border: 1px solid var(--h5-line-soft, #dce8e2);
+  border-radius: 12px;
+  background: #fff;
+}
+.trip-wizard-card h3 {
+  margin: 0 0 6px;
+  font-size: 16px;
+}
+.trip-wizard-card > p {
+  margin: 0 0 12px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: #61756b;
+}
+.trip-wizard-choice {
+  display: grid;
+  gap: 10px;
+}
+.trip-wizard-choice button {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  width: 100%;
+  padding: 14px;
+  border: 1px solid #d5e5de;
+  border-radius: 14px;
+  background: #fff;
+  text-align: left;
+  color: #3f6559;
+}
+.trip-wizard-choice button.is-primary {
+  border-color: #087b59;
+  background: #e8f7f1;
+}
+.trip-wizard-choice button strong {
+  font-size: 15px;
+  color: #12483c;
+}
+.trip-wizard-choice button span {
+  font-size: 12px;
+  color: #61756b;
+}
+.trip-wizard-confirm {
+  display: block;
+  width: 100%;
+  margin-top: 14px;
+  border: none;
+  border-radius: 12px;
+  padding: 14px 16px;
+  background: #087b59;
+  color: #fff;
+  font-size: 15px;
+  font-weight: 650;
+}
+.trip-wizard-confirm:disabled {
+  background: #b7cfc6;
+  color: #f5faf7;
+}
+.trip-wizard-block {
+  margin-top: 14px;
+}
+.trip-wizard-block > strong {
+  display: block;
+  margin-bottom: 8px;
+  font-size: 14px;
+}
+.trip-wizard-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 10px;
+  font-size: 13px;
+  color: #3f6559;
+}
+.trip-wizard-field input,
+.trip-wizard-field textarea {
+  border: 1px solid #d5e5de;
+  border-radius: 10px;
+  padding: 10px 12px;
+  font-size: 15px;
+}
+.trip-wizard-hint {
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: #61756b;
+}
+.trip-wizard-diff {
+  margin: 8px 0 0;
+  font-size: 13px;
+  color: #31584d;
+}
+.trip-wizard-diff strong {
+  color: #087b59;
+  font-size: 16px;
+}
+.trip-wizard-skip-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 12px 0 0;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: #fff4e5;
+  font-size: 13px;
+  color: #b86a00;
+}
+.trip-wizard-skip-bar.is-need {
+  background: #e8f7f1;
+  color: #087b59;
+}
+.trip-wizard-skip-bar button {
+  border: none;
+  border-radius: 999px;
+  padding: 6px 12px;
+  background: #fff;
+  color: #087b59;
+  font-size: 12px;
+  font-weight: 650;
+}
+.trip-wizard-skip-bar button:disabled {
+  opacity: 0.55;
+}
+.trip-inline-thumb-btn {
+  display: block;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  border: none;
+  background: transparent;
+}
+.trip-inline-thumb-btn img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 12px;
+}
+.inspection-unit-serial-bar {
+  margin: 0 12px 8px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: #eef8f3;
+  color: #087b59;
+  font-size: 13px;
+  font-weight: 650;
+  letter-spacing: 0.02em;
+}
+/* 序列号步骤只展示 1 张缩略图，避免原图撑满整屏 */
+.serial-photo-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  max-width: 100%;
+}
+.serial-photo-grid .inspection-photo-thumb,
+.serial-photo-grid .inspection-photo-placeholder {
+  max-width: 120px;
+}

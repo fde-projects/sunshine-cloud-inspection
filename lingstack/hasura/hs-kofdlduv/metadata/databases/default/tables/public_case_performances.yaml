@@ -1,0 +1,254 @@
+table:
+  name: case_performances
+  schema: public
+object_relationships:
+  - name: deduct_by
+    using:
+      foreign_key_constraint_on: deduct_by_id
+  - name: deduction_review_by
+    using:
+      foreign_key_constraint_on: deduction_review_by_id
+  - name: inspector
+    using:
+      foreign_key_constraint_on: inspector_id
+  - name: reviewer
+    using:
+      foreign_key_constraint_on: reviewer_id
+  - name: service_case
+    using:
+      foreign_key_constraint_on: service_case_id
+insert_permissions:
+  - role: site_manager
+    permission:
+      check:
+        service_case:
+          site:
+            _or:
+              - manager_id:
+                  _eq: X-Hasura-User-Id
+              - site_members:
+                  status:
+                    _eq: active
+                  user_id:
+                    _eq: X-Hasura-User-Id
+      columns:
+        - case_revenue
+        - created_at
+        - deduct_by_id
+        - deduction
+        - deduction_reason
+        - deduction_review_by_id
+        - deduction_review_time
+        - deduction_status
+        - gsp_case_no
+        - id
+        - inspector_id
+        - month
+        - perf_base
+        - perf_final
+        - review_comment
+        - review_status
+        - review_time
+        - reviewer_id
+        - service_case_id
+        - updated_at
+  - role: super_admin
+    permission:
+      check: {}
+      columns:
+        - case_revenue
+        - created_at
+        - deduct_by_id
+        - deduction
+        - deduction_reason
+        - deduction_review_by_id
+        - deduction_review_time
+        - deduction_status
+        - gsp_case_no
+        - id
+        - inspector_id
+        - month
+        - perf_base
+        - perf_final
+        - review_comment
+        - review_status
+        - review_time
+        - reviewer_id
+        - service_case_id
+        - updated_at
+select_permissions:
+  - role: inspector
+    permission:
+      columns:
+        - case_revenue
+        - created_at
+        - deduct_by_id
+        - deduction
+        - deduction_reason
+        - deduction_review_by_id
+        - deduction_review_time
+        - deduction_status
+        - gsp_case_no
+        - id
+        - inspector_id
+        - month
+        - perf_base
+        - perf_final
+        - review_comment
+        - review_status
+        - review_time
+        - reviewer_id
+        - service_case_id
+        - updated_at
+      filter:
+        inspector_id:
+          _eq: X-Hasura-User-Id
+      allow_aggregations: true
+  - role: site_manager
+    permission:
+      columns:
+        - case_revenue
+        - created_at
+        - deduct_by_id
+        - deduction
+        - deduction_reason
+        - deduction_review_by_id
+        - deduction_review_time
+        - deduction_status
+        - gsp_case_no
+        - id
+        - inspector_id
+        - month
+        - perf_base
+        - perf_final
+        - review_comment
+        - review_status
+        - review_time
+        - reviewer_id
+        - service_case_id
+        - updated_at
+      filter:
+        service_case:
+          site:
+            _or:
+              - manager_id:
+                  _eq: X-Hasura-User-Id
+              - site_members:
+                  status:
+                    _eq: active
+                  user_id:
+                    _eq: X-Hasura-User-Id
+      allow_aggregations: true
+  - role: super_admin
+    permission:
+      columns:
+        - case_revenue
+        - created_at
+        - deduct_by_id
+        - deduction
+        - deduction_reason
+        - deduction_review_by_id
+        - deduction_review_time
+        - deduction_status
+        - gsp_case_no
+        - id
+        - inspector_id
+        - month
+        - perf_base
+        - perf_final
+        - review_comment
+        - review_status
+        - review_time
+        - reviewer_id
+        - service_case_id
+        - updated_at
+      filter: {}
+      allow_aggregations: true
+update_permissions:
+  - role: site_manager
+    permission:
+      columns:
+        - case_revenue
+        - created_at
+        - deduct_by_id
+        - deduction
+        - deduction_reason
+        - deduction_review_by_id
+        - deduction_review_time
+        - deduction_status
+        - gsp_case_no
+        - id
+        - inspector_id
+        - month
+        - perf_base
+        - perf_final
+        - review_comment
+        - review_status
+        - review_time
+        - reviewer_id
+        - service_case_id
+        - updated_at
+      filter:
+        service_case:
+          site:
+            _or:
+              - manager_id:
+                  _eq: X-Hasura-User-Id
+              - site_members:
+                  status:
+                    _eq: active
+                  user_id:
+                    _eq: X-Hasura-User-Id
+      check:
+        service_case:
+          site:
+            _or:
+              - manager_id:
+                  _eq: X-Hasura-User-Id
+              - site_members:
+                  status:
+                    _eq: active
+                  user_id:
+                    _eq: X-Hasura-User-Id
+  - role: super_admin
+    permission:
+      columns:
+        - case_revenue
+        - created_at
+        - deduct_by_id
+        - deduction
+        - deduction_reason
+        - deduction_review_by_id
+        - deduction_review_time
+        - deduction_status
+        - gsp_case_no
+        - id
+        - inspector_id
+        - month
+        - perf_base
+        - perf_final
+        - review_comment
+        - review_status
+        - review_time
+        - reviewer_id
+        - service_case_id
+        - updated_at
+      filter: {}
+      check: {}
+delete_permissions:
+  - role: site_manager
+    permission:
+      filter:
+        service_case:
+          site:
+            _or:
+              - manager_id:
+                  _eq: X-Hasura-User-Id
+              - site_members:
+                  status:
+                    _eq: active
+                  user_id:
+                    _eq: X-Hasura-User-Id
+  - role: super_admin
+    permission:
+      filter: {}

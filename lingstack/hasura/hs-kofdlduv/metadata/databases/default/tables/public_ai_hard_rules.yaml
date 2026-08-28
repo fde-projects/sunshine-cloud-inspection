@@ -1,0 +1,112 @@
+table:
+  name: ai_hard_rules
+  schema: public
+object_relationships:
+  - name: updated_by
+    using:
+      foreign_key_constraint_on: updated_by_id
+insert_permissions:
+  - role: super_admin
+    permission:
+      check: {}
+      columns:
+        - change_note
+        - code
+        - created_at
+        - enabled
+        - enforce_mode
+        - id
+        - json_schema_hint
+        - match_mode
+        - match_pattern
+        - name
+        - prompt_text
+        - updated_at
+        - updated_by_id
+        - version
+select_permissions:
+  - role: inspector
+    permission:
+      columns:
+        - change_note
+        - code
+        - created_at
+        - enabled
+        - enforce_mode
+        - id
+        - json_schema_hint
+        - match_mode
+        - match_pattern
+        - name
+        - prompt_text
+        - updated_at
+        - updated_by_id
+        - version
+      filter:
+        enabled:
+          _eq: true
+      allow_aggregations: true
+  - role: site_manager
+    permission:
+      columns:
+        - change_note
+        - code
+        - created_at
+        - enabled
+        - enforce_mode
+        - id
+        - json_schema_hint
+        - match_mode
+        - match_pattern
+        - name
+        - prompt_text
+        - updated_at
+        - updated_by_id
+        - version
+      filter:
+        enabled:
+          _eq: true
+      allow_aggregations: true
+  - role: super_admin
+    permission:
+      columns:
+        - change_note
+        - code
+        - created_at
+        - enabled
+        - enforce_mode
+        - id
+        - json_schema_hint
+        - match_mode
+        - match_pattern
+        - name
+        - prompt_text
+        - updated_at
+        - updated_by_id
+        - version
+      filter: {}
+      allow_aggregations: true
+update_permissions:
+  - role: super_admin
+    permission:
+      columns:
+        - change_note
+        - code
+        - created_at
+        - enabled
+        - enforce_mode
+        - id
+        - json_schema_hint
+        - match_mode
+        - match_pattern
+        - name
+        - prompt_text
+        - updated_at
+        - updated_by_id
+        - version
+      filter: {}
+      check: {}
+delete_permissions:
+  - role: super_admin
+    permission:
+      filter: {}

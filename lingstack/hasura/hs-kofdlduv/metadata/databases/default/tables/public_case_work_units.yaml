@@ -1,0 +1,322 @@
+table:
+  name: case_work_units
+  schema: public
+object_relationships:
+  - name: inspection_task
+    using:
+      foreign_key_constraint_on: inspection_task_id
+  - name: inspector
+    using:
+      foreign_key_constraint_on: inspector_id
+  - name: service_case
+    using:
+      foreign_key_constraint_on: service_case_id
+array_relationships:
+  - name: case_expense_claims
+    using:
+      foreign_key_constraint_on:
+        column: work_unit_id
+        table:
+          name: case_expense_claims
+          schema: public
+  - name: inspection_tasks
+    using:
+      foreign_key_constraint_on:
+        column: work_unit_id
+        table:
+          name: inspection_tasks
+          schema: public
+insert_permissions:
+  - role: inspector
+    permission:
+      check:
+        _or:
+          - inspector_id:
+              _eq: X-Hasura-User-Id
+          - status:
+              _eq: open
+          - service_case:
+              case_assignments:
+                inspector_id:
+                  _eq: X-Hasura-User-Id
+      columns:
+        - claimed_at
+        - completed_at
+        - created_at
+        - device_serial
+        - id
+        - inspection_task_id
+        - inspector_id
+        - seq
+        - serial_confirmed_at
+        - serial_photo_url
+        - service_case_id
+        - status
+        - submit_count
+        - submitted_at
+        - title
+        - updated_at
+  - role: site_manager
+    permission:
+      check:
+        service_case:
+          site:
+            _or:
+              - manager_id:
+                  _eq: X-Hasura-User-Id
+              - site_members:
+                  status:
+                    _eq: active
+                  user_id:
+                    _eq: X-Hasura-User-Id
+      columns:
+        - claimed_at
+        - completed_at
+        - created_at
+        - device_serial
+        - id
+        - inspection_task_id
+        - inspector_id
+        - seq
+        - serial_confirmed_at
+        - serial_photo_url
+        - service_case_id
+        - status
+        - submit_count
+        - submitted_at
+        - title
+        - updated_at
+  - role: super_admin
+    permission:
+      check: {}
+      columns:
+        - claimed_at
+        - completed_at
+        - created_at
+        - device_serial
+        - id
+        - inspection_task_id
+        - inspector_id
+        - seq
+        - serial_confirmed_at
+        - serial_photo_url
+        - service_case_id
+        - status
+        - submit_count
+        - submitted_at
+        - title
+        - updated_at
+select_permissions:
+  - role: inspector
+    permission:
+      columns:
+        - claimed_at
+        - completed_at
+        - created_at
+        - device_serial
+        - id
+        - inspection_task_id
+        - inspector_id
+        - seq
+        - serial_confirmed_at
+        - serial_photo_url
+        - service_case_id
+        - status
+        - submit_count
+        - submitted_at
+        - title
+        - updated_at
+      filter:
+        _or:
+          - inspector_id:
+              _eq: X-Hasura-User-Id
+          - status:
+              _eq: open
+          - service_case:
+              case_assignments:
+                inspector_id:
+                  _eq: X-Hasura-User-Id
+      allow_aggregations: true
+  - role: site_manager
+    permission:
+      columns:
+        - claimed_at
+        - completed_at
+        - created_at
+        - device_serial
+        - id
+        - inspection_task_id
+        - inspector_id
+        - seq
+        - serial_confirmed_at
+        - serial_photo_url
+        - service_case_id
+        - status
+        - submit_count
+        - submitted_at
+        - title
+        - updated_at
+      filter:
+        service_case:
+          site:
+            _or:
+              - manager_id:
+                  _eq: X-Hasura-User-Id
+              - site_members:
+                  status:
+                    _eq: active
+                  user_id:
+                    _eq: X-Hasura-User-Id
+      allow_aggregations: true
+  - role: super_admin
+    permission:
+      columns:
+        - claimed_at
+        - completed_at
+        - created_at
+        - device_serial
+        - id
+        - inspection_task_id
+        - inspector_id
+        - seq
+        - serial_confirmed_at
+        - serial_photo_url
+        - service_case_id
+        - status
+        - submit_count
+        - submitted_at
+        - title
+        - updated_at
+      filter: {}
+      allow_aggregations: true
+update_permissions:
+  - role: inspector
+    permission:
+      columns:
+        - claimed_at
+        - completed_at
+        - created_at
+        - device_serial
+        - id
+        - inspection_task_id
+        - inspector_id
+        - seq
+        - serial_confirmed_at
+        - serial_photo_url
+        - service_case_id
+        - status
+        - submit_count
+        - submitted_at
+        - title
+        - updated_at
+      filter:
+        _or:
+          - inspector_id:
+              _eq: X-Hasura-User-Id
+          - status:
+              _eq: open
+          - service_case:
+              case_assignments:
+                inspector_id:
+                  _eq: X-Hasura-User-Id
+      check:
+        _or:
+          - inspector_id:
+              _eq: X-Hasura-User-Id
+          - status:
+              _eq: open
+          - service_case:
+              case_assignments:
+                inspector_id:
+                  _eq: X-Hasura-User-Id
+  - role: site_manager
+    permission:
+      columns:
+        - claimed_at
+        - completed_at
+        - created_at
+        - device_serial
+        - id
+        - inspection_task_id
+        - inspector_id
+        - seq
+        - serial_confirmed_at
+        - serial_photo_url
+        - service_case_id
+        - status
+        - submit_count
+        - submitted_at
+        - title
+        - updated_at
+      filter:
+        service_case:
+          site:
+            _or:
+              - manager_id:
+                  _eq: X-Hasura-User-Id
+              - site_members:
+                  status:
+                    _eq: active
+                  user_id:
+                    _eq: X-Hasura-User-Id
+      check:
+        service_case:
+          site:
+            _or:
+              - manager_id:
+                  _eq: X-Hasura-User-Id
+              - site_members:
+                  status:
+                    _eq: active
+                  user_id:
+                    _eq: X-Hasura-User-Id
+  - role: super_admin
+    permission:
+      columns:
+        - claimed_at
+        - completed_at
+        - created_at
+        - device_serial
+        - id
+        - inspection_task_id
+        - inspector_id
+        - seq
+        - serial_confirmed_at
+        - serial_photo_url
+        - service_case_id
+        - status
+        - submit_count
+        - submitted_at
+        - title
+        - updated_at
+      filter: {}
+      check: {}
+delete_permissions:
+  - role: inspector
+    permission:
+      filter:
+        _or:
+          - inspector_id:
+              _eq: X-Hasura-User-Id
+          - status:
+              _eq: open
+          - service_case:
+              case_assignments:
+                inspector_id:
+                  _eq: X-Hasura-User-Id
+  - role: site_manager
+    permission:
+      filter:
+        service_case:
+          site:
+            _or:
+              - manager_id:
+                  _eq: X-Hasura-User-Id
+              - site_members:
+                  status:
+                    _eq: active
+                  user_id:
+                    _eq: X-Hasura-User-Id
+  - role: super_admin
+    permission:
+      filter: {}

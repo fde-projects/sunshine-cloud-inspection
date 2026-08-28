@@ -1,0 +1,16 @@
+# Root dockerignore — keep platform / secrets out of any accidental root builds.
+# Prefer build context = apps/<name> so this file is rarely used.
+.env
+.env.*
+!.env.example
+.git
+.tools
+lingstack
+**/node_modules
+**/.next
+**/dist
+**/__pycache__
+**/.venv
+AGENTS.md
+*.md
+!apps/**/README.md

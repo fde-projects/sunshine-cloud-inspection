@@ -1,0 +1,133 @@
+export type UserRole = "super_admin" | "site_manager" | "inspector";
+export type CommonStatus = "active" | "inactive";
+export type DeviceType = "string_inverter" | "central_inverter" | "energy_storage";
+export type DeviceStatus = "active" | "inactive" | "maintenance";
+
+export interface ApiResponse<T = unknown> {
+  code: number;
+  message: string;
+  data: T;
+}
+
+export interface Paginated<T> {
+  list: T[];
+  total: number;
+  page: number;
+  limit: number;
+}
+
+export interface LoginResult {
+  accessToken: string;
+  refreshToken: string;
+  user: UserInfo;
+}
+
+export interface UserInfo {
+  id: string;
+  username: string;
+  realName: string;
+  employeeNo?: string | null;
+  phone: string;
+  email?: string;
+  avatar?: string;
+  role: UserRole;
+  roles?: UserRole[];
+  status: string;
+  region?: string;
+  orgUnit?: string;
+  createdBy?: string | null;
+  managedSites?: SiteBrief[];
+  siteMemberships?: SiteMembership[];
+  membershipCount?: number;
+  createdAt?: string;
+}
+
+export interface SiteBrief {
+  id: string;
+  name: string;
+  code: string;
+  province?: string;
+  city?: string;
+}
+
+export interface SiteMembership {
+  id: string;
+  siteId: string;
+  status: string;
+  site: SiteBrief | null;
+}
+
+export interface SiteItem {
+  id: string;
+  name: string;
+  code: string;
+  province: string;
+  city: string;
+  district: string;
+  address: string;
+  latitude: number;
+  longitude: number;
+  inspectionRadiusMeters: number;
+  managerId: string | null;
+  status: CommonStatus;
+  createdAt: string;
+  manager?: {
+    id: string;
+    username: string;
+    realName: string;
+    phone: string;
+  } | null;
+}
+
+export interface DeviceItem {
+  id: string;
+  siteId: string;
+  serialNumber: string;
+  deviceType: DeviceType;
+  model?: string;
+  manufacturer?: string;
+  installDate?: string;
+  status: DeviceStatus;
+  createdAt: string;
+  site?: SiteBrief;
+}
+
+export interface MenuConfig {
+  key: string;
+  path: string;
+  label: string;
+  icon?: string;
+  roles: UserRole[];
+  children?: MenuConfig[];
+}
+
+export const DEVICE_TYPE_LABEL: Record<DeviceType, string> = {
+  string_inverter: "组串式逆变器",
+  central_inverter: "集中式逆变器",
+  energy_storage: "储能系统",
+};
+
+export const ROLE_LABEL: Record<UserRole, string> = {
+  super_admin: "超级管理员",
+  site_manager: "网格长",
+  inspector: "工程师",
+};
+
+export const CASE_STATUS_LABEL: Record<string, string> = {
+  pending_assign: "待派单",
+  assigned: "已派单",
+  working: "作业中",
+  finished: "已完工",
+  settle_review: "结算审核",
+  settled: "已结算",
+  month_locked: "月结锁定",
+};
+
+export const TASK_STATUS_LABEL: Record<string, string> = {
+  pending: "待开始",
+  in_progress: "进行中",
+  submitted: "待审核",
+  approved: "已通过",
+  rejected: "已驳回",
+  archived: "已归档",
+};

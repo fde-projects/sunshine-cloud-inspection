@@ -1,0 +1,174 @@
+table:
+  name: site_members
+  schema: public
+object_relationships:
+  - name: site
+    using:
+      foreign_key_constraint_on: site_id
+  - name: user
+    using:
+      foreign_key_constraint_on: user_id
+insert_permissions:
+  - role: inspector
+    permission:
+      check:
+        user_id:
+          _eq: X-Hasura-User-Id
+      columns:
+        - id
+        - joined_at
+        - member_role
+        - site_id
+        - status
+        - user_id
+  - role: site_manager
+    permission:
+      check:
+        site:
+          _or:
+            - manager_id:
+                _eq: X-Hasura-User-Id
+            - site_members:
+                status:
+                  _eq: active
+                user_id:
+                  _eq: X-Hasura-User-Id
+      columns:
+        - id
+        - joined_at
+        - member_role
+        - site_id
+        - status
+        - user_id
+  - role: super_admin
+    permission:
+      check: {}
+      columns:
+        - id
+        - joined_at
+        - member_role
+        - site_id
+        - status
+        - user_id
+select_permissions:
+  - role: inspector
+    permission:
+      columns:
+        - id
+        - joined_at
+        - member_role
+        - site_id
+        - status
+        - user_id
+      filter:
+        user_id:
+          _eq: X-Hasura-User-Id
+      allow_aggregations: true
+  - role: site_manager
+    permission:
+      columns:
+        - id
+        - joined_at
+        - member_role
+        - site_id
+        - status
+        - user_id
+      filter:
+        site:
+          _or:
+            - manager_id:
+                _eq: X-Hasura-User-Id
+            - site_members:
+                status:
+                  _eq: active
+                user_id:
+                  _eq: X-Hasura-User-Id
+      allow_aggregations: true
+  - role: super_admin
+    permission:
+      columns:
+        - id
+        - joined_at
+        - member_role
+        - site_id
+        - status
+        - user_id
+      filter: {}
+      allow_aggregations: true
+update_permissions:
+  - role: inspector
+    permission:
+      columns:
+        - id
+        - joined_at
+        - member_role
+        - site_id
+        - status
+        - user_id
+      filter:
+        user_id:
+          _eq: X-Hasura-User-Id
+      check:
+        user_id:
+          _eq: X-Hasura-User-Id
+  - role: site_manager
+    permission:
+      columns:
+        - id
+        - joined_at
+        - member_role
+        - site_id
+        - status
+        - user_id
+      filter:
+        site:
+          _or:
+            - manager_id:
+                _eq: X-Hasura-User-Id
+            - site_members:
+                status:
+                  _eq: active
+                user_id:
+                  _eq: X-Hasura-User-Id
+      check:
+        site:
+          _or:
+            - manager_id:
+                _eq: X-Hasura-User-Id
+            - site_members:
+                status:
+                  _eq: active
+                user_id:
+                  _eq: X-Hasura-User-Id
+  - role: super_admin
+    permission:
+      columns:
+        - id
+        - joined_at
+        - member_role
+        - site_id
+        - status
+        - user_id
+      filter: {}
+      check: {}
+delete_permissions:
+  - role: inspector
+    permission:
+      filter:
+        user_id:
+          _eq: X-Hasura-User-Id
+  - role: site_manager
+    permission:
+      filter:
+        site:
+          _or:
+            - manager_id:
+                _eq: X-Hasura-User-Id
+            - site_members:
+                status:
+                  _eq: active
+                user_id:
+                  _eq: X-Hasura-User-Id
+  - role: super_admin
+    permission:
+      filter: {}

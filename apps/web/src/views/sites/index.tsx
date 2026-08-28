@@ -1,0 +1,585 @@
+"use client";
+
+import { useCallback, useEffect, useState } from 'react';
+import {
+  Button,
+  Form,
+  Input,
+  Modal,
+  Popconfirm,
+  Select,
+  Space,
+  Table,
+  Tabs,
+  Tag,
+  Typography,
+  message,
+} from 'antd';
+import {
+  PlusOutlined,
+  EditOutlined,
+  DeleteOutlined,
+  UserSwitchOutlined,
+  TeamOutlined,
+} from '@ant-design/icons';
+import type { ColumnsType } from 'antd/es/table';
+import {
+  fetchSites,
+  createSite,
+  updateSite,
+  deleteSite,
+  appointManager,
+  appointDeputy,
+  removeDeputy,
+  fetchSiteMembers,
+  addSiteMember,
+  removeSiteMember,
+  type SiteMemberItem,
+} from '../../api/site';
+import { fetchUsers } from '../../api/user';
+import type { SiteItem, UserInfo } from '../../types';
+import SiteFormModal from './SiteFormModal';
+import { composeFullAddress } from '../../utils/addressParse';
+import { useAuthStore } from '../../stores/auth';
+
+/** 网格管理：管理员任命正网格长；正网格长管理副网格长与工程师 */
+export default function SitesPage() {
+  const currentUser = useAuthStore((state) => state.user);
+  const isAdmin = currentUser?.role === 'super_admin';
+  const currentUserId = currentUser?.id;
+  const [loading, setLoading] = useState(false);
+  const [data, setData] = useState<SiteItem[]>([]);
+  const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(1);
+  const [keyword, setKeyword] = useState('');
+  const [province, setProvince] = useState('');
+  const [city, setCity] = useState('');
+  const [status, setStatus] = useState<string | undefined>();
+
+  const [modalOpen, setModalOpen] = useState(false);
+  const [editing, setEditing] = useState<SiteItem | null>(null);
+  const [form] = Form.useForm();
+
+  const [appointOpen, setAppointOpen] = useState(false);
+  const [appointSite, setAppointSite] = useState<SiteItem | null>(null);
+  const [managers, setManagers] = useState<UserInfo[]>([]);
+  const [managerId, setManagerId] = useState<string>();
+
+  const [staffOpen, setStaffOpen] = useState(false);
+  const [staffSite, setStaffSite] = useState<SiteItem | null>(null);
+  const [deputies, setDeputies] = useState<SiteMemberItem[]>([]);
+  const [inspectors, setInspectors] = useState<SiteMemberItem[]>([]);
+  const [staffCandidates, setStaffCandidates] = useState<UserInfo[]>([]);
+  const [pickDeputyId, setPickDeputyId] = useState<string>();
+  const [pickInspectorId, setPickInspectorId] = useState<string>();
+  const [staffLoading, setStaffLoading] = useState(false);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const res = await fetchSites({
+        page,
+        limit: 10,
+        keyword: keyword || undefined,
+        province: province || undefined,
+        city: city || undefined,
+        status,
+      });
+      setData(res.list);
+      setTotal(res.total);
+    } finally {
+      setLoading(false);
+    }
+  }, [page, keyword, province, city, status]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const openCreate = () => {
+    setEditing(null);
+    form.resetFields();
+    form.setFieldsValue({ status: 'active' });
+    setModalOpen(true);
+  };
+
+  const openEdit = (record: SiteItem) => {
+    setEditing(record);
+    form.setFieldsValue({
+      ...record,
+      fullAddress: composeFullAddress(record),
+    });
+    setModalOpen(true);
+  };
+
+  const submit = async () => {
+    try {
+      const values = await form.validateFields();
+      if (values.latitude == null || values.longitude == null) {
+        message.warning('请先点击「现场定位」或「地址解析」确定网格位置');
+        return;
+      }
+      const payload = {
+        ...values,
+        latitude: Number(values.latitude),
+        longitude: Number(values.longitude),
+      };
+      delete payload.fullAddress;
+      delete payload.inspectionRadiusKm;
+      delete payload.inspectionRadiusMeters;
+      if (editing) {
+        await updateSite(editing.id, payload);
+        message.success('网格已更新');
+      } else {
+        await createSite(payload);
+        message.success('网格已创建');
+      }
+      setModalOpen(false);
+      load();
+    } catch {
+      /* 校验失败 */
+    }
+  };
+
+  const onDelete = async (id: string) => {
+    await deleteSite(id);
+    message.success('网格已删除');
+    load();
+  };
+
+  const openAppoint = async (record: SiteItem) => {
+    setAppointSite(record);
+    const res = await fetchUsers({ status: "active", limit: 200 });
+    const candidates = res.list.filter((user) => {
+      const roles = user.roles?.length ? user.roles : [user.role];
+      return roles.includes("site_manager") && !roles.includes("super_admin");
+    });
+    setManagers(candidates);
+    setManagerId(
+      record.managerId && candidates.some((user) => user.id === record.managerId)
+        ? record.managerId
+        : undefined,
+    );
+    setAppointOpen(true);
+  };
+
+  const submitAppoint = async () => {
+    if (!appointSite || !managerId) {
+      message.warning('请选择正网格长');
+      return;
+    }
+    await appointManager(appointSite.id, managerId);
+    message.success('已任命正网格长');
+    setAppointOpen(false);
+    load();
+  };
+
+  const loadStaff = async (site: SiteItem) => {
+    setStaffLoading(true);
+    try {
+      const [dep, insp, allUsers] = await Promise.all([
+        fetchSiteMembers(site.id, 'deputy_manager'),
+        fetchSiteMembers(site.id, 'inspector'),
+        // 拉全量启用用户，多角色账号两边都能选到
+        fetchUsers({ status: 'active', limit: 100 }),
+      ]);
+      setDeputies(dep);
+      setInspectors(insp);
+      setStaffCandidates(
+        allUsers.list.filter((u) => !(u.roles?.length ? u.roles : [u.role]).includes('super_admin')),
+      );
+    } finally {
+      setStaffLoading(false);
+    }
+  };
+
+  const openStaff = async (record: SiteItem) => {
+    setStaffSite(record);
+    setPickDeputyId(undefined);
+    setPickInspectorId(undefined);
+    setStaffOpen(true);
+    await loadStaff(record);
+  };
+
+  const onAddDeputy = async () => {
+    if (!staffSite || !pickDeputyId) {
+      message.warning('请选择副网格长');
+      return;
+    }
+    await appointDeputy(staffSite.id, pickDeputyId);
+    message.success('已添加副网格长');
+    setPickDeputyId(undefined);
+    await loadStaff(staffSite);
+  };
+
+  const onAddInspector = async () => {
+    if (!staffSite || !pickInspectorId) {
+      message.warning('请选择工程师');
+      return;
+    }
+    await addSiteMember(staffSite.id, pickInspectorId);
+    message.success('已聘用工程师（该员仍可同时服务于其他网格）');
+    setPickInspectorId(undefined);
+    await loadStaff(staffSite);
+  };
+
+  const regionHint = [province && `省「${province}」`, city && `市「${city}」`]
+    .filter(Boolean)
+    .join('、');
+
+  const iAmDeputyOnStaffSite = deputies.some(
+    (d) => d.userId === currentUserId && d.status !== 'inactive',
+  );
+
+  const canManageStaff =
+    !!staffSite &&
+    !!currentUserId &&
+    (isAdmin || staffSite.managerId === currentUserId || iAmDeputyOnStaffSite);
+
+  const hasRole = (u: UserInfo, role: string) =>
+    (u.roles?.length ? u.roles : [u.role]).includes(role as UserInfo['role']);
+
+  // 副网格长候选：非超管、非本网格正网格长（任命时后端会自动赋予网格长角色）
+  const deputyOptions = staffCandidates
+    .filter((u) => u.id !== staffSite?.managerId)
+    .filter((u) => !deputies.some((d) => d.userId === u.id))
+    .map((u) => ({
+      value: u.id,
+      label: `${u.realName}（${u.username} / ${hasRole(u, 'site_manager') ? '网格长' : '工程师'}）`,
+    }));
+
+  const inspectorOptions = staffCandidates
+    .filter((u) => hasRole(u, 'inspector'))
+    .filter((u) => !inspectors.some((d) => d.userId === u.id))
+    .map((u) => ({
+      value: u.id,
+      label: `${u.realName}（${u.username}）`,
+    }));
+
+  const columns: ColumnsType<SiteItem> = [
+    { title: '网格名称', dataIndex: 'name', width: 140 },
+    { title: '编码', dataIndex: 'code', width: 100 },
+    {
+      title: '地区',
+      render: (_, r) => `${r.province}${r.city}${r.district}`,
+      ellipsis: true,
+    },
+    { title: '地址', dataIndex: 'address', ellipsis: true },
+    {
+      title: '正网格长',
+      dataIndex: ['manager', 'realName'],
+      width: 100,
+      render: (v) => v || '-',
+    },
+    {
+      title: '状态',
+      dataIndex: 'status',
+      width: 90,
+      render: (v) => (
+        <Tag color={v === 'active' ? 'green' : 'default'}>{v === 'active' ? '启用' : '停用'}</Tag>
+      ),
+    },
+    {
+      title: '操作',
+      width: 300,
+      fixed: 'right',
+      render: (_, record) => (
+        <Space wrap>
+          <Button type="link" icon={<EditOutlined />} onClick={() => openEdit(record)}>
+            编辑
+          </Button>
+          {isAdmin && (
+            <Button type="link" icon={<UserSwitchOutlined />} onClick={() => openAppoint(record)}>
+              正网格长
+            </Button>
+          )}
+          <Button type="link" icon={<TeamOutlined />} onClick={() => void openStaff(record)}>
+            人员
+          </Button>
+          {isAdmin && (
+            <Popconfirm title="确认删除该网格？有设备时将失败" onConfirm={() => onDelete(record.id)}>
+              <Button type="link" danger icon={<DeleteOutlined />}>
+                删除
+              </Button>
+            </Popconfirm>
+          )}
+        </Space>
+      ),
+    },
+  ];
+
+  return (
+    <div>
+      <Space style={{ marginBottom: 12 }} wrap>
+        <Input.Search
+          placeholder="搜索名称/编码/地区"
+          allowClear
+          onSearch={(v) => {
+            setPage(1);
+            setKeyword(v);
+          }}
+          style={{ width: 220 }}
+        />
+        <Input.Search
+          placeholder="省份，如：四川"
+          allowClear
+          value={province}
+          onChange={(e) => setProvince(e.target.value)}
+          onSearch={(v) => {
+            setPage(1);
+            setProvince(v.trim());
+          }}
+          enterButton="按省查"
+          style={{ width: 240 }}
+        />
+        <Input.Search
+          placeholder="城市，如：自贡"
+          allowClear
+          value={city}
+          onChange={(e) => setCity(e.target.value)}
+          onSearch={(v) => {
+            setPage(1);
+            setCity(v.trim());
+          }}
+          enterButton="按市查"
+          style={{ width: 240 }}
+        />
+        <Select
+          allowClear
+          placeholder="状态"
+          style={{ width: 120 }}
+          value={status}
+          onChange={(v) => {
+            setPage(1);
+            setStatus(v);
+          }}
+          options={[
+            { value: 'active', label: '启用' },
+            { value: 'inactive', label: '停用' },
+          ]}
+        />
+        {isAdmin && (
+          <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
+            新增网格
+          </Button>
+        )}
+      </Space>
+
+      <Typography.Paragraph type="secondary" style={{ marginBottom: 12 }}>
+        {regionHint
+          ? `当前筛选：${regionHint} → 共 ${total} 个网格`
+          : `管理员任命正网格长；正网格长在本网格设立副网格长与工程师。一网格一名正网格长，工程师可跨网格。`}
+      </Typography.Paragraph>
+
+      <Table
+        rowKey="id"
+        loading={loading}
+        columns={columns}
+        dataSource={data}
+        scroll={{ x: 1100 }}
+        pagination={{
+          current: page,
+          total,
+          pageSize: 10,
+          showTotal: (t) => `共 ${t} 个电站`,
+          onChange: setPage,
+        }}
+      />
+
+      <SiteFormModal
+        open={modalOpen}
+        editing={editing}
+        form={form}
+        onCancel={() => setModalOpen(false)}
+        onSubmit={() => void submit()}
+      />
+
+      <Modal
+        title={`任命正网格长 - ${appointSite?.name || ''}`}
+        open={appointOpen}
+        onCancel={() => setAppointOpen(false)}
+        onOk={() => void submitAppoint()}
+      >
+        <Typography.Paragraph type="secondary">
+          每站仅一名正网格长。请先在「用户管理」创建正网格长账号，再在此任命。
+        </Typography.Paragraph>
+        <Select
+          showSearch
+          style={{ width: '100%' }}
+          placeholder="选择正网格长"
+          value={managerId}
+          onChange={setManagerId}
+          optionFilterProp="label"
+          notFoundContent="没有可任命的正网格长账号"
+          options={managers.map((m) => {
+            const roles = m.roles?.length ? m.roles : [m.role];
+            return {
+              value: m.id,
+              label: `${m.realName}（${m.username} / ${roles.includes('site_manager') ? '网格长' : '工程师'}）`,
+            };
+          })}
+        />
+      </Modal>
+
+      <Modal
+        title={`网格人员 - ${staffSite?.name || ''}`}
+        open={staffOpen}
+        onCancel={() => setStaffOpen(false)}
+        footer={null}
+        width={720}
+        destroyOnHidden
+      >
+        <div
+          style={{
+            padding: '12px 16px',
+            marginBottom: 12,
+            background: '#f6ffed',
+            border: '1px solid #b7eb8f',
+            borderRadius: 8,
+          }}
+        >
+          <Space wrap size={12}>
+            <Tag color="green" style={{ margin: 0 }}>正网格长</Tag>
+            <Typography.Text strong>
+              {staffSite?.manager?.realName || '未任命'}
+            </Typography.Text>
+            {staffSite?.manager && (
+              <Typography.Text type="secondary">
+                账号：{staffSite.manager.username}
+                {staffSite.manager.phone ? ` · 电话：${staffSite.manager.phone}` : ''}
+              </Typography.Text>
+            )}
+            {staffSite?.manager && inspectors.some((item) => item.userId === staffSite.manager?.id) && (
+              <Tag color="blue" style={{ margin: 0 }}>兼任工程师</Tag>
+            )}
+          </Space>
+        </div>
+        <Typography.Paragraph type="secondary" style={{ marginBottom: 12 }}>
+          {canManageStaff
+            ? '正/副网格长可在此设立副网格长与聘用工程师。工程师账号须单独设立，才能登录 H5。'
+            : '当前账号未任职本网格编制管理；请联系正网格长或管理员。'}
+        </Typography.Paragraph>
+        <Tabs
+          items={[
+            {
+              key: 'deputy',
+              label: `副网格长（${deputies.length}）`,
+              children: (
+                <div>
+                  {canManageStaff && (
+                    <Space style={{ marginBottom: 12 }} wrap>
+                      <Select
+                        showSearch
+                        style={{ width: 280 }}
+                        placeholder="选择账号"
+                        value={pickDeputyId}
+                        onChange={setPickDeputyId}
+                        optionFilterProp="label"
+                        options={deputyOptions}
+                      />
+                      <Button type="primary" onClick={() => void onAddDeputy()}>
+                        添加副网格长
+                      </Button>
+                    </Space>
+                  )}
+                  <Table
+                    rowKey="id"
+                    size="small"
+                    loading={staffLoading}
+                    pagination={false}
+                    dataSource={deputies}
+                    columns={[
+                      { title: '姓名', dataIndex: ['user', 'realName'] },
+                      { title: '用户名', dataIndex: ['user', 'username'] },
+                      ...(canManageStaff
+                        ? [
+                            {
+                              title: '操作',
+                              width: 100,
+                              render: (_: unknown, r: SiteMemberItem) => (
+                                <Popconfirm
+                                  title="确认移除该副网格长？"
+                                  onConfirm={async () => {
+                                    if (!staffSite) return;
+                                    await removeDeputy(staffSite.id, r.userId);
+                                    message.success('已移除');
+                                    await loadStaff(staffSite);
+                                  }}
+                                >
+                                  <Button type="link" danger>
+                                    移除
+                                  </Button>
+                                </Popconfirm>
+                              ),
+                            },
+                          ]
+                        : []),
+                    ]}
+                  />
+                </div>
+              ),
+            },
+            {
+              key: 'inspector',
+              label: `工程师（${inspectors.length}）`,
+              children: (
+                <div>
+                  {canManageStaff && (
+                    <Space style={{ marginBottom: 12 }} wrap>
+                      <Select
+                        showSearch
+                        style={{ width: 280 }}
+                        placeholder="选择工程师账号"
+                        value={pickInspectorId}
+                        onChange={setPickInspectorId}
+                        optionFilterProp="label"
+                        options={inspectorOptions}
+                      />
+                      <Button type="primary" onClick={() => void onAddInspector()}>
+                        聘用工程师
+                      </Button>
+                    </Space>
+                  )}
+                  <Table
+                    rowKey="id"
+                    size="small"
+                    loading={staffLoading}
+                    pagination={false}
+                    dataSource={inspectors}
+                    columns={[
+                      { title: '姓名', dataIndex: ['user', 'realName'] },
+                      { title: '用户名', dataIndex: ['user', 'username'] },
+                      ...(canManageStaff
+                        ? [
+                            {
+                              title: '操作',
+                              width: 100,
+                              render: (_: unknown, r: SiteMemberItem) => (
+                                <Popconfirm
+                                  title="确认解聘？不影响其在其他网格的任职"
+                                  onConfirm={async () => {
+                                    if (!staffSite) return;
+                                    await removeSiteMember(staffSite.id, r.userId);
+                                    message.success('已解聘');
+                                    await loadStaff(staffSite);
+                                  }}
+                                >
+                                  <Button type="link" danger>
+                                    解聘
+                                  </Button>
+                                </Popconfirm>
+                              ),
+                            },
+                          ]
+                        : []),
+                    ]}
+                  />
+                </div>
+              ),
+            },
+          ]}
+        />
+      </Modal>
+    </div>
+  );
+}

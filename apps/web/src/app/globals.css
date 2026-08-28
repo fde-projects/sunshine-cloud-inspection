@@ -1,0 +1,30 @@
+@import "tailwindcss";
+@import "antd/dist/reset.css";
+
+:root {
+  --bg: #f3f7f6;
+  --ink: #14332e;
+  --muted: #5b726d;
+  --line: #d5e4df;
+  --brand: #1f8a73;
+  --brand-dark: #146857;
+  --card: #ffffff;
+}
+
+html,
+body {
+  min-height: 100%;
+}
+
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font-family: "Source Han Sans SC", "Noto Sans SC", "PingFang SC", system-ui, sans-serif;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}

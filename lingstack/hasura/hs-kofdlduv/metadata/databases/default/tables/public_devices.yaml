@@ -1,0 +1,241 @@
+table:
+  name: devices
+  schema: public
+object_relationships:
+  - name: site
+    using:
+      foreign_key_constraint_on: site_id
+array_relationships:
+  - name: inspection_tasks
+    using:
+      foreign_key_constraint_on:
+        column: device_id
+        table:
+          name: inspection_tasks
+          schema: public
+insert_permissions:
+  - role: inspector
+    permission:
+      check:
+        site:
+          _or:
+            - manager_id:
+                _eq: X-Hasura-User-Id
+            - site_members:
+                status:
+                  _eq: active
+                user_id:
+                  _eq: X-Hasura-User-Id
+      columns:
+        - created_at
+        - device_type
+        - id
+        - install_date
+        - manufacturer
+        - model
+        - serial_number
+        - site_id
+        - status
+  - role: site_manager
+    permission:
+      check:
+        site:
+          _or:
+            - manager_id:
+                _eq: X-Hasura-User-Id
+            - site_members:
+                status:
+                  _eq: active
+                user_id:
+                  _eq: X-Hasura-User-Id
+      columns:
+        - created_at
+        - device_type
+        - id
+        - install_date
+        - manufacturer
+        - model
+        - serial_number
+        - site_id
+        - status
+  - role: super_admin
+    permission:
+      check: {}
+      columns:
+        - created_at
+        - device_type
+        - id
+        - install_date
+        - manufacturer
+        - model
+        - serial_number
+        - site_id
+        - status
+select_permissions:
+  - role: inspector
+    permission:
+      columns:
+        - created_at
+        - device_type
+        - id
+        - install_date
+        - manufacturer
+        - model
+        - serial_number
+        - site_id
+        - status
+      filter:
+        site:
+          _or:
+            - manager_id:
+                _eq: X-Hasura-User-Id
+            - site_members:
+                status:
+                  _eq: active
+                user_id:
+                  _eq: X-Hasura-User-Id
+      allow_aggregations: true
+  - role: site_manager
+    permission:
+      columns:
+        - created_at
+        - device_type
+        - id
+        - install_date
+        - manufacturer
+        - model
+        - serial_number
+        - site_id
+        - status
+      filter:
+        site:
+          _or:
+            - manager_id:
+                _eq: X-Hasura-User-Id
+            - site_members:
+                status:
+                  _eq: active
+                user_id:
+                  _eq: X-Hasura-User-Id
+      allow_aggregations: true
+  - role: super_admin
+    permission:
+      columns:
+        - created_at
+        - device_type
+        - id
+        - install_date
+        - manufacturer
+        - model
+        - serial_number
+        - site_id
+        - status
+      filter: {}
+      allow_aggregations: true
+update_permissions:
+  - role: inspector
+    permission:
+      columns:
+        - created_at
+        - device_type
+        - id
+        - install_date
+        - manufacturer
+        - model
+        - serial_number
+        - site_id
+        - status
+      filter:
+        site:
+          _or:
+            - manager_id:
+                _eq: X-Hasura-User-Id
+            - site_members:
+                status:
+                  _eq: active
+                user_id:
+                  _eq: X-Hasura-User-Id
+      check:
+        site:
+          _or:
+            - manager_id:
+                _eq: X-Hasura-User-Id
+            - site_members:
+                status:
+                  _eq: active
+                user_id:
+                  _eq: X-Hasura-User-Id
+  - role: site_manager
+    permission:
+      columns:
+        - created_at
+        - device_type
+        - id
+        - install_date
+        - manufacturer
+        - model
+        - serial_number
+        - site_id
+        - status
+      filter:
+        site:
+          _or:
+            - manager_id:
+                _eq: X-Hasura-User-Id
+            - site_members:
+                status:
+                  _eq: active
+                user_id:
+                  _eq: X-Hasura-User-Id
+      check:
+        site:
+          _or:
+            - manager_id:
+                _eq: X-Hasura-User-Id
+            - site_members:
+                status:
+                  _eq: active
+                user_id:
+                  _eq: X-Hasura-User-Id
+  - role: super_admin
+    permission:
+      columns:
+        - created_at
+        - device_type
+        - id
+        - install_date
+        - manufacturer
+        - model
+        - serial_number
+        - site_id
+        - status
+      filter: {}
+      check: {}
+delete_permissions:
+  - role: inspector
+    permission:
+      filter:
+        site:
+          _or:
+            - manager_id:
+                _eq: X-Hasura-User-Id
+            - site_members:
+                status:
+                  _eq: active
+                user_id:
+                  _eq: X-Hasura-User-Id
+  - role: site_manager
+    permission:
+      filter:
+        site:
+          _or:
+            - manager_id:
+                _eq: X-Hasura-User-Id
+            - site_members:
+                status:
+                  _eq: active
+                user_id:
+                  _eq: X-Hasura-User-Id
+  - role: super_admin
+    permission:
+      filter: {}

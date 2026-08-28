@@ -1,0 +1,160 @@
+table:
+  name: monthly_settlements
+  schema: public
+object_relationships:
+  - name: locked_by
+    using:
+      foreign_key_constraint_on: locked_by_id
+  - name: user
+    using:
+      foreign_key_constraint_on: user_id
+insert_permissions:
+  - role: site_manager
+    permission:
+      check: {}
+      columns:
+        - correction_total
+        - created_at
+        - event_penalty
+        - expense_total
+        - final_amount
+        - id
+        - locked_at
+        - locked_by_id
+        - month
+        - perf_total
+        - reward_total
+        - status
+        - subsidy_total
+        - updated_at
+        - user_id
+  - role: super_admin
+    permission:
+      check: {}
+      columns:
+        - correction_total
+        - created_at
+        - event_penalty
+        - expense_total
+        - final_amount
+        - id
+        - locked_at
+        - locked_by_id
+        - month
+        - perf_total
+        - reward_total
+        - status
+        - subsidy_total
+        - updated_at
+        - user_id
+select_permissions:
+  - role: inspector
+    permission:
+      columns:
+        - correction_total
+        - created_at
+        - event_penalty
+        - expense_total
+        - final_amount
+        - id
+        - locked_at
+        - locked_by_id
+        - month
+        - perf_total
+        - reward_total
+        - status
+        - subsidy_total
+        - updated_at
+        - user_id
+      filter:
+        user_id:
+          _eq: X-Hasura-User-Id
+      allow_aggregations: true
+  - role: site_manager
+    permission:
+      columns:
+        - correction_total
+        - created_at
+        - event_penalty
+        - expense_total
+        - final_amount
+        - id
+        - locked_at
+        - locked_by_id
+        - month
+        - perf_total
+        - reward_total
+        - status
+        - subsidy_total
+        - updated_at
+        - user_id
+      filter: {}
+      allow_aggregations: true
+  - role: super_admin
+    permission:
+      columns:
+        - correction_total
+        - created_at
+        - event_penalty
+        - expense_total
+        - final_amount
+        - id
+        - locked_at
+        - locked_by_id
+        - month
+        - perf_total
+        - reward_total
+        - status
+        - subsidy_total
+        - updated_at
+        - user_id
+      filter: {}
+      allow_aggregations: true
+update_permissions:
+  - role: site_manager
+    permission:
+      columns:
+        - correction_total
+        - created_at
+        - event_penalty
+        - expense_total
+        - final_amount
+        - id
+        - locked_at
+        - locked_by_id
+        - month
+        - perf_total
+        - reward_total
+        - status
+        - subsidy_total
+        - updated_at
+        - user_id
+      filter: {}
+      check: {}
+  - role: super_admin
+    permission:
+      columns:
+        - correction_total
+        - created_at
+        - event_penalty
+        - expense_total
+        - final_amount
+        - id
+        - locked_at
+        - locked_by_id
+        - month
+        - perf_total
+        - reward_total
+        - status
+        - subsidy_total
+        - updated_at
+        - user_id
+      filter: {}
+      check: {}
+delete_permissions:
+  - role: site_manager
+    permission:
+      filter: {}
+  - role: super_admin
+    permission:
+      filter: {}

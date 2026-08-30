@@ -1,15 +1,15 @@
 # Schema 鸟瞰图
 
-> 最后更新：2026-08-27 21:58  
+> 最后更新：2026-08-28 20:20  
 > Hasura CLI：v2.49.5  
 > 数据源：`default`（Postgres `public`）  
-> 状态：已 track 25 张业务表；关系均来自 FK（`foreign_key_constraint_on`）
+> 状态：已 track 26 张业务表；关系均来自 FK（`foreign_key_constraint_on`）
 
 请对照 Console http://localhost:9695 与本图：漏表、关系反了请立刻说。
 
 ## 已 track 表
 
-`users` `sites` `site_members` `devices` `inspection_templates` `import_batches` `service_cases` `case_assignments` `case_work_units` `inspection_tasks` `inspection_records` `vision_jobs` `ai_hard_rules` `case_expense_claims` `po_orders` `po_items` `price_library` `item_price_mappings` `case_performances` `case_perf_shares` `assessments` `assessment_events` `assessment_score_rules` `monthly_settlements` `change_logs`
+`users` `sites` `site_members` `devices` `inspection_templates` `import_batches` `service_cases` `case_assignments` `case_work_units` `inspection_tasks` `inspection_records` `vision_jobs` `ai_hard_rules` `case_expense_claims` `po_orders` `po_items` `price_library` `item_price_mappings` `case_performances` `case_perf_shares` `assessments` `assessment_events` `assessment_score_rules` `monthly_settlements` `change_logs` `app_settings`
 
 ## JWT 角色
 

@@ -96,7 +96,7 @@
 
 .pc-login-panel { padding: 42px clamp(36px, 5vw, 68px); display: flex; align-items: center; background: rgba(255,255,255,.98); }
 .pc-login-card { width: 100%; max-width: 410px; margin: 0 auto; }
-.login-back { display: inline-flex; align-items: center; gap: 6px; margin-bottom: 42px; color: #84968f; font-size: 13px; text-decoration: none; transition: color .2s; }
+.login-back { display: inline-flex; align-items: center; gap: 6px; margin-bottom: 42px; color: #84968f; font-size: 13px; text-decoration: none; cursor: pointer; transition: color .2s; }
 .login-back:hover { color: var(--green); }
 .pc-login-brand { display: flex; align-items: center; gap: 14px; margin-bottom: 26px; }
 .pc-login-brand__logo { flex: 0 0 54px; width: 54px; height: 54px; border-radius: 16px; font-size: 20px; }
@@ -123,6 +123,7 @@
 .pc-login-card .ant-input-affix-wrapper-focused { border-color: #2ba879; box-shadow: 0 0 0 3px rgba(22, 131, 95, .09); }
 .pc-login-card .ant-input-prefix { margin-right: 10px; color: #8da097; }
 .pc-login-session { margin-bottom: 14px; padding: 11px 13px; border-radius: 10px; color: #5d756c; background: #f0f7f4; font-size: 12px; line-height: 1.6; }
+.pc-login-session a { color: #16835f; cursor: pointer; }
 .pc-login-options { margin: 2px 0 18px; display: flex; justify-content: space-between; align-items: center; color: #91a098; font-size: 12px; }
 .pc-login-options .ant-checkbox-wrapper { color: #536b62; font-size: 13px; }
 .pc-login-btn { height: 50px !important; border: 0 !important; border-radius: 12px !important; background: linear-gradient(135deg, #1ba873, #117452) !important; font-size: 15px; font-weight: 700; box-shadow: 0 10px 24px rgba(22, 131, 95, .22); }

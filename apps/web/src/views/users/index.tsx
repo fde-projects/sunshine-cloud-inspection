@@ -19,7 +19,7 @@ import {
 import { PlusOutlined, EditOutlined, MobileOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import {
-  fetchUsers,
+  fetchStaffingUsers,
   createUser,
   updateUser,
   updateUserStatus,
@@ -29,6 +29,7 @@ import {
 import { fetchMyStaffSites, addSiteMember, removeSiteMember, fetchSiteMembers } from '../../api/site';
 import { useAuthStore } from '../../stores/auth';
 import type { UserInfo, SiteItem, UserRole, CommonStatus } from '../../types';
+import { isAntValidateError } from '../../utils/ant-form';
 
 function userRolesOf(record: UserInfo): UserRole[] {
   return record.roles?.length ? record.roles : record.role ? [record.role] : [];
@@ -171,7 +172,7 @@ export default function UsersPage() {
   const loadList = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetchUsers({
+      const res = await fetchStaffingUsers({
         page,
         limit: 10,
         keyword: keyword || undefined,
@@ -225,7 +226,20 @@ export default function UsersPage() {
   };
 
   const submitUser = async () => {
-    const values = await form.validateFields();
+    let values: Record<string, unknown> & {
+      username?: string;
+      phone?: string;
+      roles?: UserRole[];
+      realName?: string;
+      employeeNo?: string;
+      password?: string;
+    };
+    try {
+      values = await form.validateFields();
+    } catch (error) {
+      if (isAntValidateError(error)) return;
+      throw error;
+    }
     const isSelfCreate =
       !editing &&
       (values.username === currentUser?.username || values.phone === currentUser?.phone);
@@ -309,7 +323,13 @@ export default function UsersPage() {
   };
 
   const submitPwd = async () => {
-    const values = await pwdForm.validateFields();
+    let values: { newPassword?: string };
+    try {
+      values = await pwdForm.validateFields();
+    } catch (error) {
+      if (isAntValidateError(error)) return;
+      throw error;
+    }
     if (!pwdUser) return;
     await resetUserPassword(pwdUser.id, values.newPassword);
     message.success('密码已重置');
@@ -464,7 +484,7 @@ export default function UsersPage() {
         style={{ marginBottom: 12 }}
         message={
           isAdmin
-            ? '管理员只设立正网格长（PC）。工程师须由正/副网格长设立；正/副网格长也可为自己开通工程师身份后登录 H5。'
+            ? '本列表只显示您设立的正网格长。工程师由正/副网格长在各自网格内编制，不会出现在这里。'
             : canStaffAsManager
               ? '在用户列表设立副网格长/工程师；工程师可直接「聘用到网格」。正网格长不能给自己设副网格长，可开通工程师后同一账号登 H5。'
               : isSiteManager

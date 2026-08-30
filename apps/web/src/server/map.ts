@@ -1,7 +1,8 @@
+import { parseHardRuleBindings, parseHardRuleSamples } from "@/lib/hard-rule-match";
 import { adminGql } from "@/lib/hasura-admin";
 import type { AppUser } from "./http";
 
-export const CASE_FIELDS = `
+export const CASE_CORE_FIELDS = `
   id gsp_case_no project_name service_type product_line creator province city site_desc
   site_id task_type task_template_id assign_mode planned_units completed_units
   expense_enabled unit_label region status inspector_id assign_remark finish_time
@@ -14,8 +15,98 @@ export const CASE_FIELDS = `
     inspector { real_name username phone }
   }
   case_performance { case_revenue }
+`;
+
+export const CASE_FIELDS = `
+  ${CASE_CORE_FIELDS}
   po_orders { id }
 `;
+
+export const PO_ITEM_FIELDS = `
+  id po_order_id item_category item_code item_name item_desc unit qty
+  settle_price perf_price item_revenue item_perf price_status
+`;
+
+export const PO_ORDER_FIELDS = `
+  id po_no gsp_case_no service_case_id po_total_amount demand_date demander demand_type
+  product_line product_model product_qty match_status
+  fault_phenomenon fault_level duration_req demand_desc
+  project_area project_country project_region province project_name project_scene
+  submitter dingtalk_created_at dingtalk_updated_at
+`;
+
+export function mapPoItem(it: Record<string, unknown>, hidePerf = false) {
+  return {
+    id: it.id,
+    poId: it.po_order_id,
+    itemCategory: it.item_category,
+    itemCode: it.item_code,
+    itemName: it.item_name,
+    itemDesc: it.item_desc,
+    unit: it.unit,
+    qty: it.qty,
+    settlePrice: it.settle_price,
+    perfPrice: hidePerf ? undefined : it.perf_price,
+    itemRevenue: it.item_revenue,
+    itemPerf: hidePerf ? undefined : it.item_perf,
+    priceStatus: it.price_status,
+  };
+}
+
+export function mapPoOrder(
+  r: Record<string, unknown>,
+  opts?: { hidePerf?: boolean; linkedCase?: Record<string, unknown> | null },
+) {
+  const hidePerf = Boolean(opts?.hidePerf);
+  const items = ((r.po_items as Record<string, unknown>[]) || []).map((it) =>
+    mapPoItem(it, hidePerf),
+  );
+  const linked = (opts?.linkedCase ?? (r.service_case as Record<string, unknown> | null)) || null;
+  return {
+    id: r.id,
+    poNo: r.po_no,
+    gspCaseNo: r.gsp_case_no,
+    serviceCaseId: r.service_case_id,
+    poTotalAmount: String(r.po_total_amount ?? 0),
+    demandDate: r.demand_date,
+    demander: r.demander,
+    demandType: r.demand_type,
+    productLine: r.product_line,
+    productModel: r.product_model,
+    productQty: r.product_qty,
+    faultPhenomenon: r.fault_phenomenon ?? null,
+    faultLevel: r.fault_level ?? null,
+    durationReq: r.duration_req ?? null,
+    demandDesc: r.demand_desc ?? null,
+    projectArea: r.project_area ?? null,
+    projectCountry: r.project_country ?? null,
+    projectRegion: r.project_region ?? null,
+    province: r.province ?? null,
+    projectName: r.project_name ?? null,
+    projectScene: r.project_scene ?? null,
+    submitter: r.submitter ?? null,
+    dingtalkCreatedAt: r.dingtalk_created_at ?? null,
+    dingtalkUpdatedAt: r.dingtalk_updated_at ?? null,
+    matchStatus: r.service_case_id ? "matched" : "pending",
+    linkedCase: linked
+      ? {
+          id: linked.id,
+          gspCaseNo: linked.gsp_case_no,
+          projectName: linked.project_name,
+          province: linked.province,
+          city: linked.city,
+          siteDesc: linked.site_desc,
+          serviceType: linked.service_type,
+          productLine: linked.product_line,
+          region: linked.region,
+          status: linked.status,
+        }
+      : null,
+    items,
+    specialItemCount: items.filter((x) => x.itemCategory === "special").length,
+    generalItemCount: items.filter((x) => x.itemCategory === "general").length,
+  };
+}
 
 export function mapCase(row: Record<string, unknown>) {
   const site = row.site as { id?: string; name?: string; manager?: { real_name?: string } } | null;
@@ -55,8 +146,8 @@ export function mapCase(row: Record<string, unknown>) {
     assignRemark: row.assign_remark,
     finishTime: row.finish_time,
     updatedAt: row.updated_at,
-    caseRevenue: String(perf?.case_revenue ?? "0"),
     hasPo: pos.length > 0,
+    caseRevenue: pos.length > 0 ? String(perf?.case_revenue ?? "0") : "0",
     assignments: assignments.map((a) => {
       const ins = a.inspector as { real_name?: string; username?: string; phone?: string } | null;
       return {
@@ -105,6 +196,65 @@ export async function loadCase(id: string) {
     { id },
   );
   return data.service_cases_by_pk;
+}
+
+export async function loadCaseDetail(id: string) {
+  const data = await adminGql<{ service_cases_by_pk: Record<string, unknown> | null }>(
+    `query ($id: uuid!) {
+      service_cases_by_pk(id: $id) {
+        ${CASE_CORE_FIELDS}
+        po_orders(order_by: { created_at: desc }) {
+          ${PO_ORDER_FIELDS}
+          po_items(order_by: { created_at: asc }) { ${PO_ITEM_FIELDS} }
+        }
+      }
+    }`,
+    { id },
+  );
+  return data.service_cases_by_pk;
+}
+
+export function mapCaseDetail(row: Record<string, unknown>, user?: { role?: string }) {
+  const base = mapCase(row);
+  const hidePerf = user?.role !== "super_admin";
+  const orders = ((row.po_orders as Record<string, unknown>[]) || []).map((po) =>
+    mapPoOrder(po, { hidePerf }),
+  );
+  const priced = orders.flatMap((o) => o.items).filter((it) => it.priceStatus !== "ignored");
+  const itemRevenue = priced.reduce((sum, it) => sum + Number(it.itemRevenue || 0), 0);
+  const poTotal = orders.reduce((sum, o) => sum + Number(o.poTotalAmount || 0), 0);
+  const revenue = orders.length ? itemRevenue : 0;
+  const pendingPrice = priced.filter((it) => it.priceStatus === "pending_price").length;
+  const mismatch = poTotal > 0.009 && Math.abs(revenue - poTotal) > 0.01;
+  const poLabel = poTotal.toFixed(2);
+  const incomeLabel = revenue.toFixed(2);
+  let notice: { type: "warning" | "info"; message: string; description: string } | null = null;
+  if (pendingPrice > 0) {
+    notice = {
+      type: "warning",
+      message: `有 ${pendingPrice} 条待定价，尚未计入案例收入`,
+      description: `PO 表头 ¥${poLabel}，已核算 ¥${incomeLabel}。下表橙色「待定价」就是缺结算价的行，可点「未配」去价格库补。`,
+    };
+  } else if (mismatch) {
+    notice = {
+      type: "info",
+      message: "案例收入与 PO 表头金额不同",
+      description: `PO 表头 ¥${poLabel} 是单据总额；案例收入 ¥${incomeLabel} 是已定价条目加总。差几块通常是表头含未计价项，下表可对行。`,
+    };
+  }
+  return {
+    ...base,
+    hasPo: orders.length > 0,
+    orders,
+    caseRevenue: incomeLabel,
+    reconciliation: {
+      poTotal: poLabel,
+      caseRevenue: incomeLabel,
+      varianceRate: poTotal ? Math.abs(revenue - poTotal) / poTotal : 0,
+      pendingPrice,
+      notice,
+    },
+  };
 }
 
 export function mapTask(row: Record<string, unknown>) {
@@ -211,10 +361,20 @@ export function mapTemplate(row: Record<string, unknown>) {
   };
 }
 
+export const BUILTIN_HARD_RULE_CODES = new Set([
+  "ac_side",
+  "grounding",
+  "dc_side",
+  "fault_record",
+  "sungrow",
+  "mount_fix",
+]);
+
 export function mapHardRule(row: Record<string, unknown>) {
+  const code = String(row.code || "");
   return {
     id: row.id,
-    code: row.code,
+    code,
     name: row.name,
     matchMode: row.match_mode,
     matchPattern: row.match_pattern,
@@ -227,6 +387,16 @@ export function mapHardRule(row: Record<string, unknown>) {
     updatedBy: row.updated_by_id,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+    builtin: false,
+    hasDefault: BUILTIN_HARD_RULE_CODES.has(code),
+    bindings: parseHardRuleBindings({
+      matchMode: String(row.match_mode || ""),
+      matchPattern: String(row.match_pattern || ""),
+      jsonSchemaHint: (row.json_schema_hint as string | null) || null,
+    }),
+    samples: parseHardRuleSamples({
+      jsonSchemaHint: (row.json_schema_hint as string | null) || null,
+    }),
   };
 }
 

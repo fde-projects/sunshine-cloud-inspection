@@ -1,4 +1,21 @@
 import { adminGql } from "./hasura-admin";
+import {
+  failReasonIfShortOfRequiredShots,
+  failReasonIfSlotsUncovered,
+  fallbackViewLabel,
+  HARD_RULE_FAIL_SAMPLE_LIMIT,
+  HARD_RULE_PASS_SAMPLE_LIMIT,
+  HARD_RULE_VIEW_LABEL_MAX,
+  labeledPassViews,
+  matchHardRule,
+  parseCoverIndexes,
+  parseHardRuleSamples,
+  sanitizePassViews,
+  sanitizeSampleUrls,
+  sanitizeViewLabel,
+  takeLatestPhotos,
+  type HardRulePassView,
+} from "./hard-rule-match";
 
 type HardRule = {
   code: string;
@@ -6,80 +23,169 @@ type HardRule = {
   match_mode: string;
   match_pattern: string;
   prompt_text: string;
+  json_schema_hint?: string | null;
   enforce_mode: string;
 };
 
-function matchRule(rule: HardRule, title: string, description: string): boolean {
-  const hay =
-    rule.match_mode === "criteria_includes"
-      ? `${title} ${description}`
-      : title;
-  const parts = rule.match_pattern.split("|").map((s) => s.trim()).filter(Boolean);
-  if (rule.match_mode === "title_exact") {
-    return parts.some((p) => hay === p);
-  }
-  return parts.some((p) => hay.includes(p));
-}
-
-function extractJson(text: string): { status?: string; reason?: string; confidence?: number } {
+function extractJson(text: string): Record<string, unknown> {
   const fenced = text.match(/\{[\s\S]*\}/);
   if (!fenced) return {};
   try {
-    return JSON.parse(fenced[0]) as {
-      status?: string;
-      reason?: string;
-      confidence?: number;
-    };
+    return JSON.parse(fenced[0]) as Record<string, unknown>;
   } catch {
     return {};
   }
+}
+
+/** 模型常把 status 写成 pass，理由却以「因此不合格」收尾；以理由最后结论为准，且只允许把误标的合格改成不合格。 */
+export function reconcileStatusWithReason(
+  status: "pass" | "fail",
+  reason: string,
+): "pass" | "fail" {
+  const t = reason.trim();
+  if (!t) return status;
+  const tail = t.slice(-60);
+  const failTail =
+    /因此不合格|故不合格|判定为不合格|结论[:：]\s*不合格|必须判\s*fail|不合格[。．!！]?$/i.test(tail);
+  if (failTail) return "fail";
+  return status;
+}
+
+function uniqueUrls(urls: string[], limit: number) {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const url of urls) {
+    if (!url || seen.has(url)) continue;
+    seen.add(url);
+    out.push(url);
+    if (out.length >= limit) break;
+  }
+  return out;
 }
 
 export async function analyzePhotos(input: {
   title: string;
   description: string;
   photoUrls: string[];
+  templateId?: string;
+  entryId?: string;
+  samplePassUrls?: string[];
+  sampleFailUrls?: string[];
+  samplePassViews?: HardRulePassView[];
+  ruleOverride?: {
+    name: string;
+    promptText: string;
+    enforceMode?: string;
+    samplePassUrls?: string[];
+    sampleFailUrls?: string[];
+    samplePassViews?: HardRulePassView[];
+  };
 }): Promise<{ status: "pass" | "fail" | "error"; confidence: number; reason: string; provider: string }> {
   const apiKey = (process.env.VISION_API_KEY || "").trim();
   const base = (process.env.VISION_BASE_URL || "https://api.siliconflow.cn/v1").replace(/\/$/, "");
   const model = process.env.VISION_MODEL || "Qwen/Qwen3-VL-8B-Instruct";
 
-  if (!apiKey) {
-    return {
-      status: "pass",
-      confidence: 0,
-      reason: "未配置 VISION_API_KEY，开发环境返回模拟合格",
-      provider: "mock",
-    };
-  }
   if (!input.photoUrls.length) {
     return { status: "fail", confidence: 0, reason: "未上传照片", provider: "siliconflow" };
   }
 
-  const rulesData = await adminGql<{
-    ai_hard_rules: HardRule[];
-  }>(`query {
+  let ruleBlock = "";
+  let strict = false;
+  let samplePass = sanitizePassViews(
+    input.ruleOverride?.samplePassViews ??
+      input.samplePassViews ??
+      input.ruleOverride?.samplePassUrls ??
+      input.samplePassUrls,
+    HARD_RULE_PASS_SAMPLE_LIMIT,
+  );
+  let sampleFail = uniqueUrls(
+    sanitizeSampleUrls(input.ruleOverride?.sampleFailUrls ?? input.sampleFailUrls, HARD_RULE_FAIL_SAMPLE_LIMIT),
+    HARD_RULE_FAIL_SAMPLE_LIMIT,
+  );
+  if (input.ruleOverride?.promptText) {
+    ruleBlock = `- [${input.ruleOverride.name}] ${input.ruleOverride.promptText}`;
+    strict = input.ruleOverride.enforceMode === "strict";
+  } else {
+    const rulesData = await adminGql<{
+      ai_hard_rules: HardRule[];
+    }>(`query {
     ai_hard_rules(where: { enabled: { _eq: true } }) {
-      code name match_mode match_pattern prompt_text enforce_mode
+      code name match_mode match_pattern prompt_text json_schema_hint enforce_mode
     }
   }`);
-  const matched = rulesData.ai_hard_rules.filter(
-    (r) => r.enforce_mode !== "off" && matchRule(r, input.title, input.description),
-  );
-  const ruleBlock = matched
-    .map((r) => `- [${r.name}] ${r.prompt_text}`)
-    .join("\n");
+    const matched = rulesData.ai_hard_rules.filter(
+      (r) =>
+        r.enforce_mode !== "off" &&
+        matchHardRule(r, {
+          title: input.title,
+          description: input.description,
+          templateId: input.templateId,
+          entryId: input.entryId,
+        }),
+    );
+    ruleBlock = matched.map((r) => `- [${r.name}] ${r.prompt_text}`).join("\n");
+    strict = matched.some((r) => r.enforce_mode === "strict");
+    if (!samplePass.length && !sampleFail.length) {
+      const collectedPass: HardRulePassView[] = [];
+      const collectedFail: string[] = [];
+      for (const rule of matched) {
+        const samples = parseHardRuleSamples(rule);
+        collectedPass.push(...samples.pass);
+        collectedFail.push(...samples.fail);
+      }
+      samplePass = sanitizePassViews(collectedPass, HARD_RULE_PASS_SAMPLE_LIMIT);
+      sampleFail = uniqueUrls(collectedFail, HARD_RULE_FAIL_SAMPLE_LIMIT);
+    }
+  }
 
+  const fieldPhotos = takeLatestPhotos(input.photoUrls);
+  const passViews = labeledPassViews(samplePass);
+  const shortReason = failReasonIfShortOfRequiredShots(fieldPhotos.length, passViews.length);
+  if (shortReason) {
+    return { status: "fail", confidence: 1, reason: shortReason, provider: "rule" };
+  }
+  if (!apiKey) {
+    return {
+      status: "pass",
+      confidence: 0,
+      reason: "未配置 VISION_API_KEY，开发环境返回模拟合格（未对照样张）",
+      provider: "mock",
+    };
+  }
+
+  const hasRefs = passViews.length + sampleFail.length > 0;
+  const slotLine =
+    passViews.length >= 2
+      ? `合格样共 ${passViews.length} 张，编号 1 到 ${passViews.length}：${passViews.map((item, i) => `${i + 1}=${item.label}`).join("，")}。covers 必须与待判定照片一一对应，值为合格样编号或 0（对不上）。每种合格样都必须被至少一张待判定对上；两张都像同一种则缺另一种，status 必须 fail。`
+      : "";
   const prompt = `你是光伏/储能现场质检员。根据照片判断检查项是否合格。
 检查项：${input.title}
 标准：${input.description}
 ${ruleBlock ? `硬规则：\n${ruleBlock}` : ""}
-只输出 JSON：{"status":"pass 或 fail","confidence":0到1的数字,"reason":"中文理由"}`;
+${hasRefs ? "下面先给出管理员标注的对照样张，再给出待判定照片。合格样是该检查项应有的拍摄角度；待判定应覆盖这些视角并接近合格样。若更接近不合格样、缺必要视角，或出现不合格标准中的情况，必须 fail。" : ""}
+${strict ? "判定纪律：证据不足或拿不准必须判 fail，禁止猜测合格。" : ""}
+必须看完每一张待判定照片再下结论，禁止只根据第一张判定。
+页签或按钮上的标题不等于已经拍了那一页：必须单独截到点开后的内容。一张图里同时看见「实时故障」和「历史故障」等标题，只算当前选中的那一页，未点开的那一页视为缺失，必须 fail。
+${slotLine}
+status 必须与 reason 最后一句一致：理由写不合格则 status 必须是 fail，写合格则必须是 pass。
+只输出 JSON：{"status":"pass 或 fail","confidence":0到1的数字,"reason":"中文理由，最后一句写合格或不合格"${passViews.length >= 2 ? `,"covers":[与待判定张数相同的合格样编号]` : ""}}`;
 
   const content: unknown[] = [{ type: "text", text: prompt }];
-  for (const url of input.photoUrls.slice(0, 4)) {
+  passViews.forEach((item, i) => {
+    content.push({ type: "text", text: `【对照·合格样 ${i + 1}/${passViews.length}：${item.label}】` });
+    content.push({ type: "image_url", image_url: { url: item.url } });
+  });
+  for (const url of sampleFail) {
+    content.push({ type: "text", text: "【对照·不合格样】" });
     content.push({ type: "image_url", image_url: { url } });
   }
+  if (hasRefs) {
+    content.push({ type: "text", text: `【待判定照片，共 ${fieldPhotos.length} 张，须全部查看】` });
+  }
+  fieldPhotos.forEach((url, i) => {
+    content.push({ type: "text", text: `【待判定第 ${i + 1}/${fieldPhotos.length} 张】` });
+    content.push({ type: "image_url", image_url: { url } });
+  });
 
   const res = await fetch(`${base}/chat/completions`, {
     method: "POST",
@@ -91,7 +197,7 @@ ${ruleBlock ? `硬规则：\n${ruleBlock}` : ""}
       model,
       messages: [{ role: "user", content }],
       temperature: 0,
-      max_tokens: 400,
+      max_tokens: 500,
     }),
   });
   if (!res.ok) {
@@ -108,11 +214,150 @@ ${ruleBlock ? `硬规则：\n${ruleBlock}` : ""}
   };
   const text = json.choices?.[0]?.message?.content || "";
   const parsed = extractJson(text);
-  const status = parsed.status === "fail" ? "fail" : parsed.status === "pass" ? "pass" : "fail";
+  const reason = String(parsed.reason || text.slice(0, 200) || "模型未给出理由");
+  const covers = parseCoverIndexes(parsed.covers, fieldPhotos.length, passViews);
+  const uncovered = failReasonIfSlotsUncovered(passViews, covers);
+  if (uncovered) {
+    return { status: "fail", confidence: 1, reason: uncovered, provider: "siliconflow" };
+  }
+  const rawStatus = parsed.status === "fail" ? "fail" : parsed.status === "pass" ? "pass" : "fail";
   return {
-    status,
+    status: reconcileStatusWithReason(rawStatus, reason),
     confidence: typeof parsed.confidence === "number" ? parsed.confidence : 0.5,
-    reason: parsed.reason || text.slice(0, 200) || "模型未给出理由",
+    reason,
     provider: "siliconflow",
   };
+}
+
+export async function draftRuleFromSamples(input: {
+  name: string;
+  title: string;
+  description?: string;
+  passPhotoUrls: string[];
+  failPhotoUrls: string[];
+  failNote?: string;
+}): Promise<{ passCriteria: string; failCriteria: string; provider: string }> {
+  const apiKey = (process.env.VISION_API_KEY || "").trim();
+  const base = (process.env.VISION_BASE_URL || "https://api.siliconflow.cn/v1").replace(/\/$/, "");
+  const model = process.env.VISION_MODEL || "Qwen/Qwen3-VL-8B-Instruct";
+  const passUrls = input.passPhotoUrls.filter(Boolean).slice(0, HARD_RULE_PASS_SAMPLE_LIMIT);
+  const failUrls = input.failPhotoUrls.filter(Boolean).slice(0, HARD_RULE_FAIL_SAMPLE_LIMIT);
+  if (!passUrls.length && !failUrls.length) {
+    throw new Error("请至少上传一张合格或不合格样张");
+  }
+
+  if (!apiKey) {
+    const note = String(input.failNote || "").trim();
+    return {
+      passCriteria: `以合格样张为准：能看清「${input.title || input.name}」要求的关键部位，视角完整、不遮挡、不重复连拍。`,
+      failCriteria: note
+        ? `与合格样差异明显：${note}。关键部位看不清、只拍局部或缺必要视角，必须不合格。`
+        : "与合格样差异明显：关键部位看不清、只拍局部、缺必要视角或照片重复，必须不合格。",
+      provider: "mock",
+    };
+  }
+
+  const prompt = `你是光伏/储能现场质检规则撰写员。下面照片已由管理员标注合格或不合格。
+检查项：${input.title || input.name}
+补充说明：${input.description || "无"}
+${input.failNote ? `管理员认为不合格的原因：${input.failNote}` : ""}
+请对比合格样与不合格样的可见差异，用白话写出可执行的判定标准。
+要求：只写照片里能看见的东西；不要编造没出现的零件；不合格必须写清“看见什么就 fail”。
+只输出 JSON：{"passCriteria":"合格标准，可分点","failCriteria":"不合格标准，可分点"}`;
+
+  const content: unknown[] = [{ type: "text", text: prompt }];
+  for (const url of passUrls) {
+    content.push({ type: "text", text: "【合格样张】" });
+    content.push({ type: "image_url", image_url: { url } });
+  }
+  for (const url of failUrls) {
+    content.push({ type: "text", text: "【不合格样张】" });
+    content.push({ type: "image_url", image_url: { url } });
+  }
+
+  const res = await fetch(`${base}/chat/completions`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      authorization: `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({
+      model,
+      messages: [{ role: "user", content }],
+      temperature: 0.2,
+      max_tokens: 800,
+    }),
+  });
+  if (!res.ok) {
+    const t = await res.text();
+    throw new Error(`硅基流动调用失败：${res.status} ${t.slice(0, 200)}`);
+  }
+  const json = (await res.json()) as { choices?: { message?: { content?: string } }[] };
+  const text = json.choices?.[0]?.message?.content || "";
+  const parsed = extractJson(text) as { passCriteria?: string; failCriteria?: string };
+  const passCriteria = String(parsed.passCriteria || "").trim();
+  const failCriteria = String(parsed.failCriteria || "").trim();
+  if (!passCriteria && !failCriteria) {
+    throw new Error("模型未生成可用草稿，请换几张更清楚的样张再试");
+  }
+  return { passCriteria, failCriteria, provider: "siliconflow" };
+}
+
+function uniquifyViewLabels(labels: string[]): string[] {
+  const seen = new Map<string, number>();
+  return labels.map((raw, index) => {
+    const base = sanitizeViewLabel(raw) || fallbackViewLabel(index);
+    const count = (seen.get(base) || 0) + 1;
+    seen.set(base, count);
+    if (count === 1) return base;
+    return sanitizeViewLabel(`${base}${count}`) || fallbackViewLabel(index);
+  });
+}
+
+/** 给合格样自动起短名字，管理员可再改。多张必须能区分。 */
+export async function suggestPassViewLabels(input: {
+  title?: string;
+  views: HardRulePassView[];
+}): Promise<{ labels: string[]; provider: string }> {
+  const views = sanitizePassViews(input.views, HARD_RULE_PASS_SAMPLE_LIMIT);
+  if (!views.length) return { labels: [], provider: "none" };
+  const fallback = uniquifyViewLabels(views.map((item, index) => item.label || fallbackViewLabel(index)));
+  const apiKey = (process.env.VISION_API_KEY || "").trim();
+  const base = (process.env.VISION_BASE_URL || "https://api.siliconflow.cn/v1").replace(/\/$/, "");
+  const model = process.env.VISION_MODEL || "Qwen/Qwen3-VL-8B-Instruct";
+  if (!apiKey) return { labels: fallback, provider: "mock" };
+
+  const prompt = `你是现场质检配图助手。给下面每张「合格样」起一个短名字（2到${HARD_RULE_VIEW_LABEL_MAX}个字）。
+检查项：${input.title || "检查项"}
+要求：只写照片里能看见的视角或页签，例如「实时故障」「历史故障」「整机」「抱箍」。不要编造图上没有的词。多张图若不是同一视角，名字必须能区分开。已有名字尽量沿用，重名则改后一张。
+只输出 JSON：{"labels":["与样张顺序相同的短名字"]}`;
+
+  const content: unknown[] = [{ type: "text", text: prompt }];
+  views.forEach((item, i) => {
+    const current = item.label ? `，已有名字「${item.label}」` : "";
+    content.push({ type: "text", text: `【合格样 ${i + 1}/${views.length}${current}】` });
+    content.push({ type: "image_url", image_url: { url: item.url } });
+  });
+
+  const res = await fetch(`${base}/chat/completions`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      authorization: `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({
+      model,
+      messages: [{ role: "user", content }],
+      temperature: 0,
+      max_tokens: 200,
+    }),
+  });
+  if (!res.ok) return { labels: fallback, provider: "siliconflow" };
+  const json = (await res.json()) as { choices?: { message?: { content?: string } }[] };
+  const parsed = extractJson(json.choices?.[0]?.message?.content || "");
+  const raw = Array.isArray(parsed.labels) ? parsed.labels.map((item) => sanitizeViewLabel(item)) : [];
+  if (raw.length !== views.length || raw.some((item) => !item)) {
+    return { labels: fallback, provider: "siliconflow" };
+  }
+  return { labels: uniquifyViewLabels(raw), provider: "siliconflow" };
 }

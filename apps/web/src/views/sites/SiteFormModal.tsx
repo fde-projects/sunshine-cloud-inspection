@@ -217,7 +217,7 @@ export default function SiteFormModal({
       onCancel={onCancel}
       onOk={handleOk}
       width={640}
-      destroyOnHidden
+      forceRender
       okText={editing ? '保存' : '创建'}
       cancelText="取消"
     >

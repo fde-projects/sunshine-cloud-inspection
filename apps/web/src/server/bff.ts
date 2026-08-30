@@ -1,21 +1,43 @@
 import { NextResponse } from "next/server";
 import bcrypt from "bcryptjs";
 import { adminGql } from "@/lib/hasura-admin";
-import { signHasuraUserJwt, pickDefaultRole, type AppRole } from "@/lib/jwt";
-import { analyzePhotos } from "@/lib/vision";
+import { issueRoleSession, loginWithPassword, requireActiveRole } from "./auth-login";
+import { analyzePhotos, draftRuleFromSamples, suggestPassViewLabels } from "@/lib/vision";
 import { createUploadToken } from "@/lib/storage";
 import { fail, HttpError, ok, parseBody, q, requireUser, type AppUser } from "./http";
 import {
   CASE_FIELDS,
   caseWhere,
   loadCase,
+  loadCaseDetail,
   mapCase,
+  mapCaseDetail,
   mapHardRule,
+  mapPoOrder,
   mapRecord,
   mapTask,
   mapTemplate,
   mapUser,
+  PO_ITEM_FIELDS,
+  PO_ORDER_FIELDS,
 } from "./map";
+import { getHardRuleDefault } from "./hard-rule-defaults";
+import { composeHardRulePrompt, resolveHardRuleMatch } from "@/lib/hard-rule-prompt";
+import {
+  HARD_RULE_REVIEW_WINDOW_DAYS,
+  normalizeHardRuleSamples,
+  parseHardRuleBindings,
+  parseHardRuleSamples,
+  serializeHardRuleHint,
+  takeLatestPhotos,
+} from "@/lib/hard-rule-match";
+import {
+  accumulateHardRuleReviewStats,
+  matchHardRuleCodes,
+  stampHardRuleReview,
+} from "@/lib/hard-rule-stats";
+import { ensureOriginalCatalog } from "./catalog-seed";
+import { rematchCasesForTemplate, syncBoundCaseNames } from "./finance/demand-type-match";
 import {
   downloadTemplate,
   fileFromForm,
@@ -36,7 +58,8 @@ import {
   xlsxResponse,
   assertFinanceClearAllowed,
 } from "./finance/finance-ops";
-import { listPriceMappings, recalculate, savePriceMapping } from "./finance/price-mapping";
+import { getFinanceDashboard, getFinanceVariance } from "./finance/dashboard";
+import { listPriceMappings, recalculate, recalculateLedgers, savePriceMapping } from "./finance/price-mapping";
 import { DEFAULT_ASSESSMENT_SCORE_RULES } from "./finance/assessment-score-rule.catalog";
 import { ASSESSMENT_EVENT_CATALOG } from "./finance/assessment-event.catalog";
 
@@ -99,14 +122,15 @@ export async function handleBff(req: Request, path: string): Promise<NextRespons
       user = await requireUser(req);
     }
   } catch (e) {
-    if (e instanceof HttpError) return fail(e.status, e.message);
+    if (e instanceof HttpError) return fail(e.status, e.message, e.extra);
     throw e;
   }
 
   try {
+    if (user) await ensureOriginalCatalog();
     return await dispatch({ req, user, path, parts: path.split("/").filter(Boolean), method, query, body, form });
   } catch (e) {
-    if (e instanceof HttpError) return fail(e.status, e.message);
+    if (e instanceof HttpError) return fail(e.status, e.message, e.extra);
     const msg = e instanceof Error ? e.message : "服务器错误";
     return fail(400, msg);
   }
@@ -125,6 +149,7 @@ async function dispatch(ctx: {
   const { path, method, query, body, user, form } = ctx;
 
   if (method === "POST" && path === "auth/login") return login(body);
+  if (method === "POST" && path === "auth/switch-portal") return switchPortal(need(user), body);
   if (method === "GET" && path === "auth/me") return ok(toPublicUser(need(user)));
   if (method === "POST" && path === "auth/logout") return ok({ success: true });
   if (method === "PUT" && path === "auth/profile") return updateProfile(need(user), body);
@@ -148,7 +173,8 @@ async function dispatch(ctx: {
   }
   if (method === "GET" && path === "upload/qiniu-token") {
     const u = need(user);
-    const token = createUploadToken("photo.jpg", u.id);
+    const filename = String(query.get("filename") || "photo.jpg");
+    const token = createUploadToken(filename, u.id);
     return ok({
       token: token.token,
       domain: process.env.QINIU_DOMAIN?.replace(/\/$/, "") || "",
@@ -160,21 +186,8 @@ async function dispatch(ctx: {
   if (method === "POST" && path === "upload/photo") return uploadPhoto(form, need(user));
   if (method === "POST" && path === "upload/location-check") return checkLocation(body);
 
-  if (method === "GET" && path === "system/branding") {
-    return ok({
-      systemName: "阳光运维系统",
-      subtitle: "阳光运维平台",
-      logoUrl: null,
-    });
-  }
-  if (method === "PUT" && path === "system/branding") {
-    return ok({
-      systemName: String(body.systemName || "阳光运维系统"),
-      subtitle: (body.subtitle as string) ?? "阳光运维平台",
-      logoUrl: (body.logoUrl as string) || null,
-      updatedAt: new Date().toISOString(),
-    });
-  }
+  if (method === "GET" && path === "system/branding") return getBranding();
+  if (method === "PUT" && path === "system/branding") return saveBranding(needAdmin(user), body);
   if (method === "GET" && path === "system/status") {
     return ok({
       overall: "healthy",
@@ -196,6 +209,19 @@ async function dispatch(ctx: {
     const m = match(path, "templates/:id");
     if (m && method === "PUT") return saveTemplate(m.id, body);
     if (m && method === "DELETE") {
+      const used = await adminGql<{ service_cases_aggregate: { aggregate: { count: number } } }>(
+        `query ($id: uuid!) {
+          service_cases_aggregate(where: { task_template_id: { _eq: $id } }) { aggregate { count } }
+        }`,
+        { id: m.id },
+      );
+      const caseCount = used.service_cases_aggregate.aggregate.count;
+      if (caseCount > 0) {
+        throw new HttpError(
+          400,
+          `该服务类型已被 ${caseCount} 个案例引用，无法删除。请先在案例中改绑服务类型，或清空相关案例后再删。`,
+        );
+      }
       await adminGql(`mutation ($id: uuid!) { delete_inspection_templates_by_pk(id: $id) { id } }`, {
         id: m.id,
       });
@@ -211,10 +237,55 @@ async function dispatch(ctx: {
     const d = await adminGql<{ ai_hard_rules: Record<string, unknown>[] }>(
       `query { ai_hard_rules(order_by: { created_at: asc }) { id code name match_mode match_pattern prompt_text json_schema_hint enabled enforce_mode version change_note updated_by_id created_at updated_at } }`,
     );
-    return ok(d.ai_hard_rules.map(mapHardRule));
+    const stats = await loadHardRuleReviewStats(d.ai_hard_rules).catch(() => ({} as Record<string, never>));
+    return ok(
+      d.ai_hard_rules
+        .map((row) => {
+          const mapped = mapHardRule(row);
+          return {
+            ...mapped,
+            reviewStats: stats[mapped.code] || {
+              reviewed: 0,
+              agreed: 0,
+              windowDays: HARD_RULE_REVIEW_WINDOW_DAYS,
+            },
+          };
+        })
+        .sort((a, b) => String(a.name).localeCompare(String(b.name), "zh-CN")),
+    );
   }
-  if (path === "ai-hard-rules" && method === "POST") return saveHardRule(null, body, need(user));
+  if (path === "ai-hard-rules/catalog" && method === "GET") return hardRuleCatalog();
+  if (path === "ai-hard-rules/preview" && method === "POST") {
+    return previewHardRule(body, needAdmin(user));
+  }
+  if (path === "ai-hard-rules/draft" && method === "POST") {
+    return draftHardRule(body, needAdmin(user));
+  }
+  if (path === "ai-hard-rules/label-samples" && method === "POST") {
+    return labelPassSamples(body, needAdmin(user));
+  }
+  if (path === "ai-hard-rules" && method === "POST") return saveHardRule(null, body, needAdmin(user));
   {
+    const reset = match(path, "ai-hard-rules/:code/reset");
+    if (reset && method === "POST") {
+      const def = getHardRuleDefault(reset.code);
+      if (!def) throw new HttpError(404, "无此内置默认规则");
+      return saveHardRule(
+        reset.code,
+        {
+          name: def.name,
+          matchMode: def.matchMode,
+          matchPattern: def.matchPattern,
+          promptText: def.promptText,
+          jsonSchemaHint: def.jsonSchemaHint,
+          enabled: true,
+          enforceMode: def.enforceMode,
+          changeNote: body.changeNote || "恢复内置默认硬规则",
+          replaceContent: true,
+        },
+        needAdmin(user),
+      );
+    }
     const m = match(path, "ai-hard-rules/:code");
     if (m && method === "GET") {
       const d = await adminGql<{ ai_hard_rules: Record<string, unknown>[] }>(
@@ -224,8 +295,9 @@ async function dispatch(ctx: {
       if (!d.ai_hard_rules[0]) throw new HttpError(404, "规则不存在");
       return ok(mapHardRule(d.ai_hard_rules[0]));
     }
-    if (m && method === "PUT") return saveHardRule(m.code, body, need(user));
+    if (m && method === "PUT") return saveHardRule(m.code, body, needAdmin(user));
     if (m && method === "DELETE") {
+      needAdmin(user);
       await adminGql(`mutation ($c: String!) { delete_ai_hard_rules(where: { code: { _eq: $c } }) { affected_rows } }`, {
         c: m.code,
       });
@@ -303,9 +375,11 @@ async function dispatch(ctx: {
     if (ser && method === "POST") return saveSerial(ser.unitId, body);
     const c1 = match(path, "cases/:id");
     if (c1 && method === "GET") {
-      const row = await loadCase(c1.id);
+      const row = await loadCaseDetail(c1.id);
       if (!row) throw new HttpError(404, "案例不存在");
-      return ok(mapCase(row));
+      const linked = (row.po_orders as unknown[]) || [];
+      if (!linked.length) await recalculateLedgers([c1.id]);
+      return ok(mapCaseDetail(row, need(user)));
     }
   }
 
@@ -435,8 +509,12 @@ async function dispatch(ctx: {
     if (rj && method === "POST") return reviewApprove(need(user), rj.id, body, false);
   }
 
-  if (path === "finance/dashboard" && method === "GET") return financeDashboard();
-  if (path === "finance/dashboard/variance" && method === "GET") return financeVariance();
+  if (path === "finance/dashboard" && method === "GET") {
+    return ok(await getFinanceDashboard(need(user), query));
+  }
+  if (path === "finance/dashboard/variance" && method === "GET") {
+    return ok(await getFinanceVariance(need(user), query));
+  }
 
   if (path === "assessments" && method === "GET") return listAssessments(query);
   if (path === "assessments" && method === "POST") return saveAssessment(body);
@@ -515,6 +593,56 @@ async function dispatch(ctx: {
   throw new HttpError(404, `接口不存在: ${method} /${path}`);
 }
 
+function defaultBranding() {
+  return {
+    systemName: "阳光运维系统",
+    subtitle: "阳光运维平台",
+    logoUrl: null as string | null,
+    updatedAt: null as string | null,
+  };
+}
+
+function mapBranding(value: unknown, updatedAt?: string | null) {
+  const row = value && typeof value === "object" ? (value as Record<string, unknown>) : {};
+  const fallback = defaultBranding();
+  return {
+    systemName: String(row.systemName || fallback.systemName).trim() || fallback.systemName,
+    subtitle: (row.subtitle as string) ?? fallback.subtitle,
+    logoUrl: (row.logoUrl as string) || null,
+    updatedAt: updatedAt ?? (row.updatedAt as string) ?? null,
+  };
+}
+
+async function getBranding() {
+  try {
+    const data = await adminGql<{
+      app_settings_by_pk: { value: unknown; updated_at: string } | null;
+    }>(`query { app_settings_by_pk(key: "branding") { value updated_at } }`);
+    if (!data.app_settings_by_pk) return ok(defaultBranding());
+    return ok(mapBranding(data.app_settings_by_pk.value, data.app_settings_by_pk.updated_at));
+  } catch {
+    return ok(defaultBranding());
+  }
+}
+
+async function saveBranding(_user: AppUser, body: Record<string, unknown>) {
+  const next = mapBranding({
+    systemName: body.systemName,
+    subtitle: body.subtitle,
+    logoUrl: body.logoUrl,
+  });
+  await adminGql(
+    `mutation ($obj: app_settings_insert_input!) {
+      insert_app_settings_one(
+        object: $obj
+        on_conflict: { constraint: app_settings_pkey, update_columns: [value, updated_at] }
+      ) { key updated_at }
+    }`,
+    { obj: { key: "branding", value: next, updated_at: new Date().toISOString() } },
+  );
+  return ok({ ...next, updatedAt: new Date().toISOString() });
+}
+
 function toPublicUser(u: AppUser) {
   return {
     id: u.id,
@@ -532,45 +660,37 @@ function toPublicUser(u: AppUser) {
 }
 
 async function login(body: Record<string, unknown>) {
-  const username = String(body.username || "").trim();
-  const password = String(body.password || "");
-  if (!username || !password) throw new HttpError(400, "请输入用户名和密码");
-  const data = await adminGql<{
-    users: Array<{
-      id: string;
-      username: string;
-      password: string;
-      real_name: string;
-      phone: string;
-      role: AppRole;
-      roles: AppRole[];
-      status: string;
-    }>;
-  }>(
-    `query ($username: String!) {
-      users(where: { username: { _eq: $username } }, limit: 1) {
-        id username password real_name phone role roles status
-      }
-    }`,
-    { username },
+  const session = await loginWithPassword(
+    String(body.username || "").trim(),
+    String(body.password || ""),
+    body.portal ?? body.role ?? body.client,
   );
-  const row = data.users[0];
-  if (!row || row.status !== "active") throw new HttpError(401, "用户名或密码错误");
-  const pass = await bcrypt.compare(password, row.password);
-  if (!pass) throw new HttpError(401, "用户名或密码错误");
-  const roles = (Array.isArray(row.roles) && row.roles.length ? row.roles : [row.role]) as AppRole[];
-  const role = pickDefaultRole(roles, row.role);
-  const token = await signHasuraUserJwt(row.id, roles, role);
-  const user = {
-    id: row.id,
-    username: row.username,
-    realName: row.real_name,
-    phone: row.phone,
-    role,
-    roles,
-    status: row.status,
-  };
-  return ok({ accessToken: token, refreshToken: token, user });
+  return ok({
+    accessToken: session.token,
+    refreshToken: session.token,
+    user: session.user,
+    needsRolePick: session.needsRolePick,
+  });
+}
+
+async function switchPortal(user: AppUser, body: Record<string, unknown>) {
+  const activeRole = requireActiveRole(body, user.roles);
+  const session = await issueRoleSession({
+    id: user.id,
+    username: user.username,
+    realName: user.realName,
+    phone: user.phone,
+    status: user.status,
+    role: user.role,
+    roles: user.roles,
+    activeRole,
+  });
+  return ok({
+    accessToken: session.token,
+    refreshToken: session.token,
+    user: session.user,
+    needsRolePick: session.needsRolePick,
+  });
 }
 
 async function updateProfile(user: AppUser, body: Record<string, unknown>) {
@@ -627,38 +747,109 @@ async function listTemplates(query: URLSearchParams) {
   return ok(d.inspection_templates.map(mapTemplate));
 }
 
+const TEMPLATE_RETURNING = `
+  id name device_type entries product_lines is_global site_id assign_mode unit_label expense_enabled_default version created_at
+`;
+
+function checklistFingerprint(productLines: unknown, entries: unknown) {
+  return JSON.stringify({ productLines: productLines ?? [], entries: entries ?? [] });
+}
+
+async function assertTemplateNameFree(name: string, exceptId?: string | null) {
+  const where: Record<string, unknown> = { name: { _eq: name } };
+  if (exceptId) where.id = { _neq: exceptId };
+  const d = await adminGql<{ inspection_templates: Array<{ id: string }> }>(
+    `query ($where: inspection_templates_bool_exp) {
+      inspection_templates(where: $where, limit: 1) { id }
+    }`,
+    { where },
+  );
+  if (d.inspection_templates[0]) throw new HttpError(400, `服务类型「${name}」已存在`);
+}
+
 async function saveTemplate(id: string | null, body: Record<string, unknown>) {
+  const name = String(body.name || "").trim();
+  if (!name) throw new HttpError(400, "服务类型名称不能为空");
+  const isGlobal = body.isGlobal ?? body.is_global ?? true;
   const obj = {
-    name: body.name,
+    name,
     device_type: body.deviceType || body.device_type || "string_inverter",
     entries: body.entries ?? [],
     product_lines: body.productLines ?? body.product_lines ?? [],
-    is_global: body.isGlobal ?? true,
-    site_id: body.siteId ?? null,
-    assign_mode: body.assignMode || "single",
-    unit_label: body.unitLabel || "台",
-    expense_enabled_default: body.expenseEnabledDefault ?? false,
+    is_global: isGlobal,
+    site_id: body.siteId ?? body.site_id ?? null,
+    assign_mode: body.assignMode === "multi" || body.assign_mode === "multi" ? "multi" : "single",
+    unit_label: "台",
+    expense_enabled_default: !!(body.expenseEnabledDefault ?? body.expense_enabled_default),
   };
   if (!id) {
+    await assertTemplateNameFree(name);
     const d = await adminGql<{ insert_inspection_templates_one: Record<string, unknown> }>(
       `mutation ($obj: inspection_templates_insert_input!) {
-        insert_inspection_templates_one(object: $obj) {
-          id name device_type entries product_lines is_global site_id assign_mode unit_label expense_enabled_default version created_at
-        }
+        insert_inspection_templates_one(object: $obj) { ${TEMPLATE_RETURNING} }
       }`,
       { obj },
     );
-    return ok(mapTemplate(d.insert_inspection_templates_one));
+    const saved = d.insert_inspection_templates_one;
+    const rematched = obj.is_global
+      ? await rematchCasesForTemplate({ id: String(saved.id), name })
+      : 0;
+    return ok({ ...mapTemplate(saved), rematchedCases: rematched });
   }
+  const prev = await adminGql<{ inspection_templates_by_pk: Record<string, unknown> | null }>(
+    `query ($id: uuid!) { inspection_templates_by_pk(id: $id) { ${TEMPLATE_RETURNING} } }`,
+    { id },
+  );
+  const current = prev.inspection_templates_by_pk;
+  if (!current) throw new HttpError(404, "模板不存在");
+  await assertTemplateNameFree(name, id);
+  const oldTypeName = String(current.name || "").trim();
+  const oldLines = Array.isArray(current.product_lines)
+    ? (current.product_lines as Array<{ id?: string; name?: string }>)
+    : [];
+  const nextLines = Array.isArray(obj.product_lines)
+    ? (obj.product_lines as Array<{ id?: string; name?: string }>)
+    : [];
+  const oldLineById = new Map(
+    oldLines.filter((p) => p?.id).map((p) => [String(p.id), String(p.name || "").trim()] as const),
+  );
+  const versionChanged =
+    checklistFingerprint(current.product_lines, current.entries) !==
+    checklistFingerprint(obj.product_lines, obj.entries);
   const d = await adminGql<{ update_inspection_templates_by_pk: Record<string, unknown> }>(
     `mutation ($id: uuid!, $set: inspection_templates_set_input!) {
-      update_inspection_templates_by_pk(pk_columns: { id: $id }, _set: $set) {
-        id name device_type entries product_lines is_global site_id assign_mode unit_label expense_enabled_default version created_at
-      }
+      update_inspection_templates_by_pk(pk_columns: { id: $id }, _set: $set) { ${TEMPLATE_RETURNING} }
     }`,
-    { id, set: obj },
+    {
+      id,
+      set: {
+        ...obj,
+        version: versionChanged ? Number(current.version || 1) + 1 : current.version,
+      },
+    },
   );
-  return ok(mapTemplate(d.update_inspection_templates_by_pk));
+  const saved = d.update_inspection_templates_by_pk;
+  const lineRenames: Array<{ from: string; to: string }> = [];
+  for (const line of nextLines) {
+    const idKey = String(line.id || "");
+    const next = String(line.name || "").trim();
+    const prevName = oldLineById.get(idKey) || "";
+    if (idKey && prevName && next && prevName !== next) {
+      lineRenames.push({ from: prevName, to: next });
+    }
+  }
+  const syncedCases = await syncBoundCaseNames(id, {
+    oldTypeName,
+    newTypeName: name,
+    lineRenames,
+  });
+  const rematched = obj.is_global ? await rematchCasesForTemplate({ id, name }) : 0;
+  return ok({
+    ...mapTemplate(saved),
+    versionChanged,
+    rematchedCases: rematched,
+    syncedCases,
+  });
 }
 
 async function cloneTemplate(id: string, body: Record<string, unknown>) {
@@ -668,9 +859,20 @@ async function cloneTemplate(id: string, body: Record<string, unknown>) {
   );
   const src = d.inspection_templates_by_pk;
   if (!src) throw new HttpError(404, "模板不存在");
+  const baseName = `${src.name}（网格副本）`;
+  let cloneName = baseName;
+  for (let i = 2; i <= 50; i += 1) {
+    try {
+      await assertTemplateNameFree(cloneName);
+      break;
+    } catch {
+      cloneName = `${baseName}${i}`;
+      if (i === 50) throw new HttpError(400, "无法生成不重名的网格副本名称");
+    }
+  }
   return saveTemplate(null, {
     ...src,
-    name: `${src.name} 副本`,
+    name: cloneName,
     siteId: body.siteId,
     isGlobal: false,
     deviceType: src.device_type,
@@ -682,33 +884,269 @@ async function cloneTemplate(id: string, body: Record<string, unknown>) {
   });
 }
 
+const HARD_RULE_RETURNING =
+  "id code name match_mode match_pattern prompt_text json_schema_hint enabled enforce_mode version change_note updated_by_id created_at updated_at";
+
+function collectTemplateEntries(
+  templates: Array<{
+    id?: string;
+    name?: string;
+    entries?: unknown;
+    product_lines?: unknown;
+  }>,
+) {
+  const items: Array<{
+    key: string;
+    templateId: string;
+    templateName: string;
+    productLineId: string;
+    productLineName: string;
+    entryId: string;
+    entryName: string;
+    description: string;
+    samplePhotos: string[];
+  }> = [];
+  const push = (
+    tplId: string,
+    tplName: string,
+    lineId: string,
+    lineName: string,
+    raw: unknown,
+  ) => {
+    const item = (raw || {}) as { id?: string; name?: string; description?: string; samplePhotos?: unknown };
+    const entryName = String(item.name || "").trim();
+    if (!entryName) return;
+    const entryId = String(item.id || `${tplId}:${lineId}:${entryName}`).trim();
+    items.push({
+      key: `${tplId}:${entryId}`,
+      templateId: tplId,
+      templateName: tplName,
+      productLineId: lineId,
+      productLineName: lineName,
+      entryId,
+      entryName,
+      description: String(item.description || ""),
+      samplePhotos: Array.isArray(item.samplePhotos)
+        ? item.samplePhotos.map((url) => String(url || "").trim()).filter(Boolean)
+        : [],
+    });
+  };
+  for (const tpl of templates) {
+    const tplId = String(tpl.id || "").trim();
+    const tplName = String(tpl.name || "").trim() || "未命名服务类型";
+    if (!tplId) continue;
+    const lines = Array.isArray(tpl.product_lines) ? tpl.product_lines : [];
+    if (lines.length) {
+      for (const line of lines) {
+        const row = (line || {}) as { id?: string; name?: string; entries?: unknown };
+        const lineId = String(row.id || "").trim();
+        const lineName = String(row.name || "").trim();
+        for (const entry of Array.isArray(row.entries) ? row.entries : []) {
+          push(tplId, tplName, lineId, lineName, entry);
+        }
+      }
+    }
+    for (const entry of Array.isArray(tpl.entries) ? tpl.entries : []) {
+      push(tplId, tplName, "", "", entry);
+    }
+  }
+  return items.sort((a, b) => {
+    const left = `${a.templateName}${a.productLineName}${a.entryName}`;
+    const right = `${b.templateName}${b.productLineName}${b.entryName}`;
+    return left.localeCompare(right, "zh-CN");
+  });
+}
+
+async function hardRuleCatalog() {
+  const d = await adminGql<{
+    inspection_templates: Array<{ id: string; name: string; entries: unknown; product_lines: unknown }>;
+  }>(`query {
+    inspection_templates(limit: 500) {
+      id name entries product_lines
+    }
+  }`);
+  return ok({ items: collectTemplateEntries(d.inspection_templates || []) });
+}
+
+function resolveCustomPromptText(body: Record<string, unknown>, fallbackName: string) {
+  const pass = String(body.passCriteria || "").trim();
+  const fail = String(body.failCriteria || "").trim();
+  const override = String(body.promptText || "").trim();
+  if (pass || fail) {
+    return composeHardRulePrompt({
+      name: String(body.name || fallbackName || "").trim(),
+      passCriteria: pass,
+      failCriteria: fail,
+      enforceMode: String(body.enforceMode || "strict"),
+    });
+  }
+  if (override) return override;
+  throw new HttpError(400, "请填写合格标准或不合格标准");
+}
+
+async function previewHardRule(body: Record<string, unknown>, _user: AppUser) {
+  const photos = Array.isArray(body.photoUrls) ? body.photoUrls.map((x) => String(x || "")).filter(Boolean) : [];
+  if (!photos.length) throw new HttpError(400, "请先上传试跑照片");
+  const title = String(body.title || body.name || "").trim() || "检查项";
+  const promptText = (() => {
+    try {
+      return resolveCustomPromptText(body, title);
+    } catch {
+      return String(body.promptText || "").trim();
+    }
+  })();
+  if (!promptText) throw new HttpError(400, "请先填写合格/不合格标准");
+  const samples = normalizeHardRuleSamples({
+    pass: body.passSampleViews ?? body.passSampleUrls ?? (body.samples as { pass?: unknown } | undefined)?.pass,
+    fail: body.failSampleUrls ?? (body.samples as { fail?: unknown } | undefined)?.fail,
+  });
+  const result = await analyzePhotos({
+    title,
+    description: String(body.description || ""),
+    photoUrls: takeLatestPhotos(photos),
+    ruleOverride: {
+      name: String(body.name || title),
+      promptText,
+      enforceMode: String(body.enforceMode || "strict"),
+      samplePassViews: samples.pass,
+      sampleFailUrls: samples.fail,
+    },
+  });
+  return ok(result);
+}
+
+async function labelPassSamples(body: Record<string, unknown>, _user: AppUser) {
+  const samples = normalizeHardRuleSamples({
+    pass: body.views ?? body.passSampleViews ?? body.passSampleUrls ?? (body.samples as { pass?: unknown } | undefined)?.pass,
+  });
+  if (!samples.pass.length) throw new HttpError(400, "请先上传合格样");
+  const titled = String(body.title || body.name || "").trim() || "检查项";
+  const result = await suggestPassViewLabels({ title: titled, views: samples.pass });
+  return ok(result);
+}
+
+async function draftHardRule(body: Record<string, unknown>, _user: AppUser) {
+  const passPhotoUrls = Array.isArray(body.passPhotoUrls)
+    ? body.passPhotoUrls.map((x) => String(x || "")).filter(Boolean)
+    : [];
+  const failPhotoUrls = Array.isArray(body.failPhotoUrls)
+    ? body.failPhotoUrls.map((x) => String(x || "")).filter(Boolean)
+    : [];
+  if (!passPhotoUrls.length && !failPhotoUrls.length) {
+    throw new HttpError(400, "请至少上传一张合格或不合格样张");
+  }
+  try {
+    const drafted = await draftRuleFromSamples({
+      name: String(body.name || "").trim() || "检查项",
+      title: String(body.title || body.name || "").trim() || "检查项",
+      description: String(body.description || ""),
+      passPhotoUrls,
+      failPhotoUrls,
+      failNote: String(body.failNote || "").trim(),
+    });
+    return ok({ ...drafted, draft: true });
+  } catch (e) {
+    throw new HttpError(400, e instanceof Error ? e.message : "生成草稿失败");
+  }
+}
+
 async function saveHardRule(code: string | null, body: Record<string, unknown>, user: AppUser) {
+  const existing = code
+    ? (
+        await adminGql<{ ai_hard_rules: Record<string, unknown>[] }>(
+          `query ($c: String!) { ai_hard_rules(where: { code: { _eq: $c } }, limit: 1) { ${HARD_RULE_RETURNING} } }`,
+          { c: code },
+        )
+      ).ai_hard_rules[0]
+    : null;
+  if (code && !existing) throw new HttpError(404, "规则不存在");
+
+  const replaceContent = body.replaceContent === true;
+
+  let matchMode = String(existing?.match_mode || "title_includes");
+  let matchPattern = String(existing?.match_pattern || "");
+  let promptText = String(existing?.prompt_text || "");
+  let jsonSchemaHint = (existing?.json_schema_hint as string | null | undefined) ?? null;
+  const hasSampleFields =
+    body.passSampleUrls !== undefined ||
+    body.passSampleViews !== undefined ||
+    body.failSampleUrls !== undefined ||
+    body.samples !== undefined;
+  const incomingSamples = hasSampleFields
+    ? normalizeHardRuleSamples({
+        pass:
+          body.passSampleViews ??
+          body.passSampleUrls ??
+          (body.samples as { pass?: unknown } | undefined)?.pass,
+        fail: body.failSampleUrls ?? (body.samples as { fail?: unknown } | undefined)?.fail,
+      })
+    : parseHardRuleSamples({ jsonSchemaHint });
+
+  try {
+    const resolved = resolveHardRuleMatch({ ...body, samples: incomingSamples });
+    matchMode = resolved.matchMode;
+    matchPattern = resolved.matchPattern;
+    jsonSchemaHint = resolved.jsonSchemaHint;
+  } catch (e) {
+    if (!code) throw new HttpError(400, e instanceof Error ? e.message : "请选择要套用的检查项");
+    if (body.matchPattern) {
+      matchMode = String(body.matchMode || matchMode || "title_includes");
+      matchPattern = String(body.matchPattern);
+    }
+    if (hasSampleFields) {
+      jsonSchemaHint = serializeHardRuleHint({
+        bindings: parseHardRuleBindings({ jsonSchemaHint }),
+        samples: incomingSamples,
+      });
+    }
+  }
+
+  if (replaceContent) {
+    promptText = String(body.promptText || promptText);
+    jsonSchemaHint = (body.jsonSchemaHint as string | null | undefined) ?? jsonSchemaHint;
+    if (body.matchPattern) matchPattern = String(body.matchPattern);
+    if (body.matchMode) matchMode = String(body.matchMode);
+  } else {
+    promptText = resolveCustomPromptText(body, String(body.name || existing?.name || ""));
+    if (body.jsonSchemaHint !== undefined && !Array.isArray(body.bindings)) {
+      jsonSchemaHint = (body.jsonSchemaHint as string | null) || null;
+    }
+  }
+
   const obj = {
-    name: body.name,
-    match_mode: body.matchMode || "title_includes",
-    match_pattern: body.matchPattern,
-    prompt_text: body.promptText || "",
-    json_schema_hint: body.jsonSchemaHint ?? null,
-    enabled: body.enabled ?? true,
-    enforce_mode: body.enforceMode || "strict",
-    change_note: body.changeNote ?? null,
+    name: body.name || existing?.name,
+    match_mode: matchMode,
+    match_pattern: matchPattern,
+    prompt_text: promptText,
+    json_schema_hint: jsonSchemaHint,
+    enabled: body.enabled ?? existing?.enabled ?? true,
+    enforce_mode: body.enforceMode || existing?.enforce_mode || "strict",
+    change_note: body.changeNote || (code ? "更新硬规则" : "新建自定义硬规则"),
     updated_by_id: user.id,
   };
+
   if (!code) {
     const c = `rule_${Date.now().toString(36)}`;
     const d = await adminGql<{ insert_ai_hard_rules_one: Record<string, unknown> }>(
-      `mutation ($obj: ai_hard_rules_insert_input!) { insert_ai_hard_rules_one(object: $obj) { id code name match_mode match_pattern prompt_text json_schema_hint enabled enforce_mode version change_note updated_by_id created_at updated_at } }`,
-      { obj: { ...obj, code: c } },
+      `mutation ($obj: ai_hard_rules_insert_input!) { insert_ai_hard_rules_one(object: $obj) { ${HARD_RULE_RETURNING} } }`,
+      { obj: { ...obj, code: c, version: 1 } },
     );
     return ok(mapHardRule(d.insert_ai_hard_rules_one));
   }
+
   const d = await adminGql<{ update_ai_hard_rules: { returning: Record<string, unknown>[] } }>(
     `mutation ($c: String!, $set: ai_hard_rules_set_input!) {
       update_ai_hard_rules(where: { code: { _eq: $c } }, _set: $set) {
-        returning { id code name match_mode match_pattern prompt_text json_schema_hint enabled enforce_mode version change_note updated_by_id created_at updated_at }
+        returning { ${HARD_RULE_RETURNING} }
       }
     }`,
-    { c: code, set: obj },
+    {
+      c: code,
+      set: {
+        ...obj,
+        version: Number(existing?.version || 1) + 1,
+      },
+    },
   );
   return ok(mapHardRule(d.update_ai_hard_rules.returning[0]));
 }
@@ -1675,23 +2113,65 @@ async function recordCaseGroups(query: URLSearchParams) {
 }
 
 async function recordsByCase(groupKey: string) {
+  const raw = String(groupKey || "").trim();
+  const kind = raw.startsWith("task-") ? "task" : "case";
+  const id = raw.startsWith("case-") || raw.startsWith("task-") ? raw.slice(5) : raw;
+  if (!id || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) {
+    throw new HttpError(400, "无效的案例标识");
+  }
+  const where =
+    kind === "task"
+      ? { task_id: { _eq: id } }
+      : { task: { service_case_id: { _eq: id } } };
   const d = await adminGql<{ inspection_records: Record<string, unknown>[] }>(
-    `query ($id: uuid!) {
-      inspection_records(where: { task: { service_case_id: { _eq: $id } } }) { ${RECORD_FIELDS} }
+    `query ($where: inspection_records_bool_exp!) {
+      inspection_records(where: $where, order_by: { created_at: desc }) { ${RECORD_FIELDS} }
     }`,
-    { id: groupKey },
+    { where },
   );
-  return ok({ list: d.inspection_records.map(mapRecord), total: d.inspection_records.length });
+  return ok({ list: d.inspection_records.map(mapRecord), total: d.inspection_records.length, groupKey: raw });
 }
 
 async function runAnalyze(body: Record<string, unknown>) {
-  const result = await analyzePhotos({
-    title: String(body.title || ""),
-    description: String(body.description || ""),
-    photoUrls: (body.photoUrls as string[]) || [],
-  });
   const recordId = body.recordId as string | undefined;
   const entryId = body.templateEntryId as string | undefined;
+  let title = String(body.title || "").trim();
+  let description = String(body.description || "").trim();
+  let templateId = String(body.templateId || "").trim();
+  if (recordId && entryId && (!title || !templateId)) {
+    const rec = await adminGql<{
+      inspection_records_by_pk: {
+        task?: {
+          template_snapshot?: Array<{ id?: string; name?: string; description?: string }>;
+          service_case?: { task_template_id?: string; task_template?: { id?: string; name?: string } };
+        };
+      } | null;
+    }>(
+      `query ($id: uuid!) {
+        inspection_records_by_pk(id: $id) {
+          task {
+            template_snapshot
+            service_case { task_template_id task_template { id name } }
+          }
+        }
+      }`,
+      { id: recordId },
+    );
+    const task = rec.inspection_records_by_pk?.task;
+    const snap = task?.template_snapshot?.find((item) => item.id === entryId);
+    if (!title) title = String(snap?.name || "");
+    if (!description) description = String(snap?.description || "");
+    if (!templateId) {
+      templateId = String(task?.service_case?.task_template_id || task?.service_case?.task_template?.id || "");
+    }
+  }
+  const result = await analyzePhotos({
+    title,
+    description,
+    photoUrls: takeLatestPhotos(body.photoUrls, 8),
+    templateId: templateId || undefined,
+    entryId: entryId || undefined,
+  });
   if (recordId && entryId) {
     const rec = await adminGql<{ inspection_records_by_pk: { entries: Array<Record<string, unknown>> } | null }>(
       `query ($id: uuid!) { inspection_records_by_pk(id: $id) { entries } }`,
@@ -1739,17 +2219,96 @@ async function checkLocation(body: Record<string, unknown>) {
   });
 }
 
+async function loadHardRuleReviewStats(rules: Record<string, unknown>[]) {
+  const since = new Date(Date.now() - HARD_RULE_REVIEW_WINDOW_DAYS * 24 * 60 * 60 * 1000).toISOString();
+  const d = await adminGql<{
+    inspection_records: Array<{
+      entries?: unknown;
+      created_at?: string;
+      submitted_at?: string;
+      approved_at?: string;
+      task?: {
+        template_snapshot?: Array<{ id?: string; name?: string; description?: string }>;
+        service_case?: { task_template_id?: string };
+      };
+    }>;
+  }>(
+    `query ($since: timestamptz!) {
+      inspection_records(
+        where: {
+          _or: [
+            { created_at: { _gte: $since } }
+            { submitted_at: { _gte: $since } }
+            { approved_at: { _gte: $since } }
+          ]
+        }
+        limit: 800
+        order_by: { created_at: desc }
+      ) {
+        entries
+        created_at
+        submitted_at
+        approved_at
+        task { template_snapshot service_case { task_template_id } }
+      }
+    }`,
+    { since },
+  );
+  return accumulateHardRuleReviewStats(d.inspection_records || [], rules);
+}
+
 async function setManualResult(recordId: string, entryId: string, body: Record<string, unknown>) {
-  const rec = await adminGql<{ inspection_records_by_pk: { entries: Array<Record<string, unknown>> } | null }>(
-    `query ($id: uuid!) { inspection_records_by_pk(id: $id) { entries } }`,
+  const manualStatus = body.manualResult === "fail" ? "fail" : body.manualResult === "pass" ? "pass" : "";
+  if (!manualStatus) throw new HttpError(400, "请选择合格或不合格");
+  const rec = await adminGql<{
+    inspection_records_by_pk: {
+      entries: Array<Record<string, unknown>>;
+      task?: {
+        template_snapshot?: Array<{ id?: string; name?: string; description?: string }>;
+        service_case?: { task_template_id?: string };
+      };
+    } | null;
+  }>(
+    `query ($id: uuid!) {
+      inspection_records_by_pk(id: $id) {
+        entries
+        task { template_snapshot service_case { task_template_id } }
+      }
+    }`,
     { id: recordId },
   );
-  const entries = rec.inspection_records_by_pk?.entries || [];
-  const next = entries.map((e) =>
-    e.templateEntryId === entryId
-      ? { ...e, manualResult: body.manualResult, finalResult: body.manualResult }
-      : e,
-  );
+  const row = rec.inspection_records_by_pk;
+  const entries = row?.entries || [];
+  const snap = (row?.task?.template_snapshot || []).find((item) => item.id === entryId);
+  const rules = (
+    await adminGql<{
+      ai_hard_rules: Array<Record<string, unknown>>;
+    }>(`query {
+      ai_hard_rules(where: { enabled: { _eq: true } }) {
+        code match_mode match_pattern json_schema_hint enforce_mode
+      }
+    }`)
+  ).ai_hard_rules.filter((rule) => String(rule.enforce_mode || "") !== "off");
+  const ruleCodes = matchHardRuleCodes(rules, {
+    title: String(snap?.name || ""),
+    description: String(snap?.description || ""),
+    templateId: String(row?.task?.service_case?.task_template_id || ""),
+    entryId,
+  });
+  const next = entries.map((e) => {
+    if (e.templateEntryId !== entryId) return e;
+    const aiResult = (e.aiResult || {}) as { status?: string };
+    return {
+      ...e,
+      manualResult: manualStatus,
+      finalResult: manualStatus,
+      review: stampHardRuleReview({
+        aiStatus: aiResult.status,
+        manualStatus,
+        ruleCodes,
+      }),
+    };
+  });
   await adminGql(
     `mutation ($id: uuid!, $entries: jsonb!) {
       update_inspection_records_by_pk(pk_columns: { id: $id }, _set: { entries: $entries }) { id }
@@ -1799,59 +2358,16 @@ async function listPo(query: URLSearchParams) {
   const d = await adminGql<{ po_orders: Record<string, unknown>[]; po_orders_aggregate: { aggregate: { count: number } } }>(
     `query ($where: po_orders_bool_exp!, $limit: Int!, $offset: Int!) {
       po_orders(where: $where, limit: $limit, offset: $offset, order_by: { created_at: desc }) {
-        id po_no gsp_case_no service_case_id po_total_amount demand_date demander demand_type product_line
-        product_model product_qty match_status
+        ${PO_ORDER_FIELDS}
         service_case { id gsp_case_no project_name province city site_desc service_type product_line region status }
-        po_items(limit: 500) { id po_order_id item_category item_code item_name item_desc unit qty settle_price perf_price item_revenue item_perf price_status }
+        po_items(limit: 500) { ${PO_ITEM_FIELDS} }
       }
       po_orders_aggregate(where: $where) { aggregate { count } }
     }`,
     { where, limit, offset: (page - 1) * limit },
   );
   return ok({
-    list: d.po_orders.map((r) => ({
-      id: r.id,
-      poNo: r.po_no,
-      gspCaseNo: r.gsp_case_no,
-      serviceCaseId: r.service_case_id,
-      poTotalAmount: String(r.po_total_amount ?? 0),
-      demandDate: r.demand_date,
-      demander: r.demander,
-      demandType: r.demand_type,
-      productLine: r.product_line,
-      productModel: r.product_model,
-      productQty: r.product_qty,
-      matchStatus: r.service_case_id ? "matched" : "pending",
-      linkedCase: r.service_case
-        ? {
-            id: (r.service_case as Record<string, unknown>).id,
-            gspCaseNo: (r.service_case as Record<string, unknown>).gsp_case_no,
-            projectName: (r.service_case as Record<string, unknown>).project_name,
-            province: (r.service_case as Record<string, unknown>).province,
-            city: (r.service_case as Record<string, unknown>).city,
-            siteDesc: (r.service_case as Record<string, unknown>).site_desc,
-            serviceType: (r.service_case as Record<string, unknown>).service_type,
-            productLine: (r.service_case as Record<string, unknown>).product_line,
-            region: (r.service_case as Record<string, unknown>).region,
-            status: (r.service_case as Record<string, unknown>).status,
-          }
-        : null,
-      items: ((r.po_items as Record<string, unknown>[]) || []).map((it) => ({
-        id: it.id,
-        poId: it.po_order_id,
-        itemCategory: it.item_category,
-        itemCode: it.item_code,
-        itemName: it.item_name,
-        itemDesc: it.item_desc,
-        unit: it.unit,
-        qty: it.qty,
-        settlePrice: it.settle_price,
-        perfPrice: it.perf_price,
-        itemRevenue: it.item_revenue,
-        itemPerf: it.item_perf,
-        priceStatus: it.price_status,
-      })),
-    })),
+    list: d.po_orders.map((r) => mapPoOrder(r)),
     total: d.po_orders_aggregate.aggregate.count,
     page,
     limit,
@@ -1957,14 +2473,88 @@ async function pendingReviews(query: URLSearchParams) {
 }
 
 async function amountBreakdown(caseId: string) {
-  const row = await loadCase(caseId);
-  const revenue = Number((row?.case_performance as { case_revenue?: number })?.case_revenue || 0);
+  const row = await loadCaseDetail(caseId);
+  if (!row) throw new HttpError(404, "案例不存在");
+  const extra = await adminGql<{
+    case_performances: Array<{
+      case_revenue?: string | number;
+      perf_base?: string | number;
+      perf_final?: string | number;
+      deduction?: string | number;
+    }>;
+    assessment_events: Array<{
+      id: string;
+      category?: string;
+      content: string;
+      amount: string | number;
+      remark?: string | null;
+      user_id: string;
+      created_at?: string;
+      user?: { real_name?: string } | null;
+    }>;
+  }>(
+    `query ($id: uuid!) {
+      case_performances(where: { service_case_id: { _eq: $id } }, limit: 1) {
+        case_revenue perf_base perf_final deduction
+      }
+      assessment_events(where: { service_case_id: { _eq: $id } }, order_by: { created_at: desc }) {
+        id category content amount remark user_id created_at
+        user { real_name }
+      }
+    }`,
+    { id: caseId },
+  );
+  const orders = (row.po_orders as Record<string, unknown>[]) || [];
+  const items = orders.flatMap((po) =>
+    ((po.po_items as Record<string, unknown>[]) || [])
+      .filter((it) => it.price_status !== "ignored")
+      .map((it) => ({
+        id: String(it.id),
+        poId: String(po.id),
+        itemCode: String(it.item_code || ""),
+        itemName: String(it.item_name || it.item_code || ""),
+        itemDesc: (it.item_desc as string | null) ?? null,
+        unit: (it.unit as string | null) ?? null,
+        qty: String(it.qty ?? 0),
+        settlePrice: it.settle_price == null ? null : String(it.settle_price),
+        itemRevenue: String(it.item_revenue ?? 0),
+        perfPrice: it.perf_price == null ? null : String(it.perf_price),
+        itemPerf: String(it.item_perf ?? 0),
+        priceStatus: String(it.price_status || ""),
+      })),
+  );
+  const itemRevenue = items.reduce((sum, it) => sum + Number(it.itemRevenue || 0), 0);
+  const itemPerf = items.reduce((sum, it) => sum + Number(it.itemPerf || 0), 0);
+  const ledger = extra.case_performances[0];
+  const caseRevenue = itemRevenue;
+  const perfBase = itemPerf;
+  if (!items.length) await recalculateLedgers([caseId]);
+  const deduction = Number(ledger?.deduction || 0);
+  const events = extra.assessment_events.map((e) => ({
+    id: e.id,
+    category: e.category,
+    content: e.content,
+    amount: String(e.amount ?? 0),
+    remark: e.remark,
+    userId: e.user_id,
+    userName: e.user?.real_name || null,
+    createdAt: e.created_at,
+  }));
+  const eventPenalty = events.reduce((sum, e) => sum + Number(e.amount || 0), 0);
   return ok({
-    caseRevenue: money(revenue),
-    performance: money(revenue),
-    expense: "0.00",
-    deduction: "0.00",
-    payable: money(revenue),
+    caseId,
+    gspCaseNo: row.gsp_case_no,
+    projectName: row.project_name,
+    finishTime: row.finish_time,
+    caseRevenue: caseRevenue.toFixed(2),
+    perfBase: perfBase.toFixed(2),
+    deduction: deduction.toFixed(2),
+    perfFinal: Number(ledger?.perf_final ?? Math.max(0, perfBase - deduction)).toFixed(2),
+    eventPenalty: eventPenalty.toFixed(2),
+    pendingExpenseCount: 0,
+    items,
+    events,
+    expenses: [],
   });
 }
 
@@ -1976,60 +2566,6 @@ async function reviewApprove(user: AppUser, caseId: string, body: Record<string,
     { id: caseId, st: pass ? "settled" : "working" },
   );
   return ok({ success: true, comment: body.comment || body.reason });
-}
-
-async function financeDashboard() {
-  const d = await adminGql<{
-    service_cases_aggregate: { aggregate: { count: number } };
-    po_orders_aggregate: { aggregate: { count: number; sum: { po_total_amount: number } } };
-    po_orders: { service_case_id: string | null }[];
-    pending_price: { aggregate: { count: number } };
-  }>(`query {
-    service_cases_aggregate { aggregate { count } }
-    po_orders_aggregate { aggregate { count sum { po_total_amount } } }
-    po_orders { service_case_id }
-    pending_price: po_items_aggregate(where: { price_status: { _eq: "pending_price" } }) { aggregate { count } }
-  }`);
-  const pendingMatch = d.po_orders.filter((p) => !p.service_case_id).length;
-  const income = Number(d.po_orders_aggregate.aggregate.sum?.po_total_amount || 0);
-  return ok({
-    summary: {
-      income,
-      poTotalAmount: income,
-      poCount: d.po_orders_aggregate.aggregate.count,
-      caseCount: d.service_cases_aggregate.aggregate.count,
-      pendingMatch,
-      pendingPrice: d.pending_price.aggregate.count,
-      varianceRate: 0,
-      performanceExpense: 0,
-      otherCost: 0,
-      grossProfit: income,
-    },
-    trend: [],
-  });
-}
-
-async function financeVariance() {
-  const dash = await financeDashboard();
-  const json = await dash.json();
-  const s = json.data.summary;
-  return ok({
-    summary: {
-      income: s.income,
-      poTotalAmount: s.poTotalAmount,
-      varianceAmount: 0,
-      varianceRate: 0,
-      pendingPrice: 0,
-      ignoredCount: 0,
-      okCount: s.poCount,
-      unmatchedPoCount: s.pendingMatch,
-      unmatchedPoAmount: 0,
-      caseGapCount: 0,
-      caseGapAmount: 0,
-    },
-    buckets: [],
-    cases: [],
-  });
 }
 
 async function listAssessments(query: URLSearchParams) {

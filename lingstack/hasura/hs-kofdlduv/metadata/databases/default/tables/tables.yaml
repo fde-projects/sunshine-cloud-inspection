@@ -1,4 +1,5 @@
 - "!include public_ai_hard_rules.yaml"
+- "!include public_app_settings.yaml"
 - "!include public_assessment_events.yaml"
 - "!include public_assessment_score_rules.yaml"
 - "!include public_assessments.yaml"

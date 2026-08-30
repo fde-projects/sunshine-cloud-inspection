@@ -37,6 +37,8 @@ Thumbs.db
 # logs / test
 *.log
 coverage/
+.tmp-ui-compare/
+.tmp-ui-*
 .nyc_output/
 
 # docker

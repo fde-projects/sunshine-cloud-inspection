@@ -15,6 +15,7 @@ import {
   Table,
   Tag,
   Tooltip,
+  Typography,
   message,
 } from 'antd';
 import {
@@ -58,6 +59,7 @@ import type { FinanceCase, FinanceInspectorOption } from '../../../types/finance
 import type { SiteItem } from '../../../types';
 import { useAuthStore } from '../../../stores/auth';
 import ImportDialog from '../components/ImportDialog';
+import { MissingPriceLink, SettlementAmountBody } from '../components/SettlementAmountPanel';
 import { canUseDangerousClear, confirmDangerousClear } from '../../../utils/finance-clear';
 
 function inspectorOptionLabel(item: {
@@ -158,7 +160,43 @@ function EllipsisTip({
   );
 }
 
-/** 派单/作业进度（与「归属网格」列区分开） */
+function CaseNoCell({
+  no,
+  onOpenReports,
+}: {
+  no: string;
+  onOpenReports: (e?: MouseEvent) => void;
+}) {
+  return (
+    <span
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 6,
+        whiteSpace: 'nowrap',
+      }}
+    >
+      <Typography.Text
+        copyable={{ text: no, tooltips: ['复制案例号', '已复制'] }}
+        style={{ whiteSpace: 'nowrap' }}
+      >
+        {no}
+      </Typography.Text>
+      <Button
+        type="link"
+        size="small"
+        style={{ padding: 0, height: 'auto', flexShrink: 0 }}
+        title="查看该案例的巡检报告"
+        onClick={(e) => {
+          e.stopPropagation();
+          onOpenReports(e);
+        }}
+      >
+        报告
+      </Button>
+    </span>
+  );
+}
 function dispatchStatus(c: FinanceCase) {
   const text = dispatchStatusLabel[c.status] || c.status;
   if (c.status === 'pending_assign') return { text, color: 'warning' as const };
@@ -202,6 +240,8 @@ export default function FinanceCasesPage() {
   const [reportLoading, setReportLoading] = useState(false);
   const [reportDetail, setReportDetail] = useState<RecordItem | null>(null);
   const [reportDetailOpen, setReportDetailOpen] = useState(false);
+  const [amountOpen, setAmountOpen] = useState(false);
+  const amountSectionRef = useRef<HTMLDivElement>(null);
   const [profileEdit, setProfileEdit] = useState<FinanceCase>();
   const [profileSaving, setProfileSaving] = useState(false);
   const [profileForm] = Form.useForm();
@@ -269,6 +309,7 @@ export default function FinanceCasesPage() {
       const id = String(caseRow.id || '').trim();
       if (!id) return;
       setDetail(undefined);
+      setAmountOpen(false);
       setReportCase({
         id,
         gspCaseNo: String(caseRow.gspCaseNo || '').trim() || id,
@@ -278,10 +319,14 @@ export default function FinanceCasesPage() {
       setReportLoading(true);
       setReportUnits([]);
       try {
-        const res = await fetchRecordsByCase(`case-${id}`, {
-          scope: 'history',
-          limit: 100,
-        });
+        const res = await fetchRecordsByCase(
+          `case-${id}`,
+          {
+            scope: 'history',
+            limit: 100,
+          },
+          { skipErrorToast: true },
+        );
         const list = res.list || [];
         setReportUnits(list);
         if (list.length) {
@@ -297,11 +342,10 @@ export default function FinanceCasesPage() {
               : prev,
           );
         } else {
-          message.info('该案例暂无已提交的巡检报告');
+          message.info('该案例暂无已提交的巡检报告（待派单或尚未拍照提交）');
         }
       } catch {
         message.warning('加载巡检报告失败');
-        setReportCase(undefined);
       } finally {
         setReportLoading(false);
       }
@@ -408,6 +452,11 @@ export default function FinanceCasesPage() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  useEffect(() => {
+    if (!amountOpen) return;
+    amountSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }, [amountOpen]);
 
   useEffect(() => {
     void fetchSites({ limit: 100 }).then((r) => setSites(r.list));
@@ -666,9 +715,11 @@ export default function FinanceCasesPage() {
           </Button>
         )}
         {canClear && (
-          <Button danger icon={<DeleteOutlined />} loading={clearing} onClick={() => void onClear()}>
-            清空全部案例
-          </Button>
+          <Tooltip title="仅测试用。会删除全部 GSP 案例；已匹配 PO 会回到待匹配，PO 本身不删。日常请用案例号，不要点这里。">
+            <Button danger icon={<DeleteOutlined />} loading={clearing} onClick={() => void onClear()}>
+              清空全部案例
+            </Button>
+          </Tooltip>
         )}
       </div>
       <Table
@@ -686,21 +737,16 @@ export default function FinanceCasesPage() {
           {
             title: '服务案例号',
             dataIndex: 'gspCaseNo',
-            width: 140,
+            width: 188,
             fixed: 'left',
             render: (v: string, r) =>
               v ? (
-                <Button
-                  type="link"
-                  style={{ padding: 0, height: 'auto' }}
-                  title="查看该案例的巡检报告"
-                  onClick={(e) => {
-                    e.stopPropagation();
+                <CaseNoCell
+                  no={v}
+                  onOpenReports={() => {
                     void openCaseReports(r);
                   }}
-                >
-                  {v}
-                </Button>
+                />
               ) : (
                 '-'
               ),
@@ -2071,7 +2117,10 @@ export default function FinanceCasesPage() {
         width={760}
         open={!!detail}
         title={detail?.projectName || '案例详情'}
-        onClose={() => setDetail(undefined)}
+        onClose={() => {
+          setDetail(undefined);
+          setAmountOpen(false);
+        }}
       >
         {detail && (
           <>
@@ -2082,12 +2131,12 @@ export default function FinanceCasesPage() {
                 {
                   key: 'no',
                   label: '服务案例号',
+                  labelStyle: { whiteSpace: 'nowrap' },
+                  contentStyle: { whiteSpace: 'nowrap' },
                   children: detail.gspCaseNo ? (
-                    <Button
-                      type="link"
-                      style={{ padding: 0, height: 'auto' }}
-                      title="查看该案例的巡检报告"
-                      onClick={() => {
+                    <CaseNoCell
+                      no={String(detail.gspCaseNo)}
+                      onOpenReports={() => {
                         void openCaseReports({
                           id: String(detail.id),
                           gspCaseNo: String(detail.gspCaseNo || ''),
@@ -2095,9 +2144,7 @@ export default function FinanceCasesPage() {
                           plannedUnits: detail.plannedUnits,
                         });
                       }}
-                    >
-                      {detail.gspCaseNo}
-                    </Button>
+                    />
                   ) : (
                     '-'
                   ),
@@ -2117,15 +2164,15 @@ export default function FinanceCasesPage() {
                 { key: 'province', label: '省份', children: detail.province || '-' },
                 { key: 'city', label: '城市', children: detail.city || '-' },
                 {
+                  key: 'region',
+                  label: '区域',
+                  children: detail.region === 'yunnan' ? '云南' : '华南',
+                },
+                {
                   key: 'siteDesc',
                   label: '失效现象描述',
                   span: 2,
                   children: detail.siteDesc || '-',
-                },
-                {
-                  key: 'region',
-                  label: '区域',
-                  children: detail.region === 'yunnan' ? '云南' : '华南',
                 },
                 {
                   key: 'site',
@@ -2193,24 +2240,40 @@ export default function FinanceCasesPage() {
                       {
                         key: 'revenue',
                         label: '案例收入',
-                        children: `¥ ${Number(detail.caseRevenue || 0).toFixed(2)}`,
+                        span: 2,
+                        children: (
+                          <span style={{ whiteSpace: 'nowrap' }}>
+                            {`¥ ${Number(detail.caseRevenue || 0).toFixed(2)}`}
+                            <Button
+                              type="link"
+                              style={{ padding: 0, marginLeft: 8, height: 'auto' }}
+                              title="查看计件绩效、事件扣罚与报销"
+                              onClick={() => setAmountOpen((open) => !open)}
+                            >
+                              {amountOpen ? '收起绩效与扣罚' : '绩效与扣罚'}
+                            </Button>
+                          </span>
+                        ),
                       },
                     ]
                   : []),
               ]}
             />
-            {admin && detail.reconciliation?.warning ? (
+            {admin && detail.reconciliation?.notice ? (
               <Alert
                 className="finance-warning"
                 style={{ marginTop: 16 }}
-                type="warning"
+                type={detail.reconciliation.notice.type || 'info'}
                 showIcon
-                message={detail.reconciliation.warning}
-                description={`PO总额 ¥${detail.reconciliation.poTotal}，已核算收入 ¥${detail.reconciliation.caseRevenue}`}
+                message={detail.reconciliation.notice.message}
+                description={detail.reconciliation.notice.description}
               />
             ) : null}
             <div className="finance-detail-section">
               <h3>{admin ? 'PO 与核算条目' : '服务条目'}</h3>
+              {!(detail.orders || []).length ? (
+                <Typography.Text type="secondary">尚未挂接 PO。派单作业不受影响；完工后不计件结算。</Typography.Text>
+              ) : null}
               {(detail.orders || []).map((po: any) => (
                 <Card
                   size="small"
@@ -2247,8 +2310,22 @@ export default function FinanceCasesPage() {
                             {
                               title: '结算单价',
                               dataIndex: 'settlePrice',
-                              render: (v: string, row: { priceStatus?: string }) =>
-                                row.priceStatus === 'ignored' ? '—' : v ? `¥${v}` : '待定价',
+                              render: (v: string, row: { priceStatus?: string; itemCode?: string; itemName?: string; unit?: string | null; itemDesc?: string | null }) => {
+                                if (row.priceStatus === 'ignored') return '—';
+                                if (!v) {
+                                  return (
+                                    <MissingPriceLink
+                                      type="settle"
+                                      row={row}
+                                      onNavigate={() => {
+                                        setDetail(undefined);
+                                        setAmountOpen(false);
+                                      }}
+                                    />
+                                  );
+                                }
+                                return `¥${v}`;
+                              },
                             },
                             {
                               title: '收入',
@@ -2263,6 +2340,19 @@ export default function FinanceCasesPage() {
                 </Card>
               ))}
             </div>
+            {admin && amountOpen && detail.id ? (
+              <div ref={amountSectionRef} className="finance-detail-section" style={{ marginTop: 8 }}>
+                <h3>绩效、扣罚与报销</h3>
+                <SettlementAmountBody
+                  caseId={detail.id}
+                  compactTip
+                  onNavigate={() => {
+                    setDetail(undefined);
+                    setAmountOpen(false);
+                  }}
+                />
+              </div>
+            ) : null}
           </>
         )}
       </Drawer>

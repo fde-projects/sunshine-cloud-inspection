@@ -12,6 +12,10 @@ export interface UserQuery {
 
 const ROLE_RANK: UserRole[] = ["super_admin", "site_manager", "inspector"];
 
+const USER_FIELDS = `
+  id username real_name employee_no phone email avatar role roles status region org_unit created_by_id created_at
+`;
+
 function asRoles(value: unknown, fallback?: UserRole): UserRole[] {
   const list = Array.isArray(value) ? (value.filter(Boolean) as UserRole[]) : [];
   if (list.length) return [...new Set(list)];
@@ -45,30 +49,28 @@ function mapUser(r: Record<string, unknown>): UserInfo {
   };
 }
 
-const USER_FIELDS = `
-  id username real_name employee_no phone email avatar role roles status region org_unit created_by_id created_at
-`;
+function hasRoleWhere(role: UserRole) {
+  return {
+    _or: [{ role: { _eq: role } }, { roles: { _contains: [role] } }],
+  };
+}
 
-export async function fetchUsers(params: UserQuery): Promise<Paginated<UserInfo>> {
-  const page = params.page || 1;
-  const limit = params.limit || 10;
-  const and: Record<string, unknown>[] = [];
-  if (params.role) {
-    and.push({
-      _or: [{ role: { _eq: params.role } }, { roles: { _contains: [params.role] } }],
-    });
-  }
-  if (params.status) and.push({ status: { _eq: params.status } });
-  if (params.keyword) {
-    and.push({
-      _or: [
-        { username: { _ilike: `%${params.keyword}%` } },
-        { real_name: { _ilike: `%${params.keyword}%` } },
-        { phone: { _ilike: `%${params.keyword}%` } },
-      ],
-    });
-  }
-  const where = and.length ? { _and: and } : {};
+function notRoleWhere(role: UserRole) {
+  return { _not: hasRoleWhere(role) };
+}
+
+function keywordWhere(keyword: string) {
+  return {
+    _or: [
+      { username: { _ilike: `%${keyword}%` } },
+      { real_name: { _ilike: `%${keyword}%` } },
+      { phone: { _ilike: `%${keyword}%` } },
+      { employee_no: { _ilike: `%${keyword}%` } },
+    ],
+  };
+}
+
+async function queryUsers(where: Record<string, unknown>, page: number, limit: number) {
   const data = await gql<{
     users: Record<string, unknown>[];
     users_aggregate: { aggregate: { count: number } };
@@ -87,6 +89,150 @@ export async function fetchUsers(params: UserQuery): Promise<Paginated<UserInfo>
     page,
     limit,
   };
+}
+
+export async function fetchUsers(params: UserQuery): Promise<Paginated<UserInfo>> {
+  const page = params.page || 1;
+  const limit = params.limit || 10;
+  const and: Record<string, unknown>[] = [];
+  if (params.role) and.push(hasRoleWhere(params.role));
+  if (params.status) and.push({ status: { _eq: params.status } });
+  if (params.keyword) and.push(keywordWhere(params.keyword));
+  return queryUsers(and.length ? { _and: and } : {}, page, limit);
+}
+
+/** 所管网格上的编制创建人：自己、各网格正网格长、各网格副网格长 */
+async function getStaffingCreatorIds(userId: string): Promise<string[]> {
+  const data = await gql<{
+    as_manager: Array<{ id: string; manager_id: string | null }>;
+    as_deputy: Array<{ site_id: string }>;
+  }>(
+    `query ($uid: uuid!) {
+      as_manager: sites(
+        where: { manager_id: { _eq: $uid }, deleted_at: { _is_null: true } }
+      ) { id manager_id }
+      as_deputy: site_members(
+        where: {
+          user_id: { _eq: $uid }
+          status: { _eq: "active" }
+          member_role: { _eq: "deputy_manager" }
+        }
+      ) { site_id }
+    }`,
+    { uid: userId },
+  );
+  const siteIds = [
+    ...new Set([...data.as_manager.map((s) => s.id), ...data.as_deputy.map((d) => d.site_id)]),
+  ];
+  if (!siteIds.length) return [];
+  const more = await gql<{
+    sites: Array<{ manager_id: string | null }>;
+    deputies: Array<{ user_id: string }>;
+  }>(
+    `query ($ids: [uuid!]!) {
+      sites(where: { id: { _in: $ids }, deleted_at: { _is_null: true } }) { manager_id }
+      deputies: site_members(
+        where: {
+          site_id: { _in: $ids }
+          status: { _eq: "active" }
+          member_role: { _eq: "deputy_manager" }
+        }
+      ) { user_id }
+    }`,
+    { ids: siteIds },
+  );
+  const ids = new Set<string>([userId]);
+  for (const s of more.sites) {
+    if (s.manager_id) ids.add(s.manager_id);
+  }
+  for (const d of more.deputies) ids.add(d.user_id);
+  return [...ids];
+}
+
+async function fetchSelfUser(id: string): Promise<UserInfo | null> {
+  const data = await gql<{ users_by_pk: Record<string, unknown> | null }>(
+    `query ($id: uuid!) { users_by_pk(id: $id) { ${USER_FIELDS} } }`,
+    { id },
+  );
+  return data.users_by_pk ? mapUser(data.users_by_pk) : null;
+}
+
+function selfMatchesQuery(self: UserInfo, params: UserQuery) {
+  if (params.role === "site_manager" && !self.roles.includes("site_manager") && self.role !== "site_manager") {
+    return false;
+  }
+  if (params.role === "inspector" && !self.roles.includes("inspector") && self.role !== "inspector") {
+    return false;
+  }
+  if (params.status && self.status !== params.status) return false;
+  const kw = params.keyword?.trim();
+  if (kw) {
+    const blob = `${self.username}${self.realName}${self.phone}${self.employeeNo || ""}`;
+    if (!blob.includes(kw)) return false;
+  }
+  return true;
+}
+
+async function injectSelfOnFirstPage(
+  result: Paginated<UserInfo>,
+  params: UserQuery,
+  selfId: string,
+): Promise<Paginated<UserInfo>> {
+  if ((params.page || 1) !== 1) return result;
+  if (result.list.some((u) => u.id === selfId)) return result;
+  const self = await fetchSelfUser(selfId);
+  if (!self || !selfMatchesQuery(self, params)) return result;
+  return {
+    ...result,
+    list: [self, ...result.list],
+    total: result.total + 1,
+  };
+}
+
+/**
+ * 用户管理编制列表（对齐原版）：
+ * 超管只看自己设立的正网格长；网格长只看本网格编制池，首页带上本人。
+ */
+export async function fetchStaffingUsers(params: UserQuery): Promise<Paginated<UserInfo>> {
+  const { getStoredUser } = await import("@/lib/session");
+  const me = getStoredUser();
+  if (!me) throw new Error("未登录");
+  const page = params.page || 1;
+  const limit = params.limit || 10;
+  const viewerRole = me.role;
+
+  if (viewerRole === "super_admin") {
+    if (params.role && params.role !== "site_manager") {
+      return { list: [], total: 0, page, limit };
+    }
+    const and: Record<string, unknown>[] = [
+      { created_by_id: { _eq: me.id } },
+      hasRoleWhere("site_manager"),
+      notRoleWhere("super_admin"),
+    ];
+    if (params.status) and.push({ status: { _eq: params.status } });
+    if (params.keyword) and.push(keywordWhere(params.keyword));
+    return queryUsers({ _and: and }, page, limit);
+  }
+
+  if (viewerRole !== "site_manager") {
+    throw new Error("无权查看用户列表");
+  }
+
+  const creatorIds = await getStaffingCreatorIds(me.id);
+  if (!creatorIds.length) {
+    return injectSelfOnFirstPage({ list: [], total: 0, page, limit }, params, me.id);
+  }
+  const and: Record<string, unknown>[] = [{ created_by_id: { _in: creatorIds } }];
+  if (params.role === "inspector" || params.role === "site_manager") {
+    and.push(hasRoleWhere(params.role));
+  } else if (params.role) {
+    return injectSelfOnFirstPage({ list: [], total: 0, page, limit }, params, me.id);
+  }
+  if (params.status) and.push({ status: { _eq: params.status } });
+  if (params.keyword) and.push(keywordWhere(params.keyword));
+  const result = await queryUsers({ _and: and }, page, limit);
+  return injectSelfOnFirstPage(result, params, me.id);
 }
 
 async function hashPassword(password: string) {

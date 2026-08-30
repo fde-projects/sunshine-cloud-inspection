@@ -133,10 +133,17 @@ export async function generateCasesFromPo() {
 
 export async function clearPoOrders(confirm?: string | null) {
   assertFinanceClearAllowed(confirm);
+  const linked = await adminGql<{ po_orders: { service_case_id: string | null }[] }>(
+    `query { po_orders(where: { service_case_id: { _is_null: false } }) { service_case_id } }`,
+  );
+  const caseIds = [
+    ...new Set(linked.po_orders.map((row) => row.service_case_id).filter((id): id is string => Boolean(id))),
+  ];
   const count = await adminGql<{ po_orders_aggregate: { aggregate: { count: number } } }>(
     `query { po_orders_aggregate { aggregate { count } } }`,
   );
   await adminGql(`mutation { delete_po_orders(where: {}) { affected_rows } }`);
+  if (caseIds.length) await recalculateLedgers(caseIds);
   return { deleted: count.po_orders_aggregate.aggregate.count };
 }
 

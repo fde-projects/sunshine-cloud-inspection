@@ -1,5 +1,6 @@
 .app-shell {
-  min-height: 100vh;
+  min-height: 0;
+  height: 100dvh;
   background:
     radial-gradient(circle at 88% 0%, rgba(31, 169, 119, 0.08), transparent 26rem),
     #f3f7f5;
@@ -8,7 +9,7 @@
 .app-sider {
   position: sticky !important;
   top: 0;
-  height: 100vh;
+  height: 100dvh;
   overflow: hidden;
   background: linear-gradient(180deg, #0c2e25 0%, #123c30 55%, #0d3127 100%) !important;
   border-right: 1px solid rgba(255, 255, 255, 0.06);
@@ -82,6 +83,41 @@
   color: #fff;
   background: linear-gradient(90deg, rgba(49,196,141,.25), rgba(49,196,141,.13));
   box-shadow: inset 3px 0 #47dba6;
+}
+
+.app-menu.ant-menu-dark .ant-menu-item:hover,
+.app-menu.ant-menu-dark .ant-menu-submenu-title:hover {
+  color: #fff !important;
+  background: rgba(255, 255, 255, 0.06) !important;
+}
+
+.app-menu.ant-menu-dark .ant-menu-submenu-title {
+  height: 44px;
+  line-height: 44px;
+  margin-block: 5px;
+  border-radius: 11px;
+  color: rgba(229, 248, 240, 0.72);
+}
+
+.app-menu.ant-menu-dark .ant-menu-sub {
+  background: transparent !important;
+}
+
+.app-menu.ant-menu-dark .ant-menu-sub .ant-menu-item {
+  padding-left: 48px !important;
+}
+
+.app-sider .ant-layout-sider-children {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.app-sider .app-menu {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 
 .app-main {
@@ -174,12 +210,12 @@
 
 .app-content {
   margin: 0 !important;
-  padding: 22px 26px 30px;
+  padding: 16px 22px;
 }
 
 .app-content__surface {
-  min-height: calc(100vh - 120px);
-  padding: 24px;
+  min-height: 0;
+  padding: 20px 22px;
   background: rgba(255, 255, 255, .92);
   border: 1px solid rgba(23, 72, 54, 0.075);
   border-radius: 20px;

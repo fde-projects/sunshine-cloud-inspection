@@ -38,6 +38,7 @@ import { fetchSites } from '../../api/site';
 import type { DeviceItem, SiteItem, DeviceType } from '../../types';
 import { DEVICE_TYPE_LABEL } from '../../types';
 import { RECORD_STATUS_LABEL, TASK_STATUS_LABEL, formatDateTime } from '../../utils/displayLabels';
+import { isAntValidateError } from '../../utils/ant-form';
 
 /** 设备管理：表格 + 网格筛选 + 批量导入 Excel + 历史 */
 export default function DevicesPage() {
@@ -107,7 +108,13 @@ export default function DevicesPage() {
   };
 
   const submit = async () => {
-    const values = await form.validateFields();
+    let values: Record<string, unknown> & { installDate?: { format: (s: string) => string } };
+    try {
+      values = await form.validateFields();
+    } catch (error) {
+      if (isAntValidateError(error)) return;
+      throw error;
+    }
     const payload = {
       ...values,
       installDate: values.installDate
@@ -305,7 +312,7 @@ export default function DevicesPage() {
         open={modalOpen}
         onCancel={() => setModalOpen(false)}
         onOk={submit}
-        destroyOnHidden
+        forceRender
       >
         <Form form={form} layout="vertical">
           <Form.Item name="siteId" label="所属网格" rules={[{ required: true }]}>

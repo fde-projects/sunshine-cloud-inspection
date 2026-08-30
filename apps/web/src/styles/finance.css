@@ -1,5 +1,6 @@
 .finance-shell {
   min-width: 0;
+  min-height: 0;
 }
 .finance-heading {
   display: flex;
@@ -11,6 +12,8 @@
   margin: 0;
   color: #153c32;
   font-size: 22px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
 }
 .finance-heading p {
   margin: 6px 0 0;
@@ -199,7 +202,7 @@
 }
 .settle-amount-summary {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
   gap: 10px;
   margin-bottom: 16px;
 }

@@ -24,7 +24,16 @@ loadRootEnv();
 
 const nextConfig: NextConfig = {
   output: "standalone",
+  devIndicators: false,
   transpilePackages: ["antd", "@ant-design/icons", "react-vant", "leaflet"],
+  // 开发态穿透（cpolar）会从公网域名拉 /_next/*，默认会被拦导致卡在「正在进入」
+  allowedDevOrigins: [
+    "*.cpolar.cn",
+    "*.cpolar.io",
+    "*.vip.cpolar.cn",
+    "*.r16.cpolar.cn",
+    "*.r16.vip.cpolar.cn",
+  ],
 };
 
 export default nextConfig;

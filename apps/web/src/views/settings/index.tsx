@@ -21,6 +21,7 @@ import { updateProfileApi, changePasswordApi } from '../../api/auth';
 import { updateSystemBranding } from '../../api/system';
 import { uploadImage } from '../../api/upload';
 import { ROLE_LABEL } from '../../types';
+import { isAntValidateError } from '../../utils/ant-form';
 
 /** 系统设置：个人资料 + 修改密码 +（超管）品牌设置 */
 export default function SettingsPage() {
@@ -42,37 +43,43 @@ export default function SettingsPage() {
   }, [branding.logoUrl]);
 
   const saveProfile = async () => {
-    const values = await profileForm.validateFields();
-    setSavingProfile(true);
     try {
+      const values = await profileForm.validateFields();
+      setSavingProfile(true);
       await updateProfileApi(values);
       await fetchMe();
       message.success('资料已更新');
+    } catch (error) {
+      if (isAntValidateError(error)) return;
+      message.error(error instanceof Error ? error.message : '资料保存失败');
     } finally {
       setSavingProfile(false);
     }
   };
 
   const savePassword = async () => {
-    const values = await pwdForm.validateFields();
-    if (values.newPassword !== values.confirmPassword) {
-      message.error('两次输入的新密码不一致');
-      return;
-    }
-    setSavingPwd(true);
     try {
+      const values = await pwdForm.validateFields();
+      if (values.newPassword !== values.confirmPassword) {
+        message.error('两次输入的新密码不一致');
+        return;
+      }
+      setSavingPwd(true);
       await changePasswordApi(values.oldPassword, values.newPassword);
       message.success('密码已修改，请妥善保管');
       pwdForm.resetFields();
+    } catch (error) {
+      if (isAntValidateError(error)) return;
+      message.error(error instanceof Error ? error.message : '密码修改失败');
     } finally {
       setSavingPwd(false);
     }
   };
 
   const saveBranding = async () => {
-    const values = await brandForm.validateFields();
-    setSavingBrand(true);
     try {
+      const values = await brandForm.validateFields();
+      setSavingBrand(true);
       const next = await updateSystemBranding({
         systemName: values.systemName,
         subtitle: values.subtitle || '',
@@ -80,6 +87,9 @@ export default function SettingsPage() {
       });
       setBranding(next);
       message.success('系统品牌已更新');
+    } catch (error) {
+      if (isAntValidateError(error)) return;
+      message.error(error instanceof Error ? error.message : '品牌保存失败');
     } finally {
       setSavingBrand(false);
     }
@@ -212,8 +222,8 @@ export default function SettingsPage() {
                           const res = await uploadImage(file as File);
                           setLogoPreview(res.url);
                           message.success('Logo 已上传，请点击保存');
-                        } catch {
-                          message.error('Logo 上传失败');
+                        } catch (error) {
+                          message.error(error instanceof Error ? error.message : 'Logo 上传失败');
                         } finally {
                           setUploadingLogo(false);
                         }

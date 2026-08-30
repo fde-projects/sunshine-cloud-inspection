@@ -129,13 +129,13 @@ export default function FinanceDashboardPage() {
             <div>
               <p style={{ marginBottom: 8 }}>
                 PO 总额 ¥{poTotalAmount.toLocaleString('zh-CN', { minimumFractionDigits: 2 })} −
-                核算收入 ¥{income.toLocaleString('zh-CN', { minimumFractionDigits: 2 })} ＝ 差额 ¥
+                已定价核算收入 ¥{income.toLocaleString('zh-CN', { minimumFractionDigits: 2 })} ＝ 差额 ¥
                 {Math.abs(varianceAmount).toLocaleString('zh-CN', { minimumFractionDigits: 2 })}（
                 {(varianceRate * 100).toFixed(2)}%）
               </p>
               <p style={{ marginBottom: 8 }}>
-                已定价 {s?.okCount || 0} 条 · 待定价 {s?.pendingPrice || 0} 条 · 忽略{' '}
-                {s?.ignoredCount || 0} 条（名称仅为「无」「自定义」的明细不计入核算）。
+                已定价条目 {s?.okCount || 0} 条 · 待定价 {s?.pendingPrice || 0} 条 · 忽略{' '}
+                {s?.ignoredCount || 0} 条（待定价/名称为「无」「自定义」的明细不计入核算收入）。
               </p>
               <Button type="link" style={{ padding: 0 }} onClick={() => void openVariance()}>
                 查看偏差明细（差在哪些案例/PO）

@@ -1,59 +1,22 @@
 import { NextResponse } from "next/server";
-import bcrypt from "bcryptjs";
-import { adminGql } from "@/lib/hasura-admin";
-import { pickDefaultRole, signHasuraUserJwt, type AppRole } from "@/lib/jwt";
-
-type Row = {
-  id: string;
-  username: string;
-  password: string;
-  real_name: string;
-  phone: string;
-  role: AppRole;
-  roles: AppRole[];
-  status: string;
-};
+import { HttpError } from "@/server/http";
+import { loginWithPassword } from "@/server/auth-login";
 
 export async function POST(req: Request) {
-  const body = (await req.json()) as { username?: string; password?: string };
-  const username = (body.username || "").trim();
-  const password = body.password || "";
-  if (!username || !password) {
-    return NextResponse.json({ message: "请输入用户名和密码" }, { status: 400 });
+  try {
+    const body = (await req.json()) as Record<string, unknown>;
+    const username = String(body.username || "").trim();
+    const password = String(body.password || "");
+    const session = await loginWithPassword(username, password, body.portal);
+    return NextResponse.json({
+      token: session.token,
+      user: session.user,
+      needsRolePick: session.needsRolePick,
+    });
+  } catch (e) {
+    if (e instanceof HttpError) {
+      return NextResponse.json({ message: e.message, ...e.extra }, { status: e.status });
+    }
+    return NextResponse.json({ message: "登录失败" }, { status: 500 });
   }
-
-  const data = await adminGql<{ users: Row[] }>(
-    `query ($username: String!) {
-      users(where: { username: { _eq: $username } }, limit: 1) {
-        id username password real_name phone role roles status
-      }
-    }`,
-    { username },
-  );
-  const user = data.users[0];
-  if (!user || user.status !== "active") {
-    return NextResponse.json({ message: "用户名或密码错误" }, { status: 401 });
-  }
-  const ok = await bcrypt.compare(password, user.password);
-  if (!ok) {
-    return NextResponse.json({ message: "用户名或密码错误" }, { status: 401 });
-  }
-
-  const roles = (Array.isArray(user.roles) && user.roles.length
-    ? user.roles
-    : [user.role]) as AppRole[];
-  const role = pickDefaultRole(roles, user.role);
-  const token = await signHasuraUserJwt(user.id, roles, role);
-
-  return NextResponse.json({
-    token,
-    user: {
-      id: user.id,
-      username: user.username,
-      realName: user.real_name,
-      phone: user.phone,
-      role,
-      roles,
-    },
-  });
 }

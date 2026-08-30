@@ -1,15 +1,18 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import TabLayout from "@/m/layouts/TabLayout";
-import { useAuthStore } from "@/stores/auth";
+import { nextPathAfterAuth, useAuthStore } from "@/stores/auth";
 import "react-vant/lib/index.css";
+import "@/styles/h5-shell.css";
 
 export default function MobileLayout({ children }: { children: React.ReactNode }) {
   const { user, hydrated, hydrate } = useAuthStore();
   const router = useRouter();
   const pathname = usePathname();
+  const isLogin = pathname === "/m/login";
+  const [ready, setReady] = useState(isLogin);
 
   useEffect(() => {
     hydrate();
@@ -17,12 +20,33 @@ export default function MobileLayout({ children }: { children: React.ReactNode }
 
   useEffect(() => {
     if (!hydrated) return;
-    if (!user && pathname !== "/m/login") router.replace("/login");
-  }, [hydrated, user, pathname, router]);
+    if (isLogin) {
+      setReady(true);
+      return;
+    }
+    if (!user) {
+      router.replace("/m/login");
+      return;
+    }
+    if (user.role !== "inspector") {
+      router.replace(nextPathAfterAuth(user));
+      return;
+    }
+    setReady(true);
+  }, [hydrated, user, pathname, router, isLogin]);
 
-  if (!hydrated) return <div style={{ padding: 48, textAlign: "center" }}>加载中…</div>;
-  if (pathname === "/m/login") return <>{children}</>;
-  if (!user) return null;
+  const inner = (() => {
+    if (isLogin) return <>{children}</>;
+    if (!hydrated) return <div style={{ padding: 48, textAlign: "center" }}>加载中…</div>;
+    if (!user || !ready) {
+      return <div style={{ padding: 48, textAlign: "center" }}>正在进入作业端…</div>;
+    }
+    return <TabLayout>{children}</TabLayout>;
+  })();
 
-  return <TabLayout>{children}</TabLayout>;
+  return (
+    <div className="h5-app">
+      <div className="h5-shell">{inner}</div>
+    </div>
+  );
 }

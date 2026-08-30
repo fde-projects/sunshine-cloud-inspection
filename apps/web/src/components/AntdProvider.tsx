@@ -5,6 +5,7 @@ import { App as AntApp, ConfigProvider } from "antd";
 import zhCN from "antd/locale/zh_CN";
 import { useEffect } from "react";
 import { useAuthStore } from "@/stores/auth";
+import { useBrandingStore } from "@/stores/branding";
 
 const theme = {
   token: {
@@ -39,9 +40,13 @@ ConfigProvider.config({
 
 export default function AntdProvider({ children }: { children: React.ReactNode }) {
   const hydrate = useAuthStore((s) => s.hydrate);
+  const hydrateBranding = useBrandingStore((s) => s.hydrate);
+  const refreshBranding = useBrandingStore((s) => s.refresh);
   useEffect(() => {
     hydrate();
-  }, [hydrate]);
+    hydrateBranding();
+    void refreshBranding();
+  }, [hydrate, hydrateBranding, refreshBranding]);
 
   return (
     <ConfigProvider locale={zhCN} theme={theme}>

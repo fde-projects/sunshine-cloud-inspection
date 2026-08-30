@@ -92,9 +92,15 @@ async function send<T>(
     return { data: json as T };
   } catch (error) {
     if ((error as Error).name === "AbortError") {
-      throw new Error("请求超时");
+      const msg = "请求超时，请稍后重试";
+      if (!config.skipErrorToast) message.error(msg);
+      throw new Error(msg);
     }
-    throw error;
+    if ((error as { response?: unknown }).response) throw error;
+    const raw = error instanceof Error ? error.message : "请求失败";
+    const msg = chineseErrorMessage(raw) || "网络连接失败，请检查网络后重试";
+    if (!config.skipErrorToast && msg) message.error(msg);
+    throw new Error(msg);
   } finally {
     clearTimeout(timer);
   }

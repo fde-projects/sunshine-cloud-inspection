@@ -10,8 +10,8 @@ import {
   ThunderboltOutlined,
   CloudSyncOutlined,
 } from "@ant-design/icons";
-import { useAuthStore } from "@/stores/auth";
-import { getHomePathByRole } from "@/router/menus";
+import { nextPathAfterAuth, useAuthStore } from "@/stores/auth";
+import { brandMarkText, useBrandingStore } from "@/stores/branding";
 import "@/styles/pc-login.css";
 
 type BackendStatus = "checking" | "ok" | "fail";
@@ -19,6 +19,7 @@ type BackendStatus = "checking" | "ok" | "fail";
 export default function LoginPage() {
   const router = useRouter();
   const { login, loading, token, user, hydrate, logout } = useAuthStore();
+  const branding = useBrandingStore((s) => s.branding);
   const [form] = Form.useForm();
   const [remember, setRemember] = useState(false);
   const [backendStatus, setBackendStatus] = useState<BackendStatus>("checking");
@@ -49,9 +50,9 @@ export default function LoginPage() {
 
   const onFinish = async (values: { username: string; password: string }) => {
     try {
-      const loggedUser = await login(values.username, values.password, remember);
+      const loggedUser = await login(values.username, values.password, remember, "pc");
       message.success(`登录成功（${loggedUser.realName}）`);
-      router.replace(getHomePathByRole(loggedUser.role));
+      router.replace(nextPathAfterAuth(loggedUser));
     } catch (e) {
       message.error(e instanceof Error ? e.message : "登录失败");
     }
@@ -59,10 +60,12 @@ export default function LoginPage() {
 
   const statusText =
     backendStatus === "checking"
-      ? "正在检测服务连接…"
+      ? "正在检测后端连接…"
       : backendStatus === "ok"
-        ? "服务已连接"
-        : "服务不可用，请检查网络";
+        ? "后端已连接"
+        : "后端不可用，请检查接口地址或网络";
+
+  const continuePath = user ? nextPathAfterAuth(user) : "/login";
 
   return (
     <div className="pc-login-page">
@@ -72,9 +75,14 @@ export default function LoginPage() {
           <div className="pc-login-visual__content">
             <div className="pc-login-visual__brand">
               <span className="pc-login-visual__mark" aria-hidden>
-                阳
+                {branding.logoUrl ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={branding.logoUrl} alt="" />
+                ) : (
+                  brandMarkText(branding.systemName)
+                )}
               </span>
-              <span>阳光运维</span>
+              <span>{branding.systemName}</span>
             </div>
             <div className="pc-login-visual__main">
               <div className="pc-login-visual__eyebrow">智能能源运营管理</div>
@@ -114,14 +122,26 @@ export default function LoginPage() {
 
         <section className="pc-login-panel">
           <div className="pc-login-card">
+            <a className="login-back" href="/" onClick={(e) => { e.preventDefault(); router.push("/"); }}>
+              <span className="login-back__arrow" aria-hidden>
+                ←
+              </span>
+              返回入口
+            </a>
+
             <div className="pc-login-brand">
               <div className="pc-login-brand__logo" aria-hidden>
-                阳
+                {branding.logoUrl ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={branding.logoUrl} alt="" />
+                ) : (
+                  brandMarkText(branding.systemName)
+                )}
               </div>
               <div>
                 <div className="pc-login-brand__eyebrow">管理工作台</div>
                 <h2>欢迎回来</h2>
-                <p>管理员、网格长与工程师使用同一入口</p>
+                <p>请使用网格长或管理员账号登录</p>
               </div>
             </div>
 
@@ -134,7 +154,7 @@ export default function LoginPage() {
               layout="vertical"
               requiredMark={false}
             >
-              {token && user && (
+              {token && user ? (
                 <div className="pc-login-session">
                   当前仍登录为 {user.realName}。可直接切换账号，或{" "}
                   <a
@@ -145,8 +165,9 @@ export default function LoginPage() {
                   >
                     退出当前账号
                   </a>
+                  ，也可 <a onClick={() => router.replace(continuePath)}>继续进入</a>
                 </div>
-              )}
+              ) : null}
               <Form.Item name="username" label="用户名" rules={[{ required: true, message: "请输入用户名" }]}>
                 <Input prefix={<UserOutlined />} placeholder="请输入用户名" autoComplete="username" />
               </Form.Item>
@@ -160,7 +181,7 @@ export default function LoginPage() {
                 <span>安全加密登录</span>
               </div>
               <Button type="primary" htmlType="submit" block loading={loading} className="pc-login-btn">
-                进入系统
+                进入管理端
               </Button>
             </Form>
             <div

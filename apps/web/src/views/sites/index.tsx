@@ -36,7 +36,7 @@ import {
   removeSiteMember,
   type SiteMemberItem,
 } from '../../api/site';
-import { fetchUsers } from '../../api/user';
+import { fetchStaffingUsers } from '../../api/user';
 import type { SiteItem, UserInfo } from '../../types';
 import SiteFormModal from './SiteFormModal';
 import { composeFullAddress } from '../../utils/addressParse';
@@ -149,7 +149,7 @@ export default function SitesPage() {
 
   const openAppoint = async (record: SiteItem) => {
     setAppointSite(record);
-    const res = await fetchUsers({ status: "active", limit: 200 });
+    const res = await fetchStaffingUsers({ status: "active", limit: 200 });
     const candidates = res.list.filter((user) => {
       const roles = user.roles?.length ? user.roles : [user.role];
       return roles.includes("site_manager") && !roles.includes("super_admin");
@@ -181,7 +181,7 @@ export default function SitesPage() {
         fetchSiteMembers(site.id, 'deputy_manager'),
         fetchSiteMembers(site.id, 'inspector'),
         // 拉全量启用用户，多角色账号两边都能选到
-        fetchUsers({ status: 'active', limit: 100 }),
+        fetchStaffingUsers({ status: 'active', limit: 100 }),
       ]);
       setDeputies(dep);
       setInspectors(insp);

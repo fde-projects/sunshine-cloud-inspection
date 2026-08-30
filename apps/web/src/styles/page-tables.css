@@ -1,0 +1,261 @@
+/* 后台：视口内只保留表数据区滚动，表头固定，避免整页再套一层滚动条 */
+
+html:has(.app-shell),
+body:has(.app-shell) {
+  height: 100%;
+  overflow: hidden;
+}
+
+.app-shell.ant-layout {
+  height: 100dvh;
+  max-height: 100dvh;
+  overflow: hidden;
+}
+
+.app-main.ant-layout {
+  min-width: 0;
+  height: 100%;
+  max-height: 100dvh;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.app-content.ant-layout-content {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.app-content__surface {
+  flex: 1 1 auto;
+  min-height: 0;
+  height: auto;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.app-content__surface:not(:has(.ant-table-wrapper)) {
+  overflow: auto;
+}
+
+.app-content__surface > .ant-space,
+.app-content__surface > .ant-alert,
+.app-content__surface > .ant-typography,
+.app-content__surface > p,
+.app-content__surface > .finance-heading,
+.app-content__surface > .finance-toolbar,
+.app-content__surface > .dashboard-welcome,
+.app-content__surface > .dashboard-stats {
+  flex: 0 0 auto;
+}
+
+.app-content__surface > .ant-table-wrapper,
+.app-content__surface > .ant-card,
+.app-content__surface > div {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.app-content__surface > div > .ant-card,
+.app-content__surface .ant-card:has(.ant-table-wrapper) {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.app-content__surface > div > .ant-space,
+.app-content__surface > div > .ant-alert,
+.app-content__surface > div > .ant-typography,
+.app-content__surface > div > p,
+.app-content__surface > div > .finance-heading,
+.app-content__surface > div > .finance-toolbar,
+.app-content__surface > .ant-card > .ant-card-head,
+.app-content__surface .ant-card-head {
+  flex: 0 0 auto;
+}
+
+.app-content__surface > .dashboard-page {
+  overflow: auto;
+  display: block;
+}
+
+.finance-shell:has(.finance-stat-grid) {
+  overflow: auto;
+}
+
+.finance-shell:has(.finance-stat-grid) > .ant-card {
+  flex: 0 0 auto;
+  overflow: visible;
+  height: auto;
+}
+
+.app-content__surface .ant-card-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.app-content__surface .ant-card-body > .ant-space,
+.app-content__surface .ant-card-body > .ant-alert,
+.app-content__surface .ant-card-body > .ant-typography,
+.app-content__surface .ant-card-body > p,
+.app-content__surface .ant-card-body > .finance-toolbar,
+.app-content__surface .ant-card-body > .finance-heading {
+  flex: 0 0 auto;
+}
+
+.app-content__surface .ant-card-body > .ant-table-wrapper,
+.app-content__surface > div > .ant-table-wrapper,
+.app-content__surface > .ant-table-wrapper,
+.app-content__surface .finance-shell > .ant-table-wrapper,
+.app-content__surface .finance-shell > .ant-card {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.finance-shell {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.finance-heading,
+.finance-toolbar {
+  flex: 0 0 auto;
+}
+
+.dashboard-page {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+}
+
+/* 表头固定，数据区滚动 */
+.app-content__surface .ant-table-wrapper,
+.ant-modal-body .ant-table-wrapper,
+.ant-drawer-body .ant-table-wrapper {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.app-content__surface .ant-table-wrapper .ant-spin-nested-loading,
+.app-content__surface .ant-table-wrapper .ant-spin-container,
+.ant-modal-body .ant-table-wrapper .ant-spin-nested-loading,
+.ant-modal-body .ant-table-wrapper .ant-spin-container,
+.ant-drawer-body .ant-table-wrapper .ant-spin-nested-loading,
+.ant-drawer-body .ant-table-wrapper .ant-spin-container {
+  flex: 1 1 auto;
+  min-height: 0;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.app-content__surface .ant-table-wrapper .ant-table,
+.ant-modal-body .ant-table-wrapper .ant-table,
+.ant-drawer-body .ant-table-wrapper .ant-table {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.app-content__surface .ant-table-container,
+.ant-modal-body .ant-table-container,
+.ant-drawer-body .ant-table-container {
+  height: 100%;
+  display: flex !important;
+  flex-direction: column;
+  overflow: hidden !important;
+}
+
+.app-content__surface .ant-table-header,
+.ant-modal-body .ant-table-header,
+.ant-drawer-body .ant-table-header {
+  flex: 0 0 auto;
+  overflow: hidden !important;
+}
+
+.app-content__surface .ant-table-body,
+.ant-modal-body .ant-table-body,
+.ant-drawer-body .ant-table-body {
+  flex: 1 1 auto !important;
+  max-height: none !important;
+  overflow: auto !important;
+}
+
+.app-content__surface .ant-table-content,
+.ant-modal-body .ant-table-content,
+.ant-drawer-body .ant-table-content {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto !important;
+}
+
+.app-content__surface .ant-table-thead > tr > th,
+.ant-modal-body .ant-table-thead > tr > th,
+.ant-drawer-body .ant-table-thead > tr > th {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  background: #f5f8f7 !important;
+}
+
+.app-content__surface .ant-table-wrapper .ant-pagination,
+.ant-modal-body .ant-table-wrapper .ant-pagination,
+.ant-drawer-body .ant-table-wrapper .ant-pagination {
+  flex: 0 0 auto;
+  margin-bottom: 0;
+}
+
+.ant-modal-body .ant-table-wrapper,
+.ant-drawer-body .ant-table-wrapper {
+  max-height: min(52vh, 560px);
+}
+
+@media (max-width: 767px) {
+  html:has(.app-shell),
+  body:has(.app-shell) {
+    height: auto;
+    overflow: auto;
+  }
+
+  .app-shell.ant-layout,
+  .app-main.ant-layout,
+  .app-content.ant-layout-content,
+  .app-content__surface,
+  .finance-shell {
+    height: auto;
+    max-height: none;
+    overflow: visible;
+  }
+
+  .app-content__surface > .ant-table-wrapper,
+  .app-content__surface > .ant-card,
+  .app-content__surface > div,
+  .app-content__surface .ant-card-body {
+    flex: none;
+    overflow: visible;
+    height: auto;
+  }
+
+  .app-content__surface .ant-table-body,
+  .app-content__surface .ant-table-content {
+    max-height: min(70dvh, 640px) !important;
+  }
+}

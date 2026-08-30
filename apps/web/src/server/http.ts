@@ -1,12 +1,14 @@
-import { jwtVerify } from "jose";
+import { jwtVerify, type JWTPayload } from "jose";
 import { NextResponse } from "next/server";
 import { adminGql } from "@/lib/hasura-admin";
-import type { AppRole } from "@/lib/jwt";
+import { roleFromJwtPayload, type AppRole } from "@/lib/jwt";
+import { normalizeRoles } from "@/lib/portal";
 
 export class HttpError extends Error {
   constructor(
     public status: number,
     message: string,
+    public extra?: Record<string, unknown>,
   ) {
     super(message);
   }
@@ -31,8 +33,8 @@ export function ok<T>(data: T, status = 200) {
   return NextResponse.json({ code: 200, message: "success", data }, { status });
 }
 
-export function fail(status: number, message: string) {
-  return NextResponse.json({ code: status, message, data: null }, { status });
+export function fail(status: number, message: string, extra?: Record<string, unknown>) {
+  return NextResponse.json({ code: status, message, data: null, ...extra }, { status });
 }
 
 export async function requireUser(req: Request): Promise<AppUser> {
@@ -41,9 +43,11 @@ export async function requireUser(req: Request): Promise<AppUser> {
   const secret = process.env.HASURA_JWT_SECRET;
   if (!token || !secret) throw new HttpError(401, "未登录");
   let userId = "";
+  let payload: JWTPayload | null = null;
   try {
-    const { payload } = await jwtVerify(token, new TextEncoder().encode(secret));
-    userId = typeof payload.sub === "string" ? payload.sub : "";
+    const verified = await jwtVerify(token, new TextEncoder().encode(secret));
+    payload = verified.payload;
+    userId = typeof verified.payload.sub === "string" ? verified.payload.sub : "";
   } catch {
     throw new HttpError(401, "登录已过期");
   }
@@ -77,6 +81,9 @@ export async function requireUser(req: Request): Promise<AppUser> {
   );
   const row = data.users_by_pk;
   if (!row || row.status !== "active") throw new HttpError(401, "账号不可用");
+  const roles = normalizeRoles(row.roles, row.role);
+  const jwtRole = payload ? roleFromJwtPayload(payload) : null;
+  const role = jwtRole && roles.includes(jwtRole) ? jwtRole : row.role;
   const managed = new Set<string>([
     ...data.sites.map((s) => s.id),
     ...data.site_members.map((m) => m.site_id),
@@ -88,8 +95,8 @@ export async function requireUser(req: Request): Promise<AppUser> {
     phone: row.phone,
     email: row.email,
     avatar: row.avatar,
-    role: row.role,
-    roles: Array.isArray(row.roles) && row.roles.length ? row.roles : [row.role],
+    role,
+    roles,
     status: row.status,
     region: row.region,
     orgUnit: row.org_unit,

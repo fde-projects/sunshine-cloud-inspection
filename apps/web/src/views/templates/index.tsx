@@ -34,6 +34,7 @@ import {
 import { useAuthStore } from '../../stores/auth';
 import { uploadImage } from '../../api/upload';
 import { displayPhotoUrl } from '../../utils/photo-url';
+import { isAntValidateError } from '../../utils/ant-form';
 
 function emptyEntry(order = 0): TemplateEntry {
   return {
@@ -62,6 +63,7 @@ export default function TemplatesPage() {
   const [list, setList] = useState<TemplateItem[]>([]);
 
   const [modalOpen, setModalOpen] = useState(false);
+  const [modalReady, setModalReady] = useState(false);
   const [editing, setEditing] = useState<TemplateItem | null>(null);
   const [form] = Form.useForm();
   const [productLines, setProductLines] = useState<TemplateProductLine[]>([]);
@@ -84,6 +86,10 @@ export default function TemplatesPage() {
   useEffect(() => {
     load();
   }, [load]);
+
+  useEffect(() => {
+    setModalReady(true);
+  }, []);
 
   const persistActiveEntries = useCallback(
     (nextEntries: TemplateEntry[], lineId = activeLineId) => {
@@ -195,7 +201,7 @@ export default function TemplatesPage() {
   };
 
   useEffect(() => {
-    if (deepLinkHandled.current || loading) return;
+    if (!modalReady || deepLinkHandled.current || loading) return;
     const templateId = searchParams.get('templateId');
     const createName = String(searchParams.get('createName') || '').trim();
     const addLine = String(searchParams.get('addLine') || '').trim();
@@ -214,7 +220,7 @@ export default function TemplatesPage() {
     }
     setSearchParams({}, { replace: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [list, loading, searchParams, setSearchParams]);
+  }, [modalReady, list, loading, searchParams, setSearchParams]);
 
   const moveEntry = useCallback((index: number, dir: -1 | 1) => {
     setEntries((prev) => {
@@ -231,7 +237,13 @@ export default function TemplatesPage() {
       setModalOpen(false);
       return;
     }
-    const values = await form.validateFields();
+    let values: { name?: string };
+    try {
+      values = await form.validateFields();
+    } catch (error) {
+      if (isAntValidateError(error)) return;
+      throw error;
+    }
     const lines = productLines.map((p) =>
       p.id === activeLineId ? { ...p, entries } : p,
     );
@@ -269,56 +281,79 @@ export default function TemplatesPage() {
       })),
     };
     delete (payload as { deviceType?: unknown }).deviceType;
-    if (editing) {
-      const nextName = String(values.name || '').trim();
-      const prevName = String(editing.name || '').trim();
-      if (nextName && prevName && nextName !== prevName) {
-        const ok = await new Promise<boolean>((resolve) => {
-          Modal.confirm({
-            title: '确认修改服务类型名称？',
-            content: (
-              <div>
-                <p>
-                  将「{prevName}」改为「{nextName}」。
-                </p>
-                <p style={{ color: '#8c8c8c', marginBottom: 0 }}>
-                  已绑定到本类型的案例会同步改名为「{nextName}」；之后导入也请使用新名称才能自动匹配。
-                </p>
-              </div>
-            ),
-            okText: '确认改名',
-            cancelText: '取消',
-            onOk: () => resolve(true),
-            onCancel: () => resolve(false),
+    try {
+      if (editing) {
+        const nextName = String(values.name || '').trim();
+        const prevName = String(editing.name || '').trim();
+        if (nextName && prevName && nextName !== prevName) {
+          const ok = await new Promise<boolean>((resolve) => {
+            Modal.confirm({
+              title: '确认修改服务类型名称？',
+              content: (
+                <div>
+                  <p>
+                    将「{prevName}」改为「{nextName}」。
+                  </p>
+                  <p style={{ color: '#8c8c8c', marginBottom: 0 }}>
+                    已绑定到本类型的案例会同步改名「{nextName}」；之后导入也请使用新名称才能自动匹配。
+                  </p>
+                </div>
+              ),
+              okText: '确认改名',
+              cancelText: '取消',
+              onOk: () => resolve(true),
+              onCancel: () => resolve(false),
+            });
           });
-        });
-        if (!ok) return;
-      }
-      const prevVersion = editing.version;
-      const saved = await updateTemplate(editing.id, payload);
-      const syncTip =
-        saved.syncedCases && saved.syncedCases > 0
-          ? `，已同步改名 ${saved.syncedCases} 个案例`
-          : '';
-      const rematchTip =
-        saved.rematchedCases && saved.rematchedCases > 0
-          ? `，另匹配 ${saved.rematchedCases} 个案例`
-          : '';
-      if (saved.versionChanged || saved.version !== prevVersion) {
-        message.success(`已更新，检查项变更 → v${saved.version}${syncTip}${rematchTip}`);
+          if (!ok) return;
+        }
+        const prevVersion = editing.version;
+        const saved = await updateTemplate(editing.id, payload);
+        const syncTip =
+          saved.syncedCases && saved.syncedCases > 0
+            ? `，已同步改名 ${saved.syncedCases} 个案例`
+            : '';
+        const rematchTip =
+          saved.rematchedCases && saved.rematchedCases > 0
+            ? `，另匹配 ${saved.rematchedCases} 个案例`
+            : '';
+        if (saved.versionChanged || saved.version !== prevVersion) {
+          message.success(`已更新，检查项变更 → v${saved.version}${syncTip}${rematchTip}`);
+        } else {
+          message.success(`已更新${syncTip}${rematchTip}`);
+        }
       } else {
-        message.success(`已更新${syncTip}${rematchTip}`);
+        const saved = await createTemplate(payload);
+        const rematchTip =
+          saved.rematchedCases && saved.rematchedCases > 0
+            ? `，已自动匹配 ${saved.rematchedCases} 个案例`
+            : '';
+        message.success(`服务类型已创建${rematchTip}`);
       }
-    } else {
-      const saved = await createTemplate(payload);
-      const rematchTip =
-        saved.rematchedCases && saved.rematchedCases > 0
-          ? `，已自动匹配 ${saved.rematchedCases} 个案例`
-          : '';
-      message.success(`服务类型已创建${rematchTip}`);
+      setModalOpen(false);
+      load();
+    } catch (error) {
+      if (isAntValidateError(error)) return;
+      const networkish = error instanceof Error && /网络|超时/.test(error.message);
+      if (networkish) {
+        try {
+          const data = await fetchTemplates({
+            keyword: searchKeyword || undefined,
+          });
+          const rows = data.filter((t) => t.isGlobal);
+          setList(rows);
+          const name = String(values.name || '').trim();
+          if (!editing && name && rows.some((t) => t.name === name)) {
+            message.success('服务类型已保存，请在列表中核对');
+            setModalOpen(false);
+            return;
+          }
+        } catch {
+          /* 列表刷新失败时仍按原错误提示 */
+        }
+      }
+      throw error;
     }
-    setModalOpen(false);
-    load();
   };
 
   const columns: ColumnsType<TemplateItem> = [
@@ -634,6 +669,9 @@ export default function TemplatesPage() {
                         上传样本图（可多选）
                       </Button>
                     </Upload>
+                    <div style={{ color: '#888', fontSize: 12 }}>
+                      给现场看怎么拍：有几张示范，工程师就必须拍几张，少一张、多一张都不能交。硬规则里可一键导入为合格样。
+                    </div>
                   </>
                 ) : !isPhoto ? (
                   <div style={{ color: '#888', fontSize: 12 }}>
@@ -690,6 +728,7 @@ export default function TemplatesPage() {
         scroll={{ x: 'max-content' }}
       />
 
+      {modalReady ? (
       <Modal
         title={
           editing
@@ -700,11 +739,11 @@ export default function TemplatesPage() {
         }
         open={modalOpen}
         onCancel={() => setModalOpen(false)}
-        onOk={() => void submit()}
+        onOk={() => submit()}
         okButtonProps={{ style: canManage ? undefined : { display: 'none' } }}
         cancelText={canManage ? '取消' : '关闭'}
         width={720}
-        destroyOnHidden
+        forceRender
       >
         <Form form={form} layout="vertical" disabled={!canManage}>
           <Form.Item
@@ -792,6 +831,7 @@ export default function TemplatesPage() {
           ) : null}
         </Form>
       </Modal>
+      ) : null}
     </div>
   );
 }

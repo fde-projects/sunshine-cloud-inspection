@@ -1,5 +1,6 @@
 const TOKEN_KEY = "yangguang.jwt";
 const USER_KEY = "yangguang.user";
+const ROLE_PICKED_KEY = "yangguang.rolePicked";
 
 export type StoredUser = {
   id: string;
@@ -40,4 +41,18 @@ export function clearSession() {
   localStorage.removeItem("accessToken");
   localStorage.removeItem("refreshToken");
   localStorage.removeItem("userInfo");
+  localStorage.removeItem(ROLE_PICKED_KEY);
+}
+
+export function isRolePicked(): boolean | null {
+  if (typeof window === "undefined") return null;
+  const raw = localStorage.getItem(ROLE_PICKED_KEY);
+  if (raw === "1") return true;
+  if (raw === "0") return false;
+  return null;
+}
+
+export function setRolePicked(picked: boolean) {
+  if (typeof window === "undefined") return;
+  localStorage.setItem(ROLE_PICKED_KEY, picked ? "1" : "0");
 }

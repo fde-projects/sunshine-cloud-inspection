@@ -96,6 +96,14 @@ export const useBrandingStore = create<BrandingState>((set, get) => ({
         logoUrl: data?.logoUrl || null,
         updatedAt: data?.updatedAt ?? null,
       };
+      const cached = readCache();
+      const serverIsDefault =
+        next.systemName === DEFAULT_BRANDING.systemName && !next.logoUrl;
+      const cacheIsCustom =
+        cached.systemName !== DEFAULT_BRANDING.systemName || Boolean(cached.logoUrl);
+      if (serverIsDefault && cacheIsCustom && !next.updatedAt) {
+        return cached;
+      }
       get().setBranding(next);
       return next;
     } catch {

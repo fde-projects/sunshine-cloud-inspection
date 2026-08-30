@@ -1,0 +1,49 @@
+table:
+  name: app_settings
+  schema: public
+insert_permissions:
+  - role: super_admin
+    permission:
+      check: {}
+      columns:
+        - key
+        - updated_at
+        - value
+select_permissions:
+  - role: inspector
+    permission:
+      columns:
+        - key
+        - updated_at
+        - value
+      filter: {}
+      allow_aggregations: true
+  - role: site_manager
+    permission:
+      columns:
+        - key
+        - updated_at
+        - value
+      filter: {}
+      allow_aggregations: true
+  - role: super_admin
+    permission:
+      columns:
+        - key
+        - updated_at
+        - value
+      filter: {}
+      allow_aggregations: true
+update_permissions:
+  - role: super_admin
+    permission:
+      columns:
+        - key
+        - updated_at
+        - value
+      filter: {}
+      check: {}
+delete_permissions:
+  - role: super_admin
+    permission:
+      filter: {}

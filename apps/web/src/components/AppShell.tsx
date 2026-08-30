@@ -24,8 +24,11 @@ import {
   AccountBookOutlined,
 } from "@ant-design/icons";
 import { useAuthStore } from "@/stores/auth";
+import { brandMarkText, useBrandingStore } from "@/stores/branding";
 import { flattenMenus, getMenusByRole } from "@/router/menus";
 import type { MenuConfig } from "@/types";
+import { canSwitchPortal, normalizeRoles, roleHome } from "@/lib/portal";
+import type { AppRole } from "@/lib/types";
 import "@/styles/basic-layout.css";
 
 const { Header, Sider, Content } = Layout;
@@ -75,9 +78,11 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [openKeys, setOpenKeys] = useState<string[]>([]);
   const [mounted, setMounted] = useState(false);
+  const [shellReady, setShellReady] = useState(false);
   const router = useRouter();
   const pathname = usePathname() || "";
   const { user, logout, hydrated } = useAuthStore();
+  const branding = useBrandingStore((s) => s.branding);
   const screens = Grid.useBreakpoint();
   const isMobile = mounted && !screens.md;
 
@@ -112,37 +117,40 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (!hydrated) return;
     if (!user) {
+      setShellReady(false);
       router.replace("/login");
       return;
     }
-    if (
-      user.role === "inspector" &&
-      (pathname.startsWith("/finance") ||
-        pathname === "/dashboard" ||
-        pathname === "/sites" ||
-        pathname === "/users")
-    ) {
-      router.replace("/m");
+    if (user.role === "inspector") {
+      setShellReady(false);
+      router.replace(roleHome("inspector"));
+      return;
     }
-  }, [user, pathname, router, hydrated]);
+    setShellReady(true);
+  }, [user, router, hydrated]);
 
   const handleLogout = () => {
     logout();
     router.replace("/login");
   };
 
-  const ready = Boolean(hydrated && user);
+  const ready = Boolean(hydrated && user && shellReady);
 
   const menuNode = (
     <>
       <div className="app-brand">
         <div className="app-brand__mark" aria-hidden>
-          阳
+          {branding.logoUrl ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={branding.logoUrl} alt="" className="app-brand__logo" />
+          ) : (
+            brandMarkText(branding.systemName)
+          )}
         </div>
         {(!collapsed || isMobile) && (
           <div className="app-brand__text">
-            <div className="app-brand__title">阳光运维</div>
-            <div className="app-brand__sub">阳光运维平台</div>
+            <div className="app-brand__title">{branding.systemName || "阳光运维"}</div>
+            <div className="app-brand__sub">{branding.subtitle || "阳光运维平台"}</div>
           </div>
         )}
       </div>
@@ -192,13 +200,25 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
             />
             <div>
               <h1 className="app-page-title">{currentTitle}</h1>
-              <div className="app-page-subtitle">阳光运维工作台</div>
+              <div className="app-page-subtitle">{branding.subtitle || "阳光运维工作台"}</div>
             </div>
           </div>
           {user ? (
             <Dropdown
               menu={{
                 items: [
+                  ...(canSwitchPortal(
+                    normalizeRoles(user.roles as AppRole[] | undefined, user.role as AppRole),
+                  )
+                    ? [
+                        {
+                          key: "switch-role",
+                          icon: <TeamOutlined />,
+                          label: "切换入口",
+                          onClick: () => router.push("/"),
+                        },
+                      ]
+                    : []),
                   {
                     key: "settings",
                     icon: <SettingOutlined />,

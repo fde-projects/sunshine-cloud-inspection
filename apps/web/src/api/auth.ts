@@ -1,12 +1,11 @@
 import request from '../utils/request';
 import type { ApiResponse, LoginResult, UserInfo } from '../types';
 
-/** 登录（PC 管理端） */
+/** 登录 */
 export async function loginApi(username: string, password: string) {
-  const { data } = await request.post<ApiResponse<LoginResult>>('/auth/login', {
+  const { data } = await request.post<ApiResponse<LoginResult>>("/auth/login", {
     username,
     password,
-    client: 'pc',
   });
   return data.data;
 }

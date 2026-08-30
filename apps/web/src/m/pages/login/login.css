@@ -184,6 +184,22 @@
   line-height: 1.5;
 }
 
+.h5-login-switch-hint a {
+  color: var(--h5-green-dark, #117452);
+}
+
+.h5-login-alt {
+  display: block;
+  margin-top: 14px;
+  width: 100%;
+  border: 0;
+  background: transparent;
+  color: #6f8379;
+  font-size: 13px;
+  text-align: center;
+  text-decoration: none;
+}
+
 .h5-login-actions {
   padding: 14px 18px 20px;
 }

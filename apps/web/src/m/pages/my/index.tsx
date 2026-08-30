@@ -4,6 +4,8 @@ import { useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Cell, Button, Dialog, Empty } from 'react-vant';
 import { useAuthStore } from '../../stores/auth';
+import { canSwitchPortal, normalizeRoles } from '@/lib/portal';
+import type { AppRole } from '@/lib/types';
 import { fetchInspectorSummary, type InspectorSummary } from '../../api/stats';
 import { mobileCacheKeys } from '../../utils/mobileCacheKeys';
 import { useCachedResource } from '../../utils/useCachedResource';
@@ -97,6 +99,18 @@ export default function MyPage() {
         <Cell.Group inset>
           <Cell title="我的收入" label="每单绩效与审核状态" isLink onClick={() => navigate('/m/income')} />
           <Cell title="个人资料" isLink onClick={() => navigate('/m/settings')} />
+          {canSwitchPortal(
+            normalizeRoles(user?.roles as AppRole[] | undefined, (user?.role as AppRole) || 'inspector'),
+          ) ? (
+            <Cell
+              title="切换入口"
+              label="回首页选择管理后台或作业端"
+              isLink
+              onClick={() => {
+                window.location.href = '/';
+              }}
+            />
+          ) : null}
         </Cell.Group>
 
         <div className="my-logout">

@@ -151,10 +151,11 @@ export async function fetchRecordCaseGroups(params: Record<string, unknown>) {
 export async function fetchRecordsByCase(
   groupKey: string,
   params: Record<string, unknown> = {},
+  config: AppAxiosRequestConfig = {},
 ) {
   const { data } = await request.get<
     ApiResponse<Paginated<RecordItem> & { groupKey: string }>
-  >(`/records/by-case/${encodeURIComponent(groupKey)}`, { params });
+  >(`/records/by-case/${encodeURIComponent(groupKey)}`, { params, ...config });
   return data.data;
 }
 

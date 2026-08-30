@@ -1,3 +1,12 @@
 "use client";
 
-export { default } from "@/views/templates";
+import { Suspense } from "react";
+import TemplatesPage from "@/views/templates";
+
+export default function Page() {
+  return (
+    <Suspense fallback={null}>
+      <TemplatesPage />
+    </Suspense>
+  );
+}

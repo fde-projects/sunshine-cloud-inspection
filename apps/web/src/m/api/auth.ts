@@ -6,7 +6,6 @@ export async function loginApi(username: string, password: string) {
   const { data } = await request.post<ApiResponse<LoginResult>>('/auth/login', {
     username,
     password,
-    client: 'h5',
   });
   return data.data;
 }

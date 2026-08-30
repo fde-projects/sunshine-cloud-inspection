@@ -30,7 +30,30 @@ type CaseLike = {
   serviceType: string | null;
   productLine: string | null;
   taskTemplateId: string | null;
+  plannedUnits?: number | null;
 };
+
+const CASE_MATCH_FIELDS = `
+  id gsp_case_no service_type product_line task_template_id planned_units
+`;
+
+function toCaseLike(row: {
+  id: string;
+  gsp_case_no: string;
+  service_type: string | null;
+  product_line: string | null;
+  task_template_id: string | null;
+  planned_units?: number | null;
+}): CaseLike {
+  return {
+    id: row.id,
+    gspCaseNo: row.gsp_case_no,
+    serviceType: row.service_type,
+    productLine: row.product_line,
+    taskTemplateId: row.task_template_id,
+    plannedUnits: row.planned_units,
+  };
+}
 
 function matchProductLine(template: TemplateLike, productLine: string | null | undefined) {
   const lines = Array.isArray(template.product_lines) ? template.product_lines : [];
@@ -115,8 +138,9 @@ export async function applyDemandTypeForCases(
         set.task_template_id = tpl.id;
         set.task_type = String(tpl.name || "").slice(0, 128) || tpl.id;
         set.unit_label = tpl.unit_label || "台";
-        set.expense_enabled = tpl.expense_enabled_default ?? true;
-        if (!item.taskTemplateId) set.assign_mode = tpl.assign_mode || "single";
+        set.expense_enabled = true;
+        set.assign_mode = tpl.assign_mode || "single";
+        if (!item.plannedUnits || item.plannedUnits < 1) set.planned_units = 1;
         item.taskTemplateId = tpl.id;
         matched += 1;
       }
@@ -147,4 +171,104 @@ export async function applyDemandTypeForCases(
     );
   }
   return { matched, warnings };
+}
+
+/** 服务类型新建/改产品线后：按同名服务类型或已绑模板精确重匹配 */
+export async function rematchCasesForTemplate(template: {
+  id?: string | null;
+  name?: string | null;
+}): Promise<number> {
+  const name = String(template.name || "").trim();
+  const or: Record<string, unknown>[] = [];
+  if (template.id) or.push({ task_template_id: { _eq: template.id } });
+  if (name) or.push({ service_type: { _eq: name } });
+  if (!or.length) return 0;
+  const d = await adminGql<{
+    service_cases: Array<{
+      id: string;
+      gsp_case_no: string;
+      service_type: string | null;
+      product_line: string | null;
+      task_template_id: string | null;
+      planned_units: number | null;
+    }>;
+  }>(
+    `query ($where: service_cases_bool_exp) {
+      service_cases(where: $where, limit: 5000) { ${CASE_MATCH_FIELDS} }
+    }`,
+    { where: { _or: or } },
+  );
+  const { matched } = await applyDemandTypeForCases((d.service_cases || []).map(toCaseLike));
+  return matched;
+}
+
+export async function rematchUnboundCases() {
+  const d = await adminGql<{
+    service_cases: Array<{
+      id: string;
+      gsp_case_no: string;
+      service_type: string | null;
+      product_line: string | null;
+      task_template_id: string | null;
+      planned_units: number | null;
+    }>;
+  }>(
+    `query {
+      service_cases(where: { task_template_id: { _is_null: true } }, limit: 5000) {
+        ${CASE_MATCH_FIELDS}
+      }
+    }`,
+  );
+  return applyDemandTypeForCases((d.service_cases || []).map(toCaseLike));
+}
+
+export async function syncBoundCaseNames(
+  templateId: string,
+  opts: {
+    oldTypeName: string;
+    newTypeName: string;
+    lineRenames: Array<{ from: string; to: string }>;
+  },
+): Promise<number> {
+  const d = await adminGql<{
+    service_cases: Array<{
+      id: string;
+      service_type: string | null;
+      product_line: string | null;
+      task_type: string | null;
+    }>;
+  }>(
+    `query ($id: uuid!) {
+      service_cases(where: { task_template_id: { _eq: $id } }, limit: 5000) {
+        id service_type product_line task_type
+      }
+    }`,
+    { id: templateId },
+  );
+  const list = d.service_cases || [];
+  if (!list.length) return 0;
+  let n = 0;
+  const typeChanged =
+    !!opts.oldTypeName && !!opts.newTypeName && opts.oldTypeName !== opts.newTypeName;
+  for (const item of list) {
+    const set: Record<string, unknown> = {};
+    if (typeChanged) {
+      set.service_type = opts.newTypeName.slice(0, 32);
+      set.task_type = opts.newTypeName.slice(0, 128);
+    }
+    const pl = String(item.product_line || "").trim();
+    if (pl) {
+      const hit = opts.lineRenames.find((r) => r.from === pl);
+      if (hit) set.product_line = hit.to.slice(0, 64);
+    }
+    if (!Object.keys(set).length) continue;
+    await adminGql(
+      `mutation ($id: uuid!, $set: service_cases_set_input!) {
+        update_service_cases_by_pk(pk_columns: { id: $id }, _set: $set) { id }
+      }`,
+      { id: item.id, set },
+    );
+    n += 1;
+  }
+  return n;
 }

@@ -1,8 +1,9 @@
-import { SignJWT } from "jose";
+import { SignJWT, type JWTPayload } from "jose";
+import type { AppRole } from "@/lib/types";
 
-export type AppRole = "super_admin" | "site_manager" | "inspector";
+export type { AppRole };
 
-const claimsNamespace =
+export const HASURA_CLAIMS_NAMESPACE =
   process.env.HASURA_JWT_CLAIMS_NAMESPACE ?? "https://hasura.io/jwt/claims";
 
 function getJwtSecret(): Uint8Array {
@@ -13,6 +14,7 @@ function getJwtSecret(): Uint8Array {
 
 const rank: AppRole[] = ["super_admin", "site_manager", "inspector"];
 
+/** 仅用于写入用户表 role 列，登录身份由入口（pc/h5）决定。 */
 export function pickDefaultRole(roles: AppRole[], fallback: AppRole): AppRole {
   for (const r of rank) {
     if (roles.includes(r) || r === fallback) {
@@ -20,6 +22,14 @@ export function pickDefaultRole(roles: AppRole[], fallback: AppRole): AppRole {
     }
   }
   return fallback;
+}
+
+export function roleFromJwtPayload(payload: JWTPayload): AppRole | null {
+  const claims = payload[HASURA_CLAIMS_NAMESPACE];
+  if (!claims || typeof claims !== "object") return null;
+  const role = (claims as Record<string, unknown>)["x-hasura-default-role"];
+  if (role === "super_admin" || role === "site_manager" || role === "inspector") return role;
+  return null;
 }
 
 /** Sign a Hasura-compatible user JWT (server-only). */
@@ -34,7 +44,7 @@ export async function signHasuraUserJwt(
   const role = allowed.includes(defaultRole) ? defaultRole : allowed[0];
 
   return new SignJWT({
-    [claimsNamespace]: {
+    [HASURA_CLAIMS_NAMESPACE]: {
       "x-hasura-default-role": role,
       "x-hasura-allowed-roles": allowed,
       "x-hasura-user-id": userId,

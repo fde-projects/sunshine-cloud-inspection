@@ -31,6 +31,7 @@ import {
   type RecordEntry,
   type RecordItem,
 } from '../../api/record';
+import { fieldPhotoQuota } from '../../../lib/hard-rule-match';
 import { compressImage } from '../../utils/imageCompress';
 import { displayPhotoUrl } from '../../utils/photo-url';
 import { chineseErrorMessage } from '../../utils/displayLabels';
@@ -57,15 +58,22 @@ function isFaultRecordItem(tpl?: { name?: string; description?: string } | null)
   return /上传故障|故障记录|实时故障|历史故障/.test(text);
 }
 
-/** 安装固定：至少两张不同角度 */
-function isMountFixItem(tpl?: { name?: string; description?: string } | null) {
-  const text = `${tpl?.name || ''}\n${tpl?.description || ''}`;
-  return /安装固定|支架|墙挂固定/.test(text);
-}
-
-function minPhotosRequired(tpl?: { name?: string; description?: string } | null) {
-  if (isFaultRecordItem(tpl) || isMountFixItem(tpl)) return 2;
-  return 1;
+function photoQuotaHint(
+  tpl: { name?: string; description?: string; samplePhotos?: string[] } | null | undefined,
+  count?: number,
+) {
+  const quota = fieldPhotoQuota(tpl);
+  const fault = isFaultRecordItem(tpl) ? '须含实时故障与历史故障截图，' : '';
+  if (quota.exact) {
+    if (count == null) return `${fault}须按示范拍正好 ${quota.required} 张，少一张、多一张都不行`;
+    if (count < quota.required) return `${fault}须拍正好 ${quota.required} 张（当前 ${count} 张，还差 ${quota.required - count} 张）`;
+    if (count > quota.max) return `${fault}只能拍 ${quota.required} 张，请先删掉多出来的`;
+    return `${fault}须拍正好 ${quota.required} 张`;
+  }
+  if (count == null) return fault ? `${fault}请先上传照片` : '请先上传本项照片';
+  if (count < quota.required) return fault ? `${fault}还未拍照` : '未拍照';
+  if (count > quota.max) return `最多 ${quota.max} 张，请先删掉多出来的`;
+  return '请先上传本项照片';
 }
 
 interface LiveLocationProof {
@@ -707,12 +715,22 @@ export default function InspectionPage() {
 
   const handleCaptureFiles = async (files: File[], source: 'camera' | 'gallery') => {
     if (!record || !currentTpl || !taskId) return;
-    const imageFiles = files.filter(
+    const quota = fieldPhotoQuota(currentTpl);
+    const room = quota.max - (currentEntry?.photos?.length || 0);
+    if (room <= 0) {
+      Toast.info(quota.exact ? `这项必须正好 ${quota.required} 张，请先删一张再拍` : `这项最多 ${quota.max} 张`);
+      return;
+    }
+    const picked = files.filter(
       (f) => !f.type || f.type.startsWith('image/'),
     );
-    if (!imageFiles.length) {
+    if (!picked.length) {
       Toast.info('请选择图片文件');
       return;
+    }
+    const imageFiles = picked.slice(0, room);
+    if (picked.length > room) {
+      Toast.info(quota.exact ? `这项必须正好 ${quota.required} 张，本次只上传 ${room} 张` : `这项最多 ${quota.max} 张，本次只上传 ${room} 张`);
     }
 
     if (pendingPreviewRef.current) URL.revokeObjectURL(pendingPreviewRef.current);
@@ -905,16 +923,10 @@ export default function InspectionPage() {
         }
         continue;
       }
-      const need = minPhotosRequired(tpl);
+      const quota = fieldPhotoQuota(tpl);
       const count = entry?.photos?.length || 0;
-      if (count < need) {
-        missing.push(
-          need > 1
-            ? isFaultRecordItem(tpl)
-              ? `「${tpl.name}」须上传实时故障与历史故障截图（至少 ${need} 张，当前 ${count} 张）`
-              : `「${tpl.name}」须拍摄至少 ${need} 个不同角度（当前 ${count} 张）`
-            : `「${tpl.name}」未拍照`,
-        );
+      if (count < quota.required || count > quota.max) {
+        missing.push(`「${tpl.name}」${photoQuotaHint(tpl, count)}`);
       }
     }
     return missing;
@@ -954,16 +966,10 @@ export default function InspectionPage() {
         return;
       }
     } else if (mustFill) {
-      const need = minPhotosRequired(currentTpl);
+      const quota = fieldPhotoQuota(currentTpl);
       const count = currentEntry?.photos?.length || 0;
-      if (count < need) {
-        Toast.info(
-          need > 1
-            ? isFaultRecordItem(currentTpl)
-              ? `本项须同时上传实时故障与历史故障截图（至少 ${need} 张）`
-              : `本项须拍摄至少 ${need} 个不同角度照片`
-            : '请先上传本项照片',
-        );
+      if (count < quota.required || count > quota.max) {
+        Toast.info(photoQuotaHint(currentTpl, count));
         return;
       }
     }
@@ -991,16 +997,10 @@ export default function InspectionPage() {
           return;
         }
       } else if (mustCurrent) {
-        const needCurrent = minPhotosRequired(currentTpl);
+        const quotaCurrent = fieldPhotoQuota(currentTpl);
         const countCurrent = currentEntry?.photos?.length || 0;
-        if (countCurrent < needCurrent) {
-          Toast.info(
-            needCurrent > 1
-              ? isFaultRecordItem(currentTpl)
-                ? `本项须同时上传实时故障与历史故障截图（至少 ${needCurrent} 张）`
-                : `本项须拍摄至少 ${needCurrent} 个不同角度照片`
-              : '请先上传本项照片',
-          );
+        if (countCurrent < quotaCurrent.required || countCurrent > quotaCurrent.max) {
+          Toast.info(photoQuotaHint(currentTpl, countCurrent));
           return;
         }
       }
@@ -1493,8 +1493,12 @@ export default function InspectionPage() {
                 <>
               <div className="inspection-media-section">
                 <div className="inspection-media-heading">
-                  <span>合格样本参考</span>
-                  <small>点击可查看大图</small>
+                  <span>拍摄示范</span>
+                  <small>
+                    {(currentTpl.samplePhotos || []).length
+                      ? `请按下面 ${currentTpl.samplePhotos!.length} 个角度各拍一张，少一张、多一张都不行`
+                      : '点击可查看大图'}
+                  </small>
                 </div>
                 {(currentTpl.samplePhotos || []).length > 0 ? (
                   <div className="inspection-sample-grid">
@@ -1517,7 +1521,7 @@ export default function InspectionPage() {
                   </div>
                 ) : (
                   <div className="inspection-media-empty">
-                    暂无样本图，请按检查要求拍照
+                    暂无拍摄示范，请按检查要求拍照
                   </div>
                 )}
               </div>
@@ -1526,12 +1530,11 @@ export default function InspectionPage() {
                 <div className="inspection-media-heading">
                   <span>现场照片</span>
                   <small>
-                    {(currentEntry?.photos || []).length} 张已保存
-                    {isFaultRecordItem(currentTpl)
-                      ? '（须含实时+历史，至少 2 张）'
-                      : isMountFixItem(currentTpl)
-                        ? '（须多角度，至少 2 张）'
-                        : ''}
+                    {`${(currentEntry?.photos || []).length}/${fieldPhotoQuota(currentTpl).max} 张`}
+                    {fieldPhotoQuota(currentTpl).exact
+                      ? '（必须正好这么多）'
+                      : `（至少 ${fieldPhotoQuota(currentTpl).required} 张）`}
+                    {isFaultRecordItem(currentTpl) ? '，须含实时+历史' : ''}
                   </small>
                 </div>
                 <div className="inspection-photo-grid">
@@ -1554,7 +1557,7 @@ export default function InspectionPage() {
                       <span>{uploading ? `${Math.max(1, uploadProgress)}%` : '待重试'}</span>
                     </div>
                   )}
-                  {!pendingPreview && (
+                  {!pendingPreview && (currentEntry?.photos || []).length < fieldPhotoQuota(currentTpl).max && (
                     <button
                       type="button"
                       className="inspection-photo-placeholder is-clickable"
@@ -1662,8 +1665,8 @@ export default function InspectionPage() {
                 <div className="inspection-upload-tip">
                   {locationStatus === 'ok'
                     ? isFaultRecordItem(currentTpl)
-                      ? '定位已获取：请分别上传「实时故障」与「历史故障」截图（相册可多选）'
-                      : '定位已获取：点「＋」可选拍照或相册（相册可多选）'
+                      ? `定位已获取：请分别上传「实时故障」与「历史故障」截图（${fieldPhotoQuota(currentTpl).exact ? `必须正好 ${fieldPhotoQuota(currentTpl).required} 张` : `至少 ${fieldPhotoQuota(currentTpl).required} 张`}）`
+                      : `定位已获取：请按上方示范拍（${fieldPhotoQuota(currentTpl).exact ? `必须正好 ${fieldPhotoQuota(currentTpl).required} 张` : `至少 ${fieldPhotoQuota(currentTpl).required} 张`}）`
                     : locationStatus === 'weak'
                       ? '弱定位也可拍照上传；报告将标记弱定位'
                       : locationStatus === 'failed' || locationStatus === 'skipped'

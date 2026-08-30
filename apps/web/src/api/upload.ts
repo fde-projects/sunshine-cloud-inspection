@@ -7,21 +7,14 @@ type QiniuToken = {
   domain: string;
   uploadUrl: string;
   bucket?: string;
+  key?: string;
 };
 
-function objectKey(ext: string) {
-  const day = new Date().toISOString().slice(0, 10);
-  const id =
-    typeof crypto !== 'undefined' && 'randomUUID' in crypto
-      ? crypto.randomUUID()
-      : `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
-  return `photos/${day}/${id}.${ext}`;
-}
-
-async function fetchQiniuToken(): Promise<QiniuToken | null> {
+async function fetchQiniuToken(filename: string): Promise<QiniuToken | null> {
   try {
     const { data } = await request.get<ApiResponse<QiniuToken>>('/upload/qiniu-token', {
       timeout: 10000,
+      params: { filename },
     });
     const payload = data.data;
     if (!payload?.token || !payload.domain || !payload.uploadUrl) return null;
@@ -30,6 +23,7 @@ async function fetchQiniuToken(): Promise<QiniuToken | null> {
       domain: payload.domain.replace(/\/$/, ''),
       uploadUrl: payload.uploadUrl,
       bucket: payload.bucket,
+      key: payload.key,
     };
   } catch {
     return null;
@@ -38,12 +32,8 @@ async function fetchQiniuToken(): Promise<QiniuToken | null> {
 
 /** 浏览器直传七牛，避免大图绕行 Vercel 函数。 */
 async function uploadDirectToQiniu(file: File, tokenInfo: QiniuToken) {
-  const ext = file.type.includes('png')
-    ? 'png'
-    : file.type.includes('webp')
-      ? 'webp'
-      : 'jpg';
-  const key = objectKey(ext);
+  const key = tokenInfo.key;
+  if (!key) throw new Error('上传凭证缺少文件名');
   const form = new FormData();
   form.append('token', tokenInfo.token);
   form.append('key', key);
@@ -69,12 +59,12 @@ export async function uploadImage(
   meta?: { siteName?: string; serialNumber?: string },
 ) {
   const compressed = await compressImageForUpload(file);
-  const tokenInfo = await fetchQiniuToken();
+  const tokenInfo = await fetchQiniuToken(compressed.name || file.name || 'photo.jpg');
   if (tokenInfo) {
     try {
       return await uploadDirectToQiniu(compressed, tokenInfo);
-    } catch {
-      // 直传失败时回退服务端中转
+    } catch (error) {
+      console.warn('七牛直传失败，回退服务端上传', error);
     }
   }
 

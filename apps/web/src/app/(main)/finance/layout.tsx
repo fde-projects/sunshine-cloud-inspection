@@ -21,6 +21,8 @@ export default function FinanceLayout({ children }: { children: React.ReactNode 
       desc: "案例、订单、价格与收入统一核算",
     };
 
+  const isDashboard = pathname.startsWith("/finance/dashboard");
+
   return (
     <div className="finance-shell">
       <div className="finance-heading">
@@ -30,7 +32,7 @@ export default function FinanceLayout({ children }: { children: React.ReactNode 
         </div>
         <span className="finance-phase">费用结算</span>
       </div>
-      {children}
+      <div className={`finance-page-body${isDashboard ? " is-scroll" : ""}`}>{children}</div>
     </div>
   );
 }

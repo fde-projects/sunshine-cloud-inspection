@@ -53,7 +53,9 @@ export default function SiteFormModal({
   const [resolvingAddress, setResolvingAddress] = useState(false);
   const regeoTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
-  const hasCoords = watchLat != null && watchLng != null;
+  const latNum = watchLat === '' || watchLat == null ? Number.NaN : Number(watchLat);
+  const lngNum = watchLng === '' || watchLng == null ? Number.NaN : Number(watchLng);
+  const hasCoords = Number.isFinite(latNum) && Number.isFinite(lngNum);
 
   /** 坐标 → 完整地址：现场定位 / 地图微调后自动回填 */
   const fillAddressFromCoords = useCallback(
@@ -287,7 +289,7 @@ export default function SiteFormModal({
             <span style={{ fontWeight: 600, color: '#1a5f4a' }}>地图选点</span>
             {hasCoords && (
               <Tag color="success" style={{ margin: 0 }}>
-                {Number(watchLng).toFixed(5)}, {Number(watchLat).toFixed(5)}
+                {lngNum.toFixed(5)}, {latNum.toFixed(5)}
               </Tag>
             )}
           </div>
@@ -313,8 +315,8 @@ export default function SiteFormModal({
           {open && (
             <MapPicker
               compact
-              latitude={watchLat ?? 30.5728}
-              longitude={watchLng ?? 104.0668}
+              latitude={hasCoords ? latNum : 30.5728}
+              longitude={hasCoords ? lngNum : 104.0668}
               height={260}
               onChange={onMapChange}
             />

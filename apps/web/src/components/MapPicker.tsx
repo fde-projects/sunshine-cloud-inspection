@@ -13,10 +13,29 @@ interface MapPickerProps {
   compact?: boolean;
 }
 
+const FALLBACK_LAT = 39.9042;
+const FALLBACK_LNG = 116.4074;
+
+function safeLatLng(lat?: number, lng?: number): [number, number] {
+  const nextLat = Number(lat);
+  const nextLng = Number(lng);
+  if (
+    Number.isFinite(nextLat) &&
+    Number.isFinite(nextLng) &&
+    nextLat >= -90 &&
+    nextLat <= 90 &&
+    nextLng >= -180 &&
+    nextLng <= 180
+  ) {
+    return [nextLat, nextLng];
+  }
+  return [FALLBACK_LAT, FALLBACK_LNG];
+}
+
 /** 地图选点（Leaflet + 高德瓦片） */
 export default function MapPicker({
-  latitude = 39.9042,
-  longitude = 116.4074,
+  latitude,
+  longitude,
   onChange,
   height = 280,
   compact = false,
@@ -30,10 +49,8 @@ export default function MapPicker({
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return;
 
-    const map = L.map(containerRef.current, { zoomControl: !compact }).setView(
-      [latitude, longitude],
-      14,
-    );
+    const start = safeLatLng(latitude, longitude);
+    const map = L.map(containerRef.current, { zoomControl: !compact }).setView(start, 14);
     createGaodeTileLayer().addTo(map);
 
     const icon = L.divIcon({
@@ -43,7 +60,7 @@ export default function MapPicker({
       iconAnchor: [9, 9],
     });
 
-    const marker = L.marker([latitude, longitude], { icon, draggable: true }).addTo(map);
+    const marker = L.marker(start, { icon, draggable: true }).addTo(map);
     marker.on('dragend', () => {
       const pos = marker.getLatLng();
       onChangeRef.current(Number(pos.lat.toFixed(7)), Number(pos.lng.toFixed(7)));
@@ -67,8 +84,10 @@ export default function MapPicker({
 
   useEffect(() => {
     if (!mapRef.current || !markerRef.current) return;
-    markerRef.current.setLatLng([latitude, longitude]);
-    mapRef.current.flyTo([latitude, longitude], mapRef.current.getZoom() || 14, {
+    const next = safeLatLng(latitude, longitude);
+    if (!Number.isFinite(Number(latitude)) || !Number.isFinite(Number(longitude))) return;
+    markerRef.current.setLatLng(next);
+    mapRef.current.flyTo(next, mapRef.current.getZoom() || 14, {
       duration: 0.6,
     });
   }, [latitude, longitude]);

@@ -1,8 +1,8 @@
-/* 后台：视口锁高，筛选/分页不动，只有表数据区滚动 */
+/* 后台列表：视口锁高；.admin-fill-page 内只滚表体、表头固定 */
 
 html:has(.app-shell),
 body:has(.app-shell) {
-  height: 100%;
+  height: 100% !important;
   overflow: hidden !important;
 }
 
@@ -10,6 +10,10 @@ body:has(.app-shell) {
   height: 100dvh;
   max-height: 100dvh;
   overflow: hidden !important;
+}
+
+.app-header.ant-layout-header {
+  flex: 0 0 auto;
 }
 
 .app-main.ant-layout {
@@ -38,75 +42,36 @@ body:has(.app-shell) {
   overflow: hidden !important;
 }
 
-.app-content__surface:not(:has(.ant-table-wrapper)) {
+.app-content__surface.is-page-scroll {
+  display: block;
   overflow: auto !important;
 }
 
-.app-content__surface > .ant-space,
-.app-content__surface > .ant-alert,
-.app-content__surface > .ant-typography,
-.app-content__surface > p,
-.app-content__surface > .finance-heading,
-.app-content__surface > .finance-toolbar {
-  flex: 0 0 auto;
+.app-content__surface.is-page-scroll > * {
+  flex: none !important;
+  height: auto !important;
+  overflow: visible !important;
+  display: block;
 }
 
-.app-content__surface > .ant-table-wrapper,
-.app-content__surface > .ant-card,
-.app-content__surface > div {
+.app-content__surface:not(.is-page-scroll) > .admin-fill-page,
+.app-content__surface:not(.is-page-scroll) > .finance-shell {
   flex: 1 1 auto;
   min-height: 0;
+  height: 100%;
   display: flex;
   flex-direction: column;
   overflow: hidden;
 }
 
-.app-content__surface > div > .ant-space,
-.app-content__surface > div > .ant-alert,
-.app-content__surface > div > .ant-typography,
-.app-content__surface > div > p,
-.app-content__surface > div > .finance-heading,
-.app-content__surface > div > .finance-toolbar,
-.app-content__surface .ant-card-head {
-  flex: 0 0 auto;
-}
-
-.app-content__surface > div > .ant-card,
-.app-content__surface .ant-card:has(.ant-table-wrapper) {
-  flex: 1 1 auto;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-}
-
-.app-content__surface .ant-card-body {
-  flex: 1 1 auto;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden !important;
-}
-
-.app-content__surface .ant-card-body > .ant-space,
-.app-content__surface .ant-card-body > .ant-alert,
-.app-content__surface .ant-card-body > .ant-typography,
-.app-content__surface .ant-card-body > p,
-.app-content__surface .ant-card-body > .finance-toolbar,
-.app-content__surface .ant-card-body > .finance-heading {
-  flex: 0 0 auto;
-}
-
-.app-content__surface .ant-card-body > .ant-table-wrapper,
-.app-content__surface > div > .ant-table-wrapper,
-.app-content__surface > .ant-table-wrapper {
-  flex: 1 1 auto;
-  min-height: 0;
-  overflow: hidden;
+/* 费用结算列表：略收顶边，把空间让给底部分页 */
+.app-content__surface:not(.is-page-scroll):has(> .finance-shell) {
+  padding-top: 8px;
+  padding-bottom: 10px;
 }
 
 .finance-shell,
-.finance-page-body {
+.finance-page-body:not(.is-scroll) {
   flex: 1 1 auto;
   min-height: 0;
   display: flex;
@@ -115,57 +80,92 @@ body:has(.app-shell) {
 }
 
 .finance-heading,
-.finance-toolbar {
+.finance-toolbar,
+.finance-review-tip {
   flex: 0 0 auto;
 }
 
-.finance-page-body > .ant-card {
+.finance-page-body:not(.is-scroll) > .admin-fill-page,
+.finance-page-body:not(.is-scroll) > .ant-card.admin-fill-page {
   flex: 1 1 auto;
   min-height: 0;
-  display: flex;
-  flex-direction: column;
   overflow: hidden;
 }
 
-.app-content__surface > .dashboard-page,
 .finance-page-body.is-scroll {
   overflow: auto !important;
   display: block;
 }
 
-.finance-page-body.is-scroll > .ant-card {
-  flex: none;
-  overflow: visible;
-  height: auto;
+.admin-fill-page {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
 }
 
-/* 表格铺满剩余高度：用绝对定位切开 antd 内部 height:auto 链条 */
-.app-content__surface .ant-table-wrapper {
-  position: relative;
+.admin-fill-page.ant-card {
+  height: 100%;
+}
+
+.admin-fill-page.ant-card > .ant-card-head {
+  flex: 0 0 auto;
+}
+
+.admin-fill-page.ant-card > .ant-card-body {
+  flex: 1 1 auto;
   min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden !important;
+}
+
+.admin-fill-page > .admin-fill-page__table,
+.admin-fill-page > .ant-card,
+.admin-fill-page > .admin-fill-page,
+.admin-fill-page .ant-card-body > .admin-fill-page__table,
+.admin-fill-page .ant-card-body > .admin-fill-page {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.admin-fill-page > :not(.admin-fill-page__table):not(.ant-card):not(.admin-fill-page),
+.admin-fill-page .ant-card-body > :not(.admin-fill-page__table):not(.admin-fill-page) {
+  flex: 0 0 auto;
+}
+
+.admin-fill-page__table {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
   display: flex;
   flex-direction: column;
 }
 
-.app-content__surface .ant-table-wrapper .ant-spin-nested-loading,
-.app-content__surface .ant-table-wrapper .ant-spin-container {
+.admin-fill-page__table .ant-table-wrapper,
+.admin-fill-page__table .ant-spin-nested-loading,
+.admin-fill-page__table .ant-spin-container {
   flex: 1 1 auto;
   min-height: 0;
+  height: 100%;
   display: flex;
   flex-direction: column;
   overflow: hidden;
 }
 
-.app-content__surface .ant-table-wrapper .ant-table {
-  position: relative;
+.admin-fill-page__table .ant-table {
   flex: 1 1 auto;
-  min-height: 180px;
+  min-height: 0;
   overflow: hidden;
+  display: flex;
+  flex-direction: column;
 }
 
-.app-content__surface .ant-table-container {
-  position: absolute !important;
-  inset: 0;
+.admin-fill-page__table .ant-table-container {
+  flex: 1 1 auto !important;
+  min-height: 0 !important;
   height: auto !important;
   max-height: none !important;
   display: flex !important;
@@ -173,30 +173,55 @@ body:has(.app-shell) {
   overflow: hidden !important;
 }
 
-.app-content__surface .ant-table-header {
+.admin-fill-page__table .ant-table-header {
   flex: 0 0 auto;
   overflow: hidden !important;
 }
 
-.app-content__surface .ant-table-body,
-.app-content__surface .ant-table-content {
-  flex: 1 1 auto !important;
-  min-height: 0 !important;
-  max-height: none !important;
+.admin-fill-page__table .ant-table-body,
+.admin-fill-page__table .ant-table-content {
   overflow: auto !important;
 }
 
-.app-content__surface .ant-table-thead > tr > th {
+.admin-fill-page .ant-alert {
+  margin-bottom: 8px !important;
+  padding-block: 6px;
+}
+
+.admin-fill-page > .ant-space,
+.admin-fill-page .ant-card-body > .ant-space {
+  margin-bottom: 10px !important;
+}
+
+.admin-fill-page__table .ant-table-thead > tr > th {
   position: sticky;
   top: 0;
   z-index: 3;
   background: #f5f8f7 !important;
 }
 
-.app-content__surface .ant-table-wrapper .ant-pagination {
+.admin-fill-page__table .ant-pagination {
   flex: 0 0 auto;
-  margin-top: 12px;
-  margin-bottom: 0;
+  margin-top: 8px !important;
+  margin-bottom: 0 !important;
+  padding-bottom: 6px;
+}
+
+.app-content__surface.is-page-scroll .ant-table-wrapper {
+  max-height: min(52vh, 560px);
+}
+
+.app-content__surface.is-page-scroll .ant-table-body,
+.app-content__surface.is-page-scroll .ant-table-content {
+  max-height: min(48vh, 520px);
+  overflow: auto !important;
+}
+
+.app-content__surface.is-page-scroll .ant-table-thead > tr > th {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  background: #f5f8f7 !important;
 }
 
 .ant-modal-body .ant-table-wrapper,
@@ -235,30 +260,30 @@ body:has(.app-shell) {
   .app-content.ant-layout-content,
   .app-content__surface,
   .finance-shell,
-  .finance-page-body {
+  .finance-page-body,
+  .admin-fill-page,
+  .admin-fill-page.ant-card > .ant-card-body {
     height: auto;
     max-height: none;
     overflow: visible !important;
   }
 
-  .app-content__surface > .ant-table-wrapper,
-  .app-content__surface > .ant-card,
-  .app-content__surface > div,
-  .app-content__surface .ant-card-body,
-  .app-content__surface .ant-table-wrapper .ant-table {
+  .admin-fill-page__table,
+  .admin-fill-page__table .ant-table-wrapper,
+  .admin-fill-page__table .ant-table {
     flex: none;
-    overflow: visible;
     height: auto;
     min-height: 0;
-    position: static;
+    overflow: visible;
   }
 
-  .app-content__surface .ant-table-container {
+  .admin-fill-page__table .ant-table-container {
     position: static !important;
+    height: auto !important;
   }
 
-  .app-content__surface .ant-table-body,
-  .app-content__surface .ant-table-content {
+  .admin-fill-page__table .ant-table-body,
+  .admin-fill-page__table .ant-table-content {
     max-height: min(70dvh, 640px) !important;
   }
 }

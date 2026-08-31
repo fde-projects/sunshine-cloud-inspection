@@ -14,6 +14,8 @@ import { fetchSites } from '../../../api/site';
 import type { FinanceMonthlySettlement } from '../../../types/finance';
 import type { SiteItem } from '../../../types';
 import { useAuthStore } from '../../../stores/auth';
+import FillTable from '../../../components/FillTable';
+import { LAYOUT_DEMO_COUNT, padLayoutDemo } from '../../../utils/layoutDemo';
 
 export default function FinanceMonthlyPage() {
   const isAdmin = useAuthStore((state) => state.user?.role === 'super_admin');
@@ -41,12 +43,29 @@ export default function FinanceMonthlyPage() {
     setLoading(true);
     try {
       setRows(
-        await fetchMonthlySettlements({
-          month,
-          keyword: keyword || undefined,
-          siteId: isAdmin ? siteId : undefined,
-          role: isAdmin ? role : undefined,
-        }),
+        padLayoutDemo(
+          await fetchMonthlySettlements({
+            month,
+            keyword: keyword || undefined,
+            siteId: isAdmin ? siteId : undefined,
+            role: isAdmin ? role : undefined,
+          }),
+          LAYOUT_DEMO_COUNT,
+          (n) => ({
+            id: `layout-demo-monthly-${n}`,
+            month,
+            userId: `layout-demo-user-${n}`,
+            perfTotal: String(2000 + n * 37),
+            expenseTotal: String(120 + n * 3),
+            rewardTotal: n <= 3 ? '500' : '0',
+            eventPenalty: n % 6 === 0 ? '80' : '0',
+            subsidyTotal: '50',
+            correctionTotal: '0',
+            finalAmount: String(2100 + n * 40),
+            status: 'draft' as const,
+            user: { realName: `预览人员${n}`, username: `demo${n}` },
+          }),
+        ),
       );
     } finally {
       setLoading(false);
@@ -62,7 +81,7 @@ export default function FinanceMonthlyPage() {
     data.reduce((s, r) => s + Number(r[key] || 0), 0);
 
   return (
-    <Card className="finance-card" title="月度结算">
+    <Card className="finance-card admin-fill-page" title="月度结算">
       <div className="finance-review-tip">
         最终金额 = 已审核计件绩效 + 已通过行程报销 + 排名奖罚 − 事件扣罚 + 补助 + 校正增补。打开本页或结算/报销审核通过时会自动重算。网格长只读本网格；锁定/解锁、校正、导出仅管理员。锁定后该月已通过结算的案例变为「已月结」，不能再改 PO；解锁后回到「已结算」。
       </div>
@@ -172,7 +191,7 @@ export default function FinanceMonthlyPage() {
           </>
         )}
       </Space>
-      <Table
+      <FillTable
         rowKey="id"
         loading={loading}
         dataSource={rows}

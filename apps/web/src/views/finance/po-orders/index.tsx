@@ -41,6 +41,7 @@ import type { PoItemRow, PoOrder, UpdatePoItemPayload } from '../../../types/fin
 import { useAuthStore } from '../../../stores/auth';
 import ImportDialog from '../components/ImportDialog';
 import { canUseDangerousClear, confirmDangerousClear } from '../../../utils/finance-clear';
+import FillTable, { listTablePagination } from '../../../components/FillTable';
 
 const itemColumns = [
   { title: '服务条目', dataIndex: 'itemName', ellipsis: { showTitle: false }, render: ellipsisCell },
@@ -94,6 +95,7 @@ export default function PoOrdersPage() {
   const [data, setData] = useState<PoOrder[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
   const [keyword, setKeyword] = useState('');
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
@@ -117,7 +119,7 @@ export default function PoOrdersPage() {
     try {
       const r = await fetchPoOrders({
         page,
-        limit: 10,
+        limit: pageSize,
         matchStatus: status,
         keyword: keyword || undefined,
         dateFrom: dateFrom || undefined,
@@ -128,7 +130,7 @@ export default function PoOrdersPage() {
     } finally {
       setLoading(false);
     }
-  }, [page, status, keyword, dateFrom, dateTo]);
+  }, [page, pageSize, status, keyword, dateFrom, dateTo]);
   useEffect(() => {
     void load();
   }, [load]);
@@ -287,98 +289,103 @@ export default function PoOrdersPage() {
     </div>
   );
   return (
-    <Card className="finance-card">
+    <Card className="finance-card admin-fill-page">
       <Alert
         type="info"
         showIcon
-        style={{ marginBottom: 12 }}
-        message={admin ? '第二次导入：钉钉 PO 表（单文件）' : '本网格已匹配 PO'}
-        description={
-          admin
-            ? '从钉钉导出的一张 PO Excel 即可。按 GSP 案例号挂接案例。已匹配时项目名称等主数据以案例为准（只读）；「编辑」仅改本 PO 的金额、型号、场景与条目，保存后自动重计价。故障说明等钉钉原文请重新导入更新。'
-            : '仅显示已挂接到本网格案例的 PO。未匹配、未分配网格的 PO 由管理员处理。'
+        closable
+        message={
+          <Tooltip
+            title={
+              admin
+                ? '从钉钉导出一张 PO Excel 即可，按 GSP 案例号挂接。已匹配时项目名称等以案例为准；「编辑」只改本 PO 金额、型号、场景与条目。'
+                : '仅显示已挂接到本网格案例的 PO。未匹配、未分配网格的由管理员处理。'
+            }
+          >
+            <span>{admin ? '第二次导入：钉钉 PO 表（单文件，悬停看说明）' : '本网格已匹配 PO（悬停看说明）'}</span>
+          </Tooltip>
         }
       />
       {admin && (
         <div className="finance-toolbar">
-          <Input.Search
-            allowClear
-            placeholder="PO单号/案例号/项目名"
-            style={{ width: 220 }}
-            onSearch={(v) => {
-              setPage(1);
-              setKeyword(v);
-            }}
-          />
-          <Input
-            type="date"
-            value={dateFrom}
-            onChange={(e) => {
-              setPage(1);
-              setDateFrom(e.target.value);
-            }}
-            title="起始日期（需求日/创建）"
-            style={{ width: 150 }}
-          />
-          <span style={{ color: '#888' }}>至</span>
-          <Input
-            type="date"
-            value={dateTo}
-            onChange={(e) => {
-              setPage(1);
-              setDateTo(e.target.value);
-            }}
-            title="结束日期（需求日/创建）"
-            style={{ width: 150 }}
-          />
-          <Button
-            icon={<DownloadOutlined />}
-            loading={exporting}
-            onClick={() => {
-              void (async () => {
-                setExporting(true);
-                try {
-                  const ids = selectedRowKeys.map(String);
-                  await exportPoOrders(
-                    ids.length
-                      ? { ids }
-                      : {
-                          matchStatus: status,
-                          keyword: keyword || undefined,
-                          dateFrom: dateFrom || undefined,
-                          dateTo: dateTo || undefined,
-                        },
-                  );
-                  message.success(ids.length ? `已导出勾选 ${ids.length} 条` : '已按当前筛选导出');
-                } catch (error) {
-                  message.error(error instanceof Error ? error.message : '导出失败');
-                } finally {
-                  setExporting(false);
-                }
-              })();
-            }}
-          >
-            {selectedRowKeys.length ? `导出勾选 (${selectedRowKeys.length})` : '导出 Excel'}
-          </Button>
-          <Button
-            icon={<DownloadOutlined />}
-            onClick={() => {
-              void downloadFinanceImportTemplate('po').catch(() => undefined);
-            }}
-          >
-            下载模板
-          </Button>
-          <Button type="primary" icon={<DownloadOutlined />} onClick={() => setImportOpen(true)}>
-            导入 PO
-          </Button>
-          <Button icon={<SyncOutlined />} loading={generating} onClick={generateCases}>
-            应急：从 PO 补建案例
-          </Button>
-          {canClear && (
-            <Button danger icon={<DeleteOutlined />} loading={clearing} onClick={() => void onClear()}>
-              清空全部 PO
+            <Input.Search
+              allowClear
+              placeholder="PO单号/案例号/项目名"
+              style={{ width: 220 }}
+              onSearch={(v) => {
+                setPage(1);
+                setKeyword(v);
+              }}
+            />
+            <Input
+              type="date"
+              value={dateFrom}
+              onChange={(e) => {
+                setPage(1);
+                setDateFrom(e.target.value);
+              }}
+              title="起始日期（需求日/创建）"
+              style={{ width: 150 }}
+            />
+            <span style={{ color: '#888' }}>至</span>
+            <Input
+              type="date"
+              value={dateTo}
+              onChange={(e) => {
+                setPage(1);
+                setDateTo(e.target.value);
+              }}
+              title="结束日期（需求日/创建）"
+              style={{ width: 150 }}
+            />
+            <Button
+              icon={<DownloadOutlined />}
+              loading={exporting}
+              onClick={() => {
+                void (async () => {
+                  setExporting(true);
+                  try {
+                    const ids = selectedRowKeys.map(String);
+                    await exportPoOrders(
+                      ids.length
+                        ? { ids }
+                        : {
+                            matchStatus: status,
+                            keyword: keyword || undefined,
+                            dateFrom: dateFrom || undefined,
+                            dateTo: dateTo || undefined,
+                          },
+                    );
+                    message.success(ids.length ? `已导出勾选 ${ids.length} 条` : '已按当前筛选导出');
+                  } catch (error) {
+                    message.error(error instanceof Error ? error.message : '导出失败');
+                  } finally {
+                    setExporting(false);
+                  }
+                })();
+              }}
+            >
+              {selectedRowKeys.length ? `导出勾选 (${selectedRowKeys.length})` : '导出 Excel'}
             </Button>
-          )}
+            <Button
+              icon={<DownloadOutlined />}
+              onClick={() => {
+                void downloadFinanceImportTemplate('po').catch(() => undefined);
+              }}
+            >
+              下载模板
+            </Button>
+            <Button type="primary" icon={<DownloadOutlined />} onClick={() => setImportOpen(true)}>
+              导入 PO
+            </Button>
+            <Button icon={<SyncOutlined />} loading={generating} onClick={generateCases}>
+              应急：从 PO 补建案例
+            </Button>
+            {canClear && (
+              <Button danger icon={<DeleteOutlined />} loading={clearing} onClick={() => void onClear()}>
+                清空全部 PO
+              </Button>
+            )}
         </div>
       )}
       <Tabs
@@ -396,7 +403,7 @@ export default function PoOrdersPage() {
             : [{ key: 'matched', label: '本网格已匹配 PO' }]
         }
       />
-      <Table
+      <FillTable
         rowKey="id"
         loading={loading}
         dataSource={data}
@@ -408,7 +415,15 @@ export default function PoOrdersPage() {
               }
             : undefined
         }
-        pagination={{ current: page, total, pageSize: 10, onChange: setPage }}
+        pagination={listTablePagination({
+          current: page,
+          total,
+          pageSize,
+          onChange: (p, ps) => {
+            setPage(p);
+            setPageSize(ps);
+          },
+        })}
         scroll={{ x: 1600 }}
         expandable={{
           expandedRowRender: (r) => {

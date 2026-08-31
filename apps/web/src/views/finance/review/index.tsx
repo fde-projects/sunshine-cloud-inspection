@@ -11,7 +11,6 @@ import {
   Modal,
   Select,
   Space,
-  Table,
   Tabs,
   Tag,
   Tooltip,
@@ -38,6 +37,8 @@ import AssessmentEventDrawer, {
 import SettlementAmountDrawer from '../components/SettlementAmountDrawer';
 import ExpenseReviewPanel from '../expenses/ExpenseReviewPanel';
 import DayDatePicker from '../../../components/DayDatePicker';
+import FillTable from '../../../components/FillTable';
+import { LAYOUT_DEMO_COUNT, padLayoutDemo } from '../../../utils/layoutDemo';
 import { formatDateTime } from '../../../utils/displayLabels';
 
 type Action = 'approve' | 'reject';
@@ -158,7 +159,31 @@ export default function FinanceReviewPage() {
         reviewStatus: tab,
       });
       if (seq !== loadSeq.current) return;
-      setRows(next);
+      setRows(
+        padLayoutDemo(next, LAYOUT_DEMO_COUNT, (n) => ({
+          id: `layout-demo-review-${n}`,
+          gspCaseNo: `LAYOUT-RVW-${String(n).padStart(3, '0')}`,
+          projectName: `【排版预览】结算案例 ${n}`,
+          region: '广东 · 深圳',
+          inspectorName: `预览工程师${n}`,
+          finishTime: new Date().toISOString(),
+          overdue: false,
+          perfBase: '1200.00',
+          deduction: '0',
+          eventPenalty: 0,
+          perfFinal: '1200.00',
+          caseRevenue: '3000.00',
+          reviewStatus: tab === 'approved' ? 'approved' : tab === 'rejected' ? 'rejected' : 'pending',
+          deductionStatus: 'none',
+          missingPerf: 0,
+          missingSettle: 0,
+          pendingExpenseCount: 0,
+          approvalReady: true,
+        })),
+      );
+    } catch {
+      if (seq !== loadSeq.current) return;
+      setRows([]);
     } finally {
       if (seq === loadSeq.current) setLoading(false);
     }
@@ -240,11 +265,12 @@ export default function FinanceReviewPage() {
   );
 
   return (
-    <Card className="finance-card" title="结算审核">
+    <Card className="finance-card admin-fill-page finance-review-page">
       <Tabs
+        size="small"
+        className="finance-review-scope-tabs"
         activeKey={scope}
         onChange={(key) => setScopeAndUrl(key as ReviewScope)}
-        style={{ marginBottom: 4 }}
         items={[
           {
             key: 'case',
@@ -262,6 +288,8 @@ export default function FinanceReviewPage() {
       ) : (
         <>
           <Tabs
+            size="small"
+            className="finance-review-status-tabs"
             activeKey={tab}
             onChange={(key) => setTab(key as ReviewTab)}
             items={(Object.keys(tabLabel) as ReviewTab[]).map((key) => ({
@@ -270,15 +298,29 @@ export default function FinanceReviewPage() {
             }))}
           />
           <div className="finance-review-tip">
-            {tab === 'pending'
-              ? '默认看待审核队列。通过后可到「已通过」页签查看。'
-              : tab === 'approved'
-                ? '已通过的结算记录不会从系统消失，可按完工日期/网格继续查询。'
-                : tab === 'rejected'
-                  ? '已驳回记录可在此查看原因；工程师补齐后仍会出现在待审核队列。'
-                  : '全部状态汇总；仅管理员可审结算。仍可用下方筛选缩小范围。'}
+            <Tooltip
+              title={
+                tab === 'pending'
+                  ? '默认看待审核队列。通过后可到「已通过」页签查看。'
+                  : tab === 'approved'
+                    ? '已通过的结算记录不会从系统消失，可按完工日期/网格继续查询。'
+                    : tab === 'rejected'
+                      ? '已驳回记录可在此查看原因；工程师补齐后仍会出现在待审核队列。'
+                      : '全部状态汇总；仅管理员可审结算。仍可用下方筛选缩小范围。'
+              }
+            >
+              <span>
+                {tab === 'pending'
+                  ? '默认看待审核队列（悬停看说明）'
+                  : tab === 'approved'
+                    ? '已通过记录可按条件继续查询'
+                    : tab === 'rejected'
+                      ? '已驳回记录可查看原因'
+                      : '全部状态汇总，可用筛选缩小范围'}
+              </span>
+            </Tooltip>
           </div>
-          <Space className="finance-toolbar" wrap style={{ marginBottom: 12 }}>
+          <Space className="finance-toolbar" wrap>
             <Input
               allowClear
               placeholder="案例号/项目/工程师"
@@ -310,7 +352,7 @@ export default function FinanceReviewPage() {
               查询
             </Button>
           </Space>
-          <Table
+          <FillTable
             rowKey="id"
             loading={loading}
             dataSource={rows}

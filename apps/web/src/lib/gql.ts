@@ -6,8 +6,10 @@ export async function getGraphqlUrl(): Promise<string> {
   if (graphqlUrlCache) return graphqlUrlCache;
   const res = await fetch("/api/config");
   if (!res.ok) throw new Error("无法读取 GraphQL 配置");
-  const data = (await res.json()) as { graphqlUrl: string };
-  graphqlUrlCache = data.graphqlUrl;
+  const data = (await res.json()) as { graphqlUrl?: string };
+  const url = String(data.graphqlUrl || "").trim();
+  if (!url) throw new Error("未配置数据服务地址，请检查环境变量 HASURA_GRAPHQL_URL");
+  graphqlUrlCache = url;
   return graphqlUrlCache;
 }
 

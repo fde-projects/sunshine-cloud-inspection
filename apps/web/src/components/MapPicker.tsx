@@ -1,9 +1,7 @@
 "use client";
 
 import { useEffect, useRef } from 'react';
-import L from 'leaflet';
-import 'leaflet/dist/leaflet.css';
-import { createGaodeTileLayer } from '../utils/gaodeTileLayer';
+import type { Map as LeafletMap, Marker as LeafletMarker } from 'leaflet';
 
 interface MapPickerProps {
   latitude?: number;
@@ -32,7 +30,7 @@ function safeLatLng(lat?: number, lng?: number): [number, number] {
   return [FALLBACK_LAT, FALLBACK_LNG];
 }
 
-/** 地图选点（Leaflet + 高德瓦片） */
+/** 地图选点（Leaflet + 高德瓦片）；leaflet 仅在浏览器里加载，避免 SSR 读 window */
 export default function MapPicker({
   latitude,
   longitude,
@@ -41,41 +39,51 @@ export default function MapPicker({
   compact = false,
 }: MapPickerProps) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const mapRef = useRef<L.Map | null>(null);
-  const markerRef = useRef<L.Marker | null>(null);
+  const mapRef = useRef<LeafletMap | null>(null);
+  const markerRef = useRef<LeafletMarker | null>(null);
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
 
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return;
+    let cancelled = false;
 
-    const start = safeLatLng(latitude, longitude);
-    const map = L.map(containerRef.current, { zoomControl: !compact }).setView(start, 14);
-    createGaodeTileLayer().addTo(map);
+    void (async () => {
+      const leaflet = await import('leaflet');
+      await import('leaflet/dist/leaflet.css');
+      const { createGaodeTileLayer } = await import('../utils/gaodeTileLayer');
+      if (cancelled || !containerRef.current || mapRef.current) return;
 
-    const icon = L.divIcon({
-      className: '',
-      html: `<div style="width:18px;height:18px;background:#1a5f4a;border:3px solid #fff;border-radius:50%;box-shadow:0 2px 8px rgba(0,0,0,.35)"></div>`,
-      iconSize: [18, 18],
-      iconAnchor: [9, 9],
-    });
+      const L = leaflet.default;
+      const start = safeLatLng(latitude, longitude);
+      const map = L.map(containerRef.current, { zoomControl: !compact }).setView(start, 14);
+      createGaodeTileLayer().addTo(map);
 
-    const marker = L.marker(start, { icon, draggable: true }).addTo(map);
-    marker.on('dragend', () => {
-      const pos = marker.getLatLng();
-      onChangeRef.current(Number(pos.lat.toFixed(7)), Number(pos.lng.toFixed(7)));
-    });
+      const icon = L.divIcon({
+        className: '',
+        html: `<div style="width:18px;height:18px;background:#1a5f4a;border:3px solid #fff;border-radius:50%;box-shadow:0 2px 8px rgba(0,0,0,.35)"></div>`,
+        iconSize: [18, 18],
+        iconAnchor: [9, 9],
+      });
 
-    map.on('click', (e: L.LeafletMouseEvent) => {
-      marker.setLatLng(e.latlng);
-      onChangeRef.current(Number(e.latlng.lat.toFixed(7)), Number(e.latlng.lng.toFixed(7)));
-    });
+      const marker = L.marker(start, { icon, draggable: true }).addTo(map);
+      marker.on('dragend', () => {
+        const pos = marker.getLatLng();
+        onChangeRef.current(Number(pos.lat.toFixed(7)), Number(pos.lng.toFixed(7)));
+      });
 
-    mapRef.current = map;
-    markerRef.current = marker;
+      map.on('click', (e) => {
+        marker.setLatLng(e.latlng);
+        onChangeRef.current(Number(e.latlng.lat.toFixed(7)), Number(e.latlng.lng.toFixed(7)));
+      });
+
+      mapRef.current = map;
+      markerRef.current = marker;
+    })();
 
     return () => {
-      map.remove();
+      cancelled = true;
+      mapRef.current?.remove();
       mapRef.current = null;
       markerRef.current = null;
     };

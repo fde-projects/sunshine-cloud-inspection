@@ -11,7 +11,6 @@ import {
   Popconfirm,
   Select,
   Space,
-  Table,
   Tag,
   Tabs,
   message,
@@ -36,6 +35,7 @@ import { useAuthStore } from '../../../stores/auth';
 import ImportDialog from '../components/ImportDialog';
 import ItemMappingDialog from './ItemMappingDialog';
 import { canUseDangerousClear, confirmDangerousClear } from '../../../utils/finance-clear';
+import FillTable, { listTablePagination } from '../../../components/FillTable';
 import { useSearchParams } from 'react-router-dom';
 
 const scenes = ['平地', '水上', '山地', '高原', '屋顶'];
@@ -47,6 +47,7 @@ export default function PricesPage() {
     [data, setData] = useState<PriceItem[]>([]),
     [total, setTotal] = useState(0),
     [page, setPage] = useState(1),
+    [pageSize, setPageSize] = useState(20),
     [keyword, setKeyword] = useState(''),
     [loading, setLoading] = useState(false),
     [clearing, setClearing] = useState(false),
@@ -99,13 +100,13 @@ export default function PricesPage() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const r = await fetchPrices({ page, limit: 10, type, keyword });
+      const r = await fetchPrices({ page, limit: pageSize, type, keyword });
       setData(r.list);
       setTotal(r.total);
     } finally {
       setLoading(false);
     }
-  }, [page, type, keyword]);
+  }, [page, pageSize, type, keyword]);
   useEffect(() => {
     void load();
   }, [load]);
@@ -155,11 +156,12 @@ export default function PricesPage() {
     void load();
   };
   return (
-    <Card className="finance-card">
+    <Card className="finance-card admin-fill-page">
       <div className="finance-toolbar">
         <Input.Search
           allowClear
           placeholder="条目编码或名称"
+          style={{ width: 240 }}
           onSearch={(v) => {
             setPage(1);
             setKeyword(v);
@@ -208,11 +210,19 @@ export default function PricesPage() {
           { key: 'perf', label: '内部绩效价' },
         ]}
       />
-      <Table
+      <FillTable
         rowKey="id"
         loading={loading}
         dataSource={data}
-        pagination={{ current: page, total, pageSize: 10, onChange: setPage }}
+        pagination={listTablePagination({
+          current: page,
+          total,
+          pageSize,
+          onChange: (p, ps) => {
+            setPage(p);
+            setPageSize(ps);
+          },
+        })}
         scroll={{ x: 1100 }}
         columns={[
           { title: '条目编码', dataIndex: 'itemCode', width: 240 },

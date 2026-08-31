@@ -3,7 +3,7 @@ import bcrypt from "bcryptjs";
 import { adminGql } from "@/lib/hasura-admin";
 import { issueRoleSession, loginWithPassword, requireActiveRole } from "./auth-login";
 import { analyzePhotos, draftRuleFromSamples, suggestPassViewLabels } from "@/lib/vision";
-import { createUploadToken } from "@/lib/storage";
+import { createUploadToken, uploadBufferWithToken } from "@/lib/storage";
 import { fail, HttpError, ok, parseBody, q, requireUser, type AppUser } from "./http";
 import {
   CASE_FIELDS,
@@ -171,16 +171,28 @@ async function dispatch(ctx: {
     if (!res.ok) throw new HttpError(res.status, json.message || "逆地理失败");
     return ok(json);
   }
-  if (method === "GET" && path === "upload/qiniu-token") {
+  if (method === "GET" && (path === "upload/qiniu-token" || path === "upload/token")) {
     const u = need(user);
     const filename = String(query.get("filename") || "photo.jpg");
-    const token = createUploadToken(filename, u.id);
+    const contentType = String(query.get("contentType") || "image/jpeg");
+    const token = createUploadToken(filename, u.id, { contentType });
+    const domain =
+      token.provider === "tianyi"
+        ? (process.env.TIANYI_DOMAIN || "").replace(/\/$/, "")
+        : (process.env.QINIU_DOMAIN || "").replace(/\/$/, "");
+    const bucket =
+      token.provider === "tianyi" ? process.env.TIANYI_BUCKET : process.env.QINIU_BUCKET;
     return ok({
+      provider: token.provider,
+      method: token.method,
       token: token.token,
-      domain: process.env.QINIU_DOMAIN?.replace(/\/$/, "") || "",
+      domain,
       uploadUrl: token.uploadUrl,
-      bucket: process.env.QINIU_BUCKET,
+      bucket,
       key: token.key,
+      publicUrl: token.publicUrl,
+      headers: token.headers || {},
+      contentType: token.contentType,
     });
   }
   if (method === "POST" && path === "upload/photo") return uploadPhoto(form, need(user));
@@ -1227,7 +1239,7 @@ async function completionStats() {
     completedTasks: completed,
     submittedTasks: submitted,
     inProgressTasks: inProgress,
-    completionRate: total ? completed / total : 0,
+    completionRate: total ? Math.round((completed / total) * 100) : 0,
     byDate: [],
     bySite: [],
   });
@@ -1239,7 +1251,7 @@ async function defectStats() {
     totalEntries: 0,
     failCount: 0,
     failRate: 0,
-    passRate: 1,
+    passRate: 0,
     byDate: [],
     bySite: [],
     byDeviceType: [],
@@ -2106,10 +2118,115 @@ async function rejectRecord(user: AppUser, id: string, body: Record<string, unkn
 }
 
 async function recordCaseGroups(query: URLSearchParams) {
-  const recs = await listRecords(query);
-  const json = await recs.json();
-  const list = (json.data?.list || []) as Array<{ task?: { serviceCase?: { id: string; gspCaseNo?: string } } }>;
-  return ok({ list, total: list.length, page: 1, limit: list.length });
+  const page = Number(query.get("page") || 1);
+  const limit = Number(query.get("limit") || 25);
+  const where: Record<string, unknown> = {};
+  if (query.get("status")) where.status = { _eq: query.get("status") };
+  // scope=audit：待审；无 status 时历史查询不限
+  if (query.get("scope") === "audit" && !query.get("status")) {
+    where.status = { _eq: "submitted" };
+  }
+  const d = await adminGql<{
+    inspection_records: Array<{
+      id: string;
+      status?: string;
+      submitted_at?: string | null;
+      created_at?: string;
+      task?: {
+        id?: string;
+        service_case?: {
+          id?: string;
+          gsp_case_no?: string | null;
+          project_name?: string | null;
+          status?: string | null;
+          planned_units?: number | null;
+          completed_units?: number | null;
+          unit_label?: string | null;
+          assign_mode?: string | null;
+          site_id?: string | null;
+        } | null;
+        site?: { id?: string; name?: string } | null;
+      } | null;
+    }>;
+  }>(
+    `query ($where: inspection_records_bool_exp!) {
+      inspection_records(where: $where, order_by: { created_at: desc }, limit: 500) {
+        id status submitted_at created_at
+        task {
+          id
+          site { id name }
+          service_case {
+            id gsp_case_no project_name status planned_units completed_units unit_label assign_mode site_id
+          }
+        }
+      }
+    }`,
+    { where },
+  );
+  type Agg = {
+    groupKey: string;
+    serviceCaseId: string | null;
+    gspCaseNo: string | null;
+    projectName: string | null;
+    unitLabel: string | null;
+    assignMode: string | null;
+    siteId: string | null;
+    plannedUnits: number | null;
+    completedUnits: number | null;
+    caseStatus: string | null;
+    recordCount: number;
+    pendingCount: number;
+    approvedCount: number;
+    rejectedCount: number;
+    latestSubmittedAt: string | null;
+  };
+  const map = new Map<string, Agg>();
+  for (const rec of d.inspection_records || []) {
+    const sc = rec.task?.service_case;
+    const taskId = rec.task?.id;
+    const groupKey = sc?.id ? `case-${sc.id}` : taskId ? `task-${taskId}` : `rec-${rec.id}`;
+    let row = map.get(groupKey);
+    if (!row) {
+      row = {
+        groupKey,
+        serviceCaseId: sc?.id || null,
+        gspCaseNo: sc?.gsp_case_no || null,
+        projectName: sc?.project_name || (rec.task?.site?.name ? `${rec.task.site.name}任务` : null),
+        unitLabel: sc?.unit_label || null,
+        assignMode: sc?.assign_mode || null,
+        siteId: sc?.site_id || rec.task?.site?.id || null,
+        plannedUnits: sc?.planned_units ?? null,
+        completedUnits: sc?.completed_units ?? null,
+        caseStatus: sc?.status || null,
+        recordCount: 0,
+        pendingCount: 0,
+        approvedCount: 0,
+        rejectedCount: 0,
+        latestSubmittedAt: null,
+      };
+      map.set(groupKey, row);
+    }
+    row.recordCount += 1;
+    const st = String(rec.status || "");
+    if (st === "submitted") row.pendingCount += 1;
+    if (st === "approved") row.approvedCount += 1;
+    if (st === "rejected") row.rejectedCount += 1;
+    const ts = rec.submitted_at || rec.created_at || null;
+    if (ts && (!row.latestSubmittedAt || String(ts) > row.latestSubmittedAt)) {
+      row.latestSubmittedAt = String(ts);
+    }
+  }
+  let list = [...map.values()];
+  if (query.get("scope") === "audit") {
+    list = list.filter((g) => g.pendingCount > 0);
+  }
+  if (query.get("status") === "rejected") {
+    list = list.filter((g) => g.rejectedCount > 0);
+  }
+  list.sort((a, b) => String(b.latestSubmittedAt || "").localeCompare(String(a.latestSubmittedAt || "")));
+  const total = list.length;
+  const offset = (page - 1) * limit;
+  return ok({ list: list.slice(offset, offset + limit), total, page, limit });
 }
 
 async function recordsByCase(groupKey: string) {
@@ -2321,13 +2438,14 @@ async function setManualResult(recordId: string, entryId: string, body: Record<s
 async function uploadPhoto(form: FormData | null, user: AppUser) {
   const file = form?.get("file");
   if (!(file instanceof File)) throw new HttpError(400, "请选择照片");
-  const token = createUploadToken(file.name || "photo.jpg", user.id);
-  const fd = new FormData();
-  fd.append("token", token.token);
-  fd.append("key", token.key);
-  fd.append("file", file);
-  const res = await fetch(token.uploadUrl, { method: "POST", body: fd });
-  if (!res.ok) throw new HttpError(500, "图片上传失败");
+  const contentType = file.type || "image/jpeg";
+  const token = createUploadToken(file.name || "photo.jpg", user.id, { contentType });
+  try {
+    const buf = Buffer.from(await file.arrayBuffer());
+    await uploadBufferWithToken(token, buf);
+  } catch (e) {
+    throw new HttpError(500, e instanceof Error ? e.message : "图片上传失败");
+  }
   return ok({ url: token.publicUrl, original: true });
 }
 
@@ -2584,14 +2702,16 @@ async function listAssessments(query: URLSearchParams) {
       id: r.id,
       userId: r.user_id,
       month: r.month,
-      score: r.total_score,
-      rank: r.rank_result,
-      bonus: r.reward_amount,
-      penalty: r.event_penalty,
-      subsidy: Number(r.tool_subsidy || 0) + Number(r.other_subsidy || 0),
-      remark: r.subsidy_remark,
-      userName: (r.user as { real_name?: string })?.real_name,
-      role: (r.user as { role?: string })?.role,
+      realName: (r.user as { real_name?: string })?.real_name || "",
+      username: "",
+      userRole: (r.user as { role?: string })?.role || "inspector",
+      totalScore: r.total_score == null ? undefined : String(r.total_score),
+      rankResult: r.rank_result == null ? undefined : String(r.rank_result),
+      rewardAmount: r.reward_amount == null ? undefined : String(r.reward_amount),
+      eventPenalty: r.event_penalty == null ? undefined : String(r.event_penalty),
+      toolSubsidy: r.tool_subsidy == null ? undefined : String(r.tool_subsidy),
+      otherSubsidy: r.other_subsidy == null ? undefined : String(r.other_subsidy),
+      subsidyRemark: r.subsidy_remark == null ? undefined : String(r.subsidy_remark),
     })),
   );
 }

@@ -20,9 +20,11 @@ export async function POST(req: Request) {
   if (!userId) {
     return NextResponse.json({ message: "未登录" }, { status: 401 });
   }
-  const body = (await req.json()) as { filename?: string };
+  const body = (await req.json()) as { filename?: string; contentType?: string };
   try {
-    const token = createUploadToken(body.filename || "photo.jpg", userId);
+    const token = createUploadToken(body.filename || "photo.jpg", userId, {
+      contentType: body.contentType || "image/jpeg",
+    });
     return NextResponse.json(token);
   } catch (e) {
     return NextResponse.json(

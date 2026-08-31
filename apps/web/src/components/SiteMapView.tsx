@@ -1,9 +1,7 @@
 "use client";
 
-import { useEffect, useRef } from 'react';
-import L from 'leaflet';
-import 'leaflet/dist/leaflet.css';
-import { createGaodeTileLayer } from '../utils/gaodeTileLayer';
+import { useEffect, useRef, useState } from 'react';
+import type { LatLngBoundsExpression, LatLngExpression, Map as LeafletMap } from 'leaflet';
 
 export interface SiteMarker {
   id: string;
@@ -19,6 +17,8 @@ interface SiteMapViewProps {
   height?: number;
 }
 
+type LeafletDefault = typeof import('leaflet').default;
+
 function escapeHtml(value: string) {
   return value.replace(/[&<>"']/g, (char) => {
     const entities: Record<string, string> = {
@@ -32,28 +32,45 @@ function escapeHtml(value: string) {
   });
 }
 
-/** 仪表盘网格分布（Leaflet + 高德瓦片） */
+/** 仪表盘网格分布（Leaflet + 高德瓦片）；leaflet 仅在浏览器里加载 */
 export default function SiteMapView({ markers, height = 360 }: SiteMapViewProps) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const mapRef = useRef<L.Map | null>(null);
+  const mapRef = useRef<LeafletMap | null>(null);
+  const leafletRef = useRef<LeafletDefault | null>(null);
+  const [mapReady, setMapReady] = useState(false);
   const hasMarkers = markers.length > 0;
 
   useEffect(() => {
-    if (!hasMarkers || !containerRef.current || mapRef.current) return;
+    if (!hasMarkers || !containerRef.current) return;
+    let cancelled = false;
 
-    const map = L.map(containerRef.current).setView([39.9042, 116.4074], 5);
-    createGaodeTileLayer().addTo(map);
-    mapRef.current = map;
+    void (async () => {
+      const leaflet = await import('leaflet');
+      await import('leaflet/dist/leaflet.css');
+      const { createGaodeTileLayer } = await import('../utils/gaodeTileLayer');
+      if (cancelled || !containerRef.current) return;
+
+      const L = leaflet.default;
+      const map = L.map(containerRef.current).setView([39.9042, 116.4074], 5);
+      createGaodeTileLayer().addTo(map);
+      leafletRef.current = L;
+      mapRef.current = map;
+      setMapReady(true);
+    })();
 
     return () => {
-      map.remove();
+      cancelled = true;
+      setMapReady(false);
+      mapRef.current?.remove();
       mapRef.current = null;
+      leafletRef.current = null;
     };
   }, [hasMarkers]);
 
   useEffect(() => {
     const map = mapRef.current;
-    if (!map) return;
+    const L = leafletRef.current;
+    if (!mapReady || !map || !L) return;
 
     map.eachLayer((layer) => {
       if (layer instanceof L.Marker) map.removeLayer(layer);
@@ -61,9 +78,9 @@ export default function SiteMapView({ markers, height = 360 }: SiteMapViewProps)
 
     if (!markers.length) return;
 
-    const bounds: L.LatLngExpression[] = [];
+    const bounds: LatLngExpression[] = [];
     markers.forEach((m) => {
-      const latlng: L.LatLngExpression = [m.latitude, m.longitude];
+      const latlng: LatLngExpression = [m.latitude, m.longitude];
       bounds.push(latlng);
       const icon = L.divIcon({
         className: '',
@@ -79,11 +96,11 @@ export default function SiteMapView({ markers, height = 360 }: SiteMapViewProps)
     });
 
     if (bounds.length > 1) {
-      map.fitBounds(bounds as L.LatLngBoundsExpression, { padding: [40, 40] });
+      map.fitBounds(bounds as LatLngBoundsExpression, { padding: [40, 40] });
     } else if (bounds.length === 1) {
-      map.setView(bounds[0] as L.LatLngExpression, 10);
+      map.setView(bounds[0], 10);
     }
-  }, [markers]);
+  }, [markers, mapReady]);
 
   return (
     <div>

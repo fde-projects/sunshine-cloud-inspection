@@ -11,7 +11,6 @@ import {
   Popconfirm,
   Select,
   Space,
-  Table,
   Tag,
   Typography,
   message,
@@ -30,6 +29,8 @@ import { fetchMyStaffSites, addSiteMember, removeSiteMember, fetchSiteMembers } 
 import { useAuthStore } from '../../stores/auth';
 import type { UserInfo, SiteItem, UserRole, CommonStatus } from '../../types';
 import { isAntValidateError } from '../../utils/ant-form';
+import { chineseErrorMessage } from '../../utils/displayLabels';
+import FillTable, { listTablePagination } from '../../components/FillTable';
 
 function userRolesOf(record: UserInfo): UserRole[] {
   return record.roles?.length ? record.roles : record.role ? [record.role] : [];
@@ -76,6 +77,7 @@ export default function UsersPage() {
   const [data, setData] = useState<UserInfo[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
   const [keyword, setKeyword] = useState('');
   const [role, setRole] = useState<UserRole | undefined>(undefined);
 
@@ -174,7 +176,7 @@ export default function UsersPage() {
     try {
       const res = await fetchStaffingUsers({
         page,
-        limit: 10,
+        limit: pageSize,
         keyword: keyword || undefined,
         role,
       });
@@ -185,10 +187,13 @@ export default function UsersPage() {
       } else {
         setMemberMap({});
       }
+    } catch (error) {
+      const shown = chineseErrorMessage(error instanceof Error ? error.message : error);
+      if (shown) message.error(shown);
     } finally {
       setLoading(false);
     }
-  }, [page, keyword, role, canStaffAsManager, managedSites, loadMemberMap]);
+  }, [page, pageSize, keyword, role, canStaffAsManager, managedSites, loadMemberMap]);
 
   useEffect(() => {
     void loadList();
@@ -477,7 +482,7 @@ export default function UsersPage() {
   ];
 
   return (
-    <div>
+    <div className="admin-fill-page">
       <Alert
         type="info"
         showIcon
@@ -543,13 +548,21 @@ export default function UsersPage() {
         )}
       </Space>
 
-      <Table
+      <FillTable
         rowKey="id"
         loading={loading}
         columns={listColumns}
         dataSource={data}
         scroll={{ x: canStaffAsManager ? 1100 : 900 }}
-        pagination={{ current: page, total, pageSize: 10, onChange: setPage }}
+        pagination={listTablePagination({
+          current: page,
+          total,
+          pageSize,
+          onChange: (p, ps) => {
+            setPage(p);
+            setPageSize(ps);
+          },
+        })}
       />
 
       <Modal

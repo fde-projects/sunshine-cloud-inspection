@@ -1,13 +1,27 @@
 "use client";
 
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import dynamic from 'next/dynamic';
 import { Button, Form, Input, Modal, Select, Space, Tag, message } from 'antd';
 import { AimOutlined, EnvironmentOutlined, SearchOutlined } from '@ant-design/icons';
 import type { FormInstance } from 'antd';
-import MapPicker from '../../components/MapPicker';
 import { geocodeAddress, reverseGeocode } from '../../api/geocode';
 import type { SiteItem } from '../../types';
 import { composeFullAddress, parseChineseAddress } from '../../utils/addressParse';
+
+const MapPicker = dynamic(() => import('../../components/MapPicker'), {
+  ssr: false,
+  loading: () => (
+    <div
+      style={{
+        height: 260,
+        borderRadius: 10,
+        background: '#f5f7f6',
+        border: '1px solid #e8eeea',
+      }}
+    />
+  ),
+});
 
 interface SiteFormModalProps {
   open: boolean;
@@ -48,10 +62,15 @@ export default function SiteFormModal({
 }: SiteFormModalProps) {
   const watchLat = Form.useWatch('latitude', form);
   const watchLng = Form.useWatch('longitude', form);
+  const [mounted, setMounted] = useState(false);
   const [locating, setLocating] = useState(false);
   const [geocoding, setGeocoding] = useState(false);
   const [resolvingAddress, setResolvingAddress] = useState(false);
   const regeoTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   const latNum = watchLat === '' || watchLat == null ? Number.NaN : Number(watchLat);
   const lngNum = watchLng === '' || watchLng == null ? Number.NaN : Number(watchLng);
@@ -86,7 +105,7 @@ export default function SiteFormModal({
             district: addr.district || undefined,
             address: addr.address || addr.displayName,
           });
-          form.setFields([{ name: 'fullAddress', errors: [] }]);
+          void form.validateFields(['fullAddress', 'province', 'city', 'district', 'address']).catch(() => {});
         } else {
           form.setFieldsValue({
             province: addr.province || undefined,
@@ -196,7 +215,7 @@ export default function SiteFormModal({
     }
   }, [form]);
 
-  const handleOk = () => {
+  const handleOk = async () => {
     const full = (form.getFieldValue('fullAddress') as string)?.trim();
     if (!full) {
       message.warning('请填写完整地址，或先点「现场定位」自动匹配');
@@ -209,8 +228,43 @@ export default function SiteFormModal({
       );
       return;
     }
+
+    const lat = form.getFieldValue('latitude');
+    const lng = form.getFieldValue('longitude');
+    const hasCoordsNow =
+      lat !== '' &&
+      lat != null &&
+      lng !== '' &&
+      lng != null &&
+      Number.isFinite(Number(lat)) &&
+      Number.isFinite(Number(lng));
+
+    if (!hasCoordsNow) {
+      try {
+        await locateByAddress();
+      } catch {
+        message.warning('地址未能解析到坐标，请点「地址解析」或在地图上选点');
+        return;
+      }
+      const lat2 = form.getFieldValue('latitude');
+      const lng2 = form.getFieldValue('longitude');
+      if (
+        lat2 === '' ||
+        lat2 == null ||
+        lng2 === '' ||
+        lng2 == null ||
+        !Number.isFinite(Number(lat2)) ||
+        !Number.isFinite(Number(lng2))
+      ) {
+        message.warning('请先点「地址解析」或在地图上选点，确定网格位置');
+        return;
+      }
+    }
+
     onSubmit();
   };
+
+  if (!mounted) return null;
 
   return (
     <Modal
@@ -219,7 +273,7 @@ export default function SiteFormModal({
       onCancel={onCancel}
       onOk={handleOk}
       width={640}
-      forceRender
+      destroyOnHidden
       okText={editing ? '保存' : '创建'}
       cancelText="取消"
     >

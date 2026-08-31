@@ -73,6 +73,12 @@ function toMenuItems(items: MenuConfig[]): MenuProps["items"] {
   });
 }
 
+const PAGE_SCROLL_PATHS = ["/dashboard", "/settings", "/analysis", "/finance/dashboard", "/403", "/income"];
+
+function isPageScrollPath(pathname: string) {
+  return PAGE_SCROLL_PATHS.some((path) => pathname === path || pathname.startsWith(`${path}/`));
+}
+
 export default function AppShell({ children }: { children: React.ReactNode }) {
   const [collapsed, setCollapsed] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -248,7 +254,10 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         </Header>
         <Content className="app-content">
           {!ready && <div className="p-10 text-center">加载中…</div>}
-          <div className="app-content__surface" hidden={!ready}>
+          <div
+            className={`app-content__surface${isPageScrollPath(pathname) ? " is-page-scroll" : ""}`}
+            hidden={!ready}
+          >
             {children}
           </div>
         </Content>

@@ -23,6 +23,29 @@ function tokenOf() {
   return getToken() || localStorage.getItem("accessToken") || "";
 }
 
+let redirectingLogin = false;
+
+function handleUnauthorized(msg: string) {
+  if (typeof window === "undefined") return;
+  const path = window.location.pathname || "";
+  if (path === "/login" || path.startsWith("/m/login") || path === "/") return;
+  if (redirectingLogin) return;
+  redirectingLogin = true;
+  try {
+    // 动态清会话，避免 request ↔ auth 循环依赖
+    void import("@/lib/session").then(({ clearSession }) => clearSession());
+    void import("@/stores/auth").then(({ useAuthStore }) => {
+      useAuthStore.getState().logout();
+    });
+  } catch {
+    /* ignore */
+  }
+  const shown = chineseErrorMessage(msg) || "登录已过期，请重新登录";
+  message.error(shown);
+  const login = path.startsWith("/m") ? "/m/login" : "/login";
+  window.location.replace(login);
+}
+
 function qs(params?: Record<string, unknown>) {
   if (!params) return "";
   const sp = new URLSearchParams();
@@ -80,6 +103,15 @@ async function send<T>(
     const json = (await res.json().catch(() => ({}))) as Envelope<unknown> & { message?: string };
     if (!res.ok || (json.code && json.code >= 400)) {
       const msg = json.message || "请求失败";
+      const unauthorized =
+        res.status === 401 ||
+        json.code === 401 ||
+        msg === "未登录" ||
+        msg.includes("登录已过期");
+      if (unauthorized) {
+        handleUnauthorized(msg);
+        throw Object.assign(new Error(msg), { response: { status: res.status, data: json } });
+      }
       if (!config.skipErrorToast) {
         const shown = chineseErrorMessage(msg);
         if (shown) message.error(shown);

@@ -12,6 +12,7 @@ import {
   Table,
   Tag,
   Timeline,
+  Tooltip,
   message,
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
@@ -32,6 +33,8 @@ import {
 } from '../../api/record';
 import { formatDateTime } from '../../utils/displayLabels';
 import EntryReviewCard from '../../components/EntryReviewCard';
+import FillTable, { listTablePagination } from '../../components/FillTable';
+import { LAYOUT_DEMO_COUNT, padLayoutDemo } from '../../utils/layoutDemo';
 
 const STATUS_MAP: Record<string, { color: string; text: string }> = {
   submitted: { color: 'processing', text: '待审核' },
@@ -74,6 +77,7 @@ export default function AuditPage() {
   const [groups, setGroups] = useState<RecordCaseGroup[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(25);
   const [tab, setTab] = useState<'pending' | 'rejected'>('pending');
 
   const [unitsOpen, setUnitsOpen] = useState(false);
@@ -94,14 +98,32 @@ export default function AuditPage() {
     try {
       const res =
         tab === 'pending'
-          ? await fetchRecordCaseGroups({ page, limit: 10, scope: 'audit' })
-          : await fetchRecordCaseGroups({ page, limit: 10, status: 'rejected' });
-      setGroups(res.list);
-      setTotal(res.total);
+          ? await fetchRecordCaseGroups({ page, limit: pageSize, scope: 'audit' })
+          : await fetchRecordCaseGroups({ page, limit: pageSize, status: 'rejected' });
+      setGroups(
+        padLayoutDemo(res.list, LAYOUT_DEMO_COUNT, (n) => ({
+          groupKey: `layout-demo-audit-${n}`,
+          serviceCaseId: null,
+          gspCaseNo: `LAYOUT-AUD-${String(n).padStart(3, '0')}`,
+          projectName: `【排版预览】验图案例 ${n}`,
+          unitLabel: '台',
+          assignMode: 'single',
+          siteId: null,
+          plannedUnits: 2,
+          completedUnits: 1,
+          caseStatus: 'working',
+          recordCount: 2,
+          pendingCount: tab === 'pending' ? 2 : 0,
+          approvedCount: 0,
+          rejectedCount: tab === 'rejected' ? 2 : 0,
+          latestSubmittedAt: new Date().toISOString(),
+        })),
+      );
+      setTotal(Math.max(res.total, LAYOUT_DEMO_COUNT));
     } finally {
       setLoading(false);
     }
-  }, [page, tab]);
+  }, [page, pageSize, tab]);
 
   useEffect(() => {
     void loadGroups();
@@ -408,13 +430,16 @@ export default function AuditPage() {
       }));
 
   return (
-    <div>
+    <div className="admin-fill-page">
       <Alert
         type="info"
         showIcon
-        style={{ marginBottom: 12 }}
-        message="验图审核与费用结算相互独立"
-        description="本页只审现场照片和 AI 结果，不改金额。网格长可审本网格；结算审核仅管理员。案例号与项目名来自案例主数据；可点「案例」跳转案例管理。AI 全部合格的报告已自动通过，不会出现在待审列表。"
+        closable
+        message={
+          <Tooltip title="本页只审现场照片和 AI 结果，不改金额。网格长可审本网格；结算审核仅管理员。AI 全部合格的报告已自动通过。">
+            <span>验图审核与费用结算相互独立（悬停看说明）</span>
+          </Tooltip>
+        }
       />
       <Space style={{ marginBottom: 16 }}>
         <Button
@@ -437,18 +462,21 @@ export default function AuditPage() {
         </Button>
       </Space>
 
-      <Table
+      <FillTable
         rowKey="groupKey"
         loading={loading}
         columns={groupColumns}
         dataSource={groups}
         scroll={{ x: 'max-content' }}
-        pagination={{
+        pagination={listTablePagination({
           current: page,
           total,
-          pageSize: 10,
-          onChange: setPage,
-        }}
+          pageSize,
+          onChange: (p, ps) => {
+            setPage(p);
+            setPageSize(ps);
+          },
+        })}
       />
 
       <Drawer

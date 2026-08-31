@@ -12,7 +12,6 @@ import {
   Popconfirm,
   Select,
   Space,
-  Table,
   Tag,
   Tooltip,
   Upload,
@@ -35,6 +34,7 @@ import { useAuthStore } from '../../stores/auth';
 import { uploadImage } from '../../api/upload';
 import { displayPhotoUrl } from '../../utils/photo-url';
 import { isAntValidateError } from '../../utils/ant-form';
+import FillTable from '../../components/FillTable';
 
 function emptyEntry(order = 0): TemplateEntry {
   return {
@@ -59,6 +59,8 @@ export default function TemplatesPage() {
 
   const [keyword, setKeyword] = useState('');
   const [searchKeyword, setSearchKeyword] = useState('');
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
   const [loading, setLoading] = useState(false);
   const [list, setList] = useState<TemplateItem[]>([]);
 
@@ -86,6 +88,15 @@ export default function TemplatesPage() {
   useEffect(() => {
     load();
   }, [load]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [searchKeyword]);
+
+  useEffect(() => {
+    const maxPage = Math.max(1, Math.ceil(list.length / pageSize) || 1);
+    if (page > maxPage) setPage(maxPage);
+  }, [list.length, page, pageSize]);
 
   useEffect(() => {
     setModalReady(true);
@@ -357,10 +368,10 @@ export default function TemplatesPage() {
   };
 
   const columns: ColumnsType<TemplateItem> = [
-    { title: '服务类型名称', dataIndex: 'name' },
+    { title: '服务类型名称', dataIndex: 'name', width: '26%', ellipsis: true },
     {
       title: '产品线',
-      width: 280,
+      width: '46%',
       render: (_, r) => {
         const lines = r.productLines || [];
         if (!lines.length) return <span style={{ color: '#bfbfbf' }}>未配置</span>;
@@ -387,11 +398,11 @@ export default function TemplatesPage() {
         </span>
       ),
       dataIndex: 'version',
-      width: 80,
+      width: '10%',
     },
     {
       title: '操作',
-      width: canManage ? 160 : 80,
+      width: '18%',
       render: (_, record) =>
         canManage ? (
           <Space>
@@ -703,7 +714,7 @@ export default function TemplatesPage() {
   );
 
   return (
-    <div>
+    <div className="admin-fill-page">
       <Space wrap style={{ marginBottom: 16 }}>
         <Input.Search
           allowClear
@@ -719,13 +730,24 @@ export default function TemplatesPage() {
           </Button>
         )}
       </Space>
-      <Table
+      <FillTable
         rowKey="id"
+        tableLayout="fixed"
         loading={loading}
         columns={columns}
         dataSource={list}
-        pagination={false}
-        scroll={{ x: 'max-content' }}
+        pagination={{
+          current: page,
+          pageSize,
+          total: list.length,
+          showSizeChanger: true,
+          pageSizeOptions: [10, 20, 50],
+          showTotal: (t) => `共 ${t} 个服务类型`,
+          onChange: (nextPage, nextSize) => {
+            setPage(nextPage);
+            setPageSize(nextSize);
+          },
+        }}
       />
 
       {modalReady ? (

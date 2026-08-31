@@ -2,38 +2,69 @@ import request from '../utils/request';
 import type { ApiResponse } from '../types';
 import { compressImageForUpload } from '../utils/compress-image';
 
-type QiniuToken = {
+type DirectUploadToken = {
+  provider: 'qiniu' | 'tianyi';
+  method: 'POST' | 'PUT';
   token: string;
   domain: string;
   uploadUrl: string;
   bucket?: string;
   key?: string;
+  publicUrl?: string;
+  headers?: Record<string, string>;
+  contentType?: string;
 };
 
-async function fetchQiniuToken(filename: string): Promise<QiniuToken | null> {
+async function fetchUploadToken(
+  filename: string,
+  contentType: string,
+): Promise<DirectUploadToken | null> {
   try {
-    const { data } = await request.get<ApiResponse<QiniuToken>>('/upload/qiniu-token', {
+    const { data } = await request.get<ApiResponse<DirectUploadToken>>('/upload/token', {
       timeout: 10000,
-      params: { filename },
+      params: { filename, contentType },
     });
     const payload = data.data;
-    if (!payload?.token || !payload.domain || !payload.uploadUrl) return null;
+    if (!payload?.uploadUrl || !payload.domain) return null;
+    if (payload.method === 'POST' && !payload.token) return null;
+    if (!payload.key) return null;
     return {
-      token: payload.token,
+      ...payload,
       domain: payload.domain.replace(/\/$/, ''),
-      uploadUrl: payload.uploadUrl,
-      bucket: payload.bucket,
-      key: payload.key,
+      method: payload.method || 'POST',
+      provider: payload.provider || 'qiniu',
+      headers: payload.headers || {},
     };
   } catch {
     return null;
   }
 }
 
-/** 浏览器直传七牛，避免大图绕行 Vercel 函数。 */
-async function uploadDirectToQiniu(file: File, tokenInfo: QiniuToken) {
+/** 浏览器直传对象存储，避免大图绕行服务端。 */
+async function uploadDirect(file: File, tokenInfo: DirectUploadToken) {
   const key = tokenInfo.key;
   if (!key) throw new Error('上传凭证缺少文件名');
+
+  if (tokenInfo.method === 'PUT') {
+    const resp = await fetch(tokenInfo.uploadUrl, {
+      method: 'PUT',
+      headers: {
+        ...(tokenInfo.headers || {}),
+        'Content-Type':
+          tokenInfo.contentType || file.type || 'application/octet-stream',
+      },
+      body: file,
+    });
+    if (!resp.ok) {
+      const text = await resp.text().catch(() => '');
+      throw new Error(`直传失败: ${resp.status} ${text}`);
+    }
+    return {
+      url: tokenInfo.publicUrl || `${tokenInfo.domain}/${key}`,
+      objectName: key,
+    };
+  }
+
   const form = new FormData();
   form.append('token', tokenInfo.token);
   form.append('key', key);
@@ -48,23 +79,27 @@ async function uploadDirectToQiniu(file: File, tokenInfo: QiniuToken) {
     throw new Error(`直传失败: ${resp.status} ${text}`);
   }
   return {
-    url: `${tokenInfo.domain}/${key}`,
+    url: tokenInfo.publicUrl || `${tokenInfo.domain}/${key}`,
     objectName: key,
   };
 }
 
-/** 上传图片（模板样本图、巡检原图等）：先压缩，优先直传七牛。 */
+/** 上传图片（模板样本图、巡检原图等）：先压缩，优先直传对象存储。 */
 export async function uploadImage(
   file: File,
   meta?: { siteName?: string; serialNumber?: string },
 ) {
   const compressed = await compressImageForUpload(file);
-  const tokenInfo = await fetchQiniuToken(compressed.name || file.name || 'photo.jpg');
+  const contentType = compressed.type || 'image/jpeg';
+  const tokenInfo = await fetchUploadToken(
+    compressed.name || file.name || 'photo.jpg',
+    contentType,
+  );
   if (tokenInfo) {
     try {
-      return await uploadDirectToQiniu(compressed, tokenInfo);
+      return await uploadDirect(compressed, tokenInfo);
     } catch (error) {
-      console.warn('七牛直传失败，回退服务端上传', error);
+      console.warn('对象存储直传失败，回退服务端上传', error);
     }
   }
 

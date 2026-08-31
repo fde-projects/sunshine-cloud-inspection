@@ -13,6 +13,7 @@ import {
   Table,
   Tabs,
   Tag,
+  Tooltip,
   message,
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
@@ -20,6 +21,8 @@ import { fetchPendingExpenses, reviewExpense } from '../../../api/finance';
 import { displayPhotoUrl } from '../../../utils/photo-url';
 import { useDrawerWidth } from '../../../hooks/useDrawerWidth';
 import DayDatePicker from '../../../components/DayDatePicker';
+import FillTable from '../../../components/FillTable';
+import { LAYOUT_DEMO_COUNT, padLayoutDemo } from '../../../utils/layoutDemo';
 
 export type ExpenseReviewItem = {
   id: string;
@@ -275,12 +278,52 @@ export default function ExpenseReviewPanel({ onChanged }: Props) {
   const load = useCallback(async () => {
     setLoading(true);
     try {
+      const list = (await fetchPendingExpenses({
+        status: tab,
+        keyword: keyword.trim() || undefined,
+        month: month || undefined,
+      })) as ExpenseReviewItem[];
+      const status =
+        tab === 'approved' ? 'approved' : tab === 'rejected' ? 'rejected' : 'submitted';
       setRows(
-        (await fetchPendingExpenses({
-          status: tab,
-          keyword: keyword.trim() || undefined,
-          month: month || undefined,
-        })) as ExpenseReviewItem[],
+        padLayoutDemo(list, LAYOUT_DEMO_COUNT, (n) => {
+          const claim = 80 + n * 7;
+          return {
+            id: `layout-demo-expense-${n}`,
+            serviceCaseId: `layout-demo-case-${n}`,
+            gspCaseNo: `LAYOUT-EXP-${String(n).padStart(3, '0')}`,
+            projectName: `【排版预览】报销案例 ${n}`,
+            inspectorId: `layout-demo-insp-${n}`,
+            inspectorName: `预览工程师${n}`,
+            completedUnits: (n % 3) + 1,
+            unitLabel: '台',
+            amount: String(claim),
+            claimAmount: String(claim),
+            caseExpenseTotal: String(claim + 50),
+            note: `排版预览行程说明 ${n}`,
+            tripSkipped: n % 5 === 0,
+            mileageKm: n % 5 === 0 ? null : String(12 + (n % 40)),
+            startMileage: n % 5 === 0 ? null : String(1000 + n * 10),
+            endMileage: n % 5 === 0 ? null : String(1012 + n * 10),
+            voucherUrls: [],
+            lineItems:
+              n % 5 === 0
+                ? []
+                : [
+                    {
+                      type: 'trip',
+                      content: '往返现场',
+                      startMileage: 1000 + n * 10,
+                      endMileage: 1012 + n * 10,
+                      mileageKm: 12 + (n % 40),
+                      amount: claim,
+                    },
+                  ],
+            status,
+            month: month || new Date().toISOString().slice(0, 7),
+            createdAt: new Date().toISOString(),
+          };
+        }),
       );
     } finally {
       setLoading(false);
@@ -451,24 +494,28 @@ export default function ExpenseReviewPanel({ onChanged }: Props) {
   ];
 
   return (
-    <div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, marginBottom: 8 }}>
-        <p style={{ color: '#61756b', margin: 0 }}>
-          按工程师审核。每人每案例一条报销单，可含多条费用明细（行程、过路费等）；工程师可在作业详情按需填报。案例完工后，已提交的报销才会进入待审。申报金额可改核定（如报100核定80）；通过后以核定金额计入月结。里程差按行程段合计，仅供参考。
-        </p>
-        <Button onClick={() => void load()} loading={loading}>
-          刷新
-        </Button>
-      </div>
+    <div className="admin-fill-page finance-expense-review">
       <Tabs
+        size="small"
+        className="finance-review-status-tabs"
         activeKey={tab}
         onChange={(key) => setTab(key as ExpenseTab)}
         items={(Object.keys(tabLabel) as ExpenseTab[]).map((key) => ({
           key,
           label: tabLabel[key],
         }))}
+        tabBarExtraContent={
+          <Button size="small" onClick={() => void load()} loading={loading}>
+            刷新
+          </Button>
+        }
       />
-      <Space wrap style={{ marginBottom: 12 }}>
+      <div className="finance-review-tip">
+        <Tooltip title="按工程师审核。每人每案例一条报销单，可含多条费用明细；案例完工后已提交的报销才进入待审。申报可改核定，通过后计入月结。">
+          <span>按工程师审核报销；申报可改核定（悬停看说明）</span>
+        </Tooltip>
+      </div>
+      <Space className="finance-toolbar" wrap>
         <Input.Search
           allowClear
           placeholder="案例号 / 项目 / 说明"
@@ -487,13 +534,13 @@ export default function ExpenseReviewPanel({ onChanged }: Props) {
           style={{ width: 160 }}
         />
       </Space>
-      <Table
+      <FillTable
         rowKey="id"
         loading={loading}
         columns={columns}
         dataSource={rows}
         scroll={{ x: 1400 }}
-        pagination={{ pageSize: 20 }}
+        pagination={{ pageSize: 25 }}
         locale={{ emptyText }}
       />
 

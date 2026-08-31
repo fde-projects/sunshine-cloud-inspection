@@ -221,7 +221,7 @@ export default function AnalysisPage() {
         <Col xs={24} sm={8}>
           <Card title="任务完成率">
             <div style={{ fontSize: 36, fontWeight: 700, color: '#2bb673' }}>
-              {completion?.completionRate ?? 0}%
+              {completion?.totalTasks ? `${completion.completionRate}%` : '暂无'}
             </div>
             <div style={{ color: '#888', marginTop: 8 }}>
               {completion?.completedTasks ?? 0} / {completion?.totalTasks ?? 0} 任务已完成
@@ -231,7 +231,7 @@ export default function AnalysisPage() {
         <Col xs={24} sm={8}>
           <Card title="巡检合格率">
             <div style={{ fontSize: 36, fontWeight: 700, color: '#16835f' }}>
-              {defects?.passRate ?? 0}%
+              {defects?.totalEntries ? `${defects.passRate}%` : '暂无'}
             </div>
             <div style={{ color: '#888', marginTop: 8 }}>
               不合格 {defects?.failCount ?? 0} / 共 {defects?.totalEntries ?? 0} 个检查项

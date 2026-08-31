@@ -14,7 +14,6 @@ import {
   Select,
   Space,
   Switch,
-  Table,
   Tag,
   Typography,
   Upload,
@@ -58,9 +57,11 @@ import {
   sanitizePassViews,
   sanitizeViewLabel,
 } from '../../lib/hard-rule-match';
+import { LAYOUT_DEMO_COUNT, padLayoutDemo } from '../../utils/layoutDemo';
 import { composeHardRulePrompt, hydrateCriteriaFromPrompt } from '../../lib/hard-rule-prompt';
 import { displayPhotoUrl } from '../../utils/photo-url';
 import { isAntValidateError } from '../../utils/ant-form';
+import FillTable from '../../components/FillTable';
 
 const ENFORCE_MODE_LABEL: Record<string, string> = {
   strict: '严格（拿不准判不合格）',
@@ -307,7 +308,24 @@ export default function HardRulesPage() {
     setLoading(true);
     try {
       const [rules, items] = await Promise.all([fetchHardRules(), fetchHardRuleCatalog()]);
-      setList(rules);
+      setList(
+        padLayoutDemo(rules, LAYOUT_DEMO_COUNT, (n) => ({
+          id: `layout-demo-rule-${n}`,
+          code: `layout_demo_${String(n).padStart(2, '0')}`,
+          name: `【排版预览】硬规则 ${n}`,
+          matchMode: 'entry_name',
+          matchPattern: `预览条目${n}`,
+          promptText: '排版预览用规则，可忽略。',
+          jsonSchemaHint: null,
+          enabled: n % 4 !== 0,
+          enforceMode: 'soft',
+          version: 1,
+          changeNote: 'layout demo',
+          updatedBy: null,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        })),
+      );
       setCatalog(items);
     } finally {
       setLoading(false);
@@ -761,8 +779,9 @@ export default function HardRulesPage() {
   );
 
   return (
-    <div>
+    <div className="admin-fill-page">
       <Card
+        className="admin-fill-page"
         title="AI 硬规则"
         extra={
           <Space>
@@ -778,7 +797,7 @@ export default function HardRulesPage() {
         <Typography.Paragraph type="secondary" style={{ marginTop: 0 }}>
           按检查项配置：选哪一项，就管哪一项。合格样最多 4 张，每张底下有短名字；挂几种，现场就要对上几种。不合格样最多 2 张。服务类型里有几张示范，现场就必须拍几张。人工确认后统计近 30 天符合率。改规则只影响<strong>新发起的分析</strong>。
         </Typography.Paragraph>
-        <Table
+        <FillTable
           rowKey="code"
           loading={loading}
           columns={columns}

@@ -6,7 +6,7 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 16px;
+  margin-bottom: 2px;
 }
 .finance-heading h2 {
   margin: 0;
@@ -16,8 +16,9 @@
   letter-spacing: -0.02em;
 }
 .finance-heading p {
-  margin: 6px 0 0;
+  margin: 2px 0 0;
   color: #87958f;
+  font-size: 13px;
 }
 .finance-phase {
   padding: 5px 12px;
@@ -28,17 +29,69 @@
 }
 .finance-toolbar {
   display: flex;
-  gap: 10px;
+  gap: 8px;
   flex-wrap: wrap;
-  margin-bottom: 16px;
+  align-items: center;
+  margin-bottom: 10px;
+}
+.finance-toolbar .ant-input-search {
+  width: 240px;
+  max-width: 100%;
+  flex: 0 0 auto;
 }
 .finance-toolbar .ant-input,
 .finance-toolbar .ant-select {
-  min-width: 150px;
+  min-width: 132px;
+  flex: 0 0 auto;
 }
 .finance-card {
   border: 0 !important;
   box-shadow: 0 8px 30px rgba(25, 82, 65, 0.07);
+}
+.finance-card.admin-fill-page > .ant-card-body {
+  padding-top: 6px;
+  padding-bottom: 6px;
+}
+
+/* 结算审核：压紧标题区，表格多露几行 */
+.finance-shell:has(.finance-review-page) .finance-heading {
+  margin-bottom: 0;
+}
+.finance-shell:has(.finance-review-page) .finance-heading h2 {
+  font-size: 18px;
+  line-height: 1.2;
+}
+.finance-shell:has(.finance-review-page) .finance-heading p {
+  margin-top: 0;
+  font-size: 12px;
+  line-height: 1.3;
+}
+.finance-shell:has(.finance-review-page) .finance-phase {
+  padding: 3px 10px;
+  font-size: 12px;
+}
+
+.finance-review-page .finance-review-scope-tabs.ant-tabs,
+.finance-review-page .finance-review-status-tabs.ant-tabs,
+.finance-expense-review .finance-review-status-tabs.ant-tabs {
+  margin-bottom: 0;
+}
+.finance-review-page .finance-review-scope-tabs .ant-tabs-nav,
+.finance-review-page .finance-review-status-tabs .ant-tabs-nav,
+.finance-expense-review .finance-review-status-tabs .ant-tabs-nav {
+  margin-bottom: 4px !important;
+}
+.finance-review-page .finance-review-tip,
+.finance-expense-review .finance-review-tip {
+  margin: 0 0 6px;
+  color: #87958f;
+  font-size: 12px;
+  line-height: 1.35;
+  cursor: help;
+}
+.finance-review-page .finance-toolbar,
+.finance-expense-review .finance-toolbar {
+  margin-bottom: 6px;
 }
 .finance-money {
   font-variant-numeric: tabular-nums;

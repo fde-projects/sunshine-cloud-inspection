@@ -41,6 +41,8 @@ import { useAuthStore } from '../../stores/auth';
 import { displayPhotoUrl } from '../../utils/photo-url';
 import { formatDateTime } from '../../utils/displayLabels';
 import EntryReviewCard from '../../components/EntryReviewCard';
+import FillTable, { listTablePagination } from '../../components/FillTable';
+import { LAYOUT_DEMO_COUNT, padLayoutDemo } from '../../utils/layoutDemo';
 
 const STATUS_MAP: Record<string, { color: string; text: string }> = {
   submitted: { color: 'processing', text: '待审核' },
@@ -128,6 +130,7 @@ export default function RecordsPage() {
   const [groups, setGroups] = useState<RecordCaseGroup[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(25);
   const [siteId, setSiteId] = useState<string | undefined>(
     searchParams.get('siteId') || undefined,
   );
@@ -223,15 +226,33 @@ export default function RecordsPage() {
       const res = await fetchRecordCaseGroups({
         ...filterParams(),
         page,
-        limit: 10,
+        limit: pageSize,
       });
-      setGroups(res.list);
-      setTotal(res.total);
+      setGroups(
+        padLayoutDemo(res.list, LAYOUT_DEMO_COUNT, (n) => ({
+          groupKey: `layout-demo-hist-${n}`,
+          serviceCaseId: null,
+          gspCaseNo: `LAYOUT-HIS-${String(n).padStart(3, '0')}`,
+          projectName: `【排版预览】历史案例 ${n}`,
+          unitLabel: '台',
+          assignMode: 'single',
+          siteId: null,
+          plannedUnits: 3,
+          completedUnits: 2,
+          caseStatus: 'finished',
+          recordCount: 3,
+          pendingCount: 0,
+          approvedCount: 2,
+          rejectedCount: 1,
+          latestSubmittedAt: new Date().toISOString(),
+        })),
+      );
+      setTotal(Math.max(res.total, LAYOUT_DEMO_COUNT));
     } finally {
       setLoading(false);
       setListReady(true);
     }
-  }, [page, filterParams]);
+  }, [page, pageSize, filterParams]);
 
   useEffect(() => {
     void load();
@@ -519,38 +540,31 @@ export default function RecordsPage() {
         const caseDone = ['finished', 'settle_review', 'settled', 'month_locked'].includes(
           String(row.caseStatus || ''),
         );
+        const extra = caseDone
+          ? '案例已结案'
+          : doneByPlan
+            ? '台数已齐'
+            : planned != null && submitted < planned
+              ? `未交 ${planned - submitted} ${unit}`
+              : '';
         return (
-          <div style={{ lineHeight: 1.35 }}>
-            <Tooltip title="当前筛选下已提交报告数 / 案例计划台数">
-              <span>
-                {planned != null ? (
-                  <>
-                    <span style={{ fontWeight: 600 }}>{submitted}</span>
-                    <span style={{ color: '#8c8c8c' }}> / {planned} {unit}</span>
-                  </>
-                ) : (
+          <Tooltip title={['已提交 / 计划台数', extra].filter(Boolean).join(' · ')}>
+            <span>
+              {planned != null ? (
+                <>
                   <span style={{ fontWeight: 600 }}>{submitted}</span>
-                )}
-              </span>
-            </Tooltip>
-            {caseDone ? (
-              <div>
-                <Tag color="success" style={{ marginTop: 4 }}>
-                  案例已结案
+                  <span style={{ color: '#8c8c8c' }}> / {planned} {unit}</span>
+                </>
+              ) : (
+                <span style={{ fontWeight: 600 }}>{submitted}</span>
+              )}
+              {extra ? (
+                <Tag color={caseDone ? 'success' : doneByPlan ? 'blue' : 'default'} style={{ marginLeft: 6 }}>
+                  {extra}
                 </Tag>
-              </div>
-            ) : doneByPlan ? (
-              <div>
-                <Tag color="blue" style={{ marginTop: 4 }}>
-                  台数已齐
-                </Tag>
-              </div>
-            ) : planned != null && submitted < planned ? (
-              <div style={{ marginTop: 2, color: '#8c8c8c', fontSize: 12 }}>
-                未交 {planned - submitted} {unit}
-              </div>
-            ) : null}
-          </div>
+              ) : null}
+            </span>
+          </Tooltip>
         );
       },
     },
@@ -659,11 +673,11 @@ export default function RecordsPage() {
       }));
 
   return (
-    <div>
-      <p style={{ color: '#666', marginBottom: 12 }}>
-        按案例汇总已提交报告。点进案例可查看全部单元（含通过/驳回/待审）；审核仍在「验图审核」按单条处理。
+    <div className="admin-fill-page">
+      <p style={{ color: '#666', marginBottom: 8 }}>
+        按案例汇总已提交报告。点进案例看单元；审核仍在「验图审核」。
       </p>
-      <Space wrap style={{ marginBottom: 16 }}>
+      <Space wrap style={{ marginBottom: 10 }}>
         <Input
           allowClear
           placeholder="案例号/项目/任务"
@@ -757,13 +771,21 @@ export default function RecordsPage() {
         <Button onClick={() => void handleExport()}>导出表格</Button>
       </Space>
 
-      <Table
+      <FillTable
         rowKey="groupKey"
         loading={loading}
         columns={groupColumns}
         dataSource={groups}
         scroll={{ x: 'max-content' }}
-        pagination={{ current: page, total, pageSize: 10, onChange: setPage }}
+        pagination={listTablePagination({
+          current: page,
+          total,
+          pageSize,
+          onChange: (p, ps) => {
+            setPage(p);
+            setPageSize(ps);
+          },
+        })}
       />
 
       <Drawer

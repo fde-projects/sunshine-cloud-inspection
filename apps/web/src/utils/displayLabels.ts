@@ -89,6 +89,10 @@ export function chineseErrorMessage(value: unknown, fallback = '操作失败，�
   ) {
     return '服务暂时不可用，请稍后重试';
   }
+  if (/uniqueness|duplicate key|unique constraint/i.test(raw)) {
+    if (/sites_code|code_key/i.test(raw)) return '该网格编码已存在，请换一个';
+    return '该记录已存在，请勿重复提交';
+  }
   if (/unauthorized|invalid token|jwt/i.test(raw)) return '登录已过期，请重新登录';
   if (/forbidden|permission denied/i.test(raw)) return '暂无操作权限';
   if (/not found/i.test(raw)) return '请求的数据不存在';

@@ -1,15 +1,18 @@
 "use client";
 
 import { useEffect, useMemo, useState } from 'react';
+import dynamic from 'next/dynamic';
 import { Card, Col, Row, Statistic, Table, Button, Space } from 'antd';
 import { useNavigate } from 'react-router-dom';
 import ReactECharts from 'echarts-for-react';
 import { fetchAdminDashboard, fetchSiteDashboard, type DashboardData } from '../../api/stats';
 import { useAuthStore } from '../../stores/auth';
-import SiteMapView from '../../components/SiteMapView';
+
 import './dashboard.css';
 import { DEVICE_TYPE_LABEL } from '../../types';
 import { formatDateTime } from '../../utils/displayLabels';
+
+const SiteMapView = dynamic(() => import('../../components/SiteMapView'), { ssr: false });
 
 type StatItem = {
   key: string;

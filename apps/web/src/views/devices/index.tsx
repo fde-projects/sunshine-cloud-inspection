@@ -37,6 +37,7 @@ import {
 import { fetchSites } from '../../api/site';
 import type { DeviceItem, SiteItem, DeviceType } from '../../types';
 import { DEVICE_TYPE_LABEL } from '../../types';
+import FillTable, { listTablePagination } from '../../components/FillTable';
 import { RECORD_STATUS_LABEL, TASK_STATUS_LABEL, formatDateTime } from '../../utils/displayLabels';
 import { isAntValidateError } from '../../utils/ant-form';
 
@@ -46,6 +47,7 @@ export default function DevicesPage() {
   const [data, setData] = useState<DeviceItem[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
   const [siteId, setSiteId] = useState<string>();
   const [deviceType, setDeviceType] = useState<DeviceType>();
   const [serialNumber, setSerialNumber] = useState('');
@@ -71,7 +73,7 @@ export default function DevicesPage() {
     try {
       const res = await fetchDevices({
         page,
-        limit: 10,
+        limit: pageSize,
         siteId,
         deviceType,
         serialNumber: serialNumber || undefined,
@@ -81,7 +83,7 @@ export default function DevicesPage() {
     } finally {
       setLoading(false);
     }
-  }, [page, siteId, deviceType, serialNumber]);
+  }, [page, pageSize, siteId, deviceType, serialNumber]);
 
   useEffect(() => {
     loadSites();
@@ -251,7 +253,7 @@ export default function DevicesPage() {
   ];
 
   return (
-    <div>
+    <div className="admin-fill-page">
       <Space style={{ marginBottom: 16 }} wrap>
         <Select
           allowClear
@@ -298,13 +300,21 @@ export default function DevicesPage() {
         </Upload>
       </Space>
 
-      <Table
+      <FillTable
         rowKey="id"
         loading={loading}
         columns={columns}
         dataSource={data}
         scroll={{ x: 1100 }}
-        pagination={{ current: page, total, pageSize: 10, onChange: setPage }}
+        pagination={listTablePagination({
+          current: page,
+          total,
+          pageSize,
+          onChange: (p, ps) => {
+            setPage(p);
+            setPageSize(ps);
+          },
+        })}
       />
 
       <Modal

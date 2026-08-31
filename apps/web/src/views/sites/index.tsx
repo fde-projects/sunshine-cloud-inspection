@@ -34,13 +34,17 @@ import {
   fetchSiteMembers,
   addSiteMember,
   removeSiteMember,
+  isSiteCodeTaken,
   type SiteMemberItem,
 } from '../../api/site';
 import { fetchStaffingUsers } from '../../api/user';
 import type { SiteItem, UserInfo } from '../../types';
 import SiteFormModal from './SiteFormModal';
 import { composeFullAddress } from '../../utils/addressParse';
+import { isAntValidateError } from '../../utils/ant-form';
+import { chineseErrorMessage } from '../../utils/displayLabels';
 import { useAuthStore } from '../../stores/auth';
+import FillTable, { listTablePagination } from '../../components/FillTable';
 
 /** 网格管理：管理员任命正网格长；正网格长管理副网格长与工程师 */
 export default function SitesPage() {
@@ -51,6 +55,7 @@ export default function SitesPage() {
   const [data, setData] = useState<SiteItem[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
   const [keyword, setKeyword] = useState('');
   const [province, setProvince] = useState('');
   const [city, setCity] = useState('');
@@ -79,7 +84,7 @@ export default function SitesPage() {
     try {
       const res = await fetchSites({
         page,
-        limit: 10,
+        limit: pageSize,
         keyword: keyword || undefined,
         province: province || undefined,
         city: city || undefined,
@@ -87,10 +92,13 @@ export default function SitesPage() {
       });
       setData(res.list);
       setTotal(res.total);
+    } catch (error) {
+      const shown = chineseErrorMessage(error instanceof Error ? error.message : error);
+      if (shown) message.error(shown);
     } finally {
       setLoading(false);
     }
-  }, [page, keyword, province, city, status]);
+  }, [page, pageSize, keyword, province, city, status]);
 
   useEffect(() => {
     load();
@@ -115,12 +123,18 @@ export default function SitesPage() {
   const submit = async () => {
     try {
       const values = await form.validateFields();
-      if (values.latitude == null || values.longitude == null) {
-        message.warning('请先点击「现场定位」或「地址解析」确定网格位置');
+      if (values.latitude == null || values.latitude === '' || values.longitude == null || values.longitude === '') {
+        message.warning('请先点「地址解析」或在地图上选点，确定网格位置');
+        return;
+      }
+      const code = String(values.code || '').trim();
+      if (await isSiteCodeTaken(code, editing?.id)) {
+        message.error('该网格编码已存在，请换一个');
         return;
       }
       const payload = {
         ...values,
+        code,
         latitude: Number(values.latitude),
         longitude: Number(values.longitude),
       };
@@ -136,8 +150,14 @@ export default function SitesPage() {
       }
       setModalOpen(false);
       load();
-    } catch {
-      /* 校验失败 */
+    } catch (error) {
+      if (isAntValidateError(error)) {
+        const first = (error as { errorFields: { errors?: string[] }[] }).errorFields[0]?.errors?.[0];
+        if (first) message.warning(first);
+        return;
+      }
+      const shown = chineseErrorMessage(error instanceof Error ? error.message : error);
+      if (shown) message.error(shown);
     }
   };
 
@@ -309,7 +329,7 @@ export default function SitesPage() {
   ];
 
   return (
-    <div>
+    <div className="admin-fill-page">
       <Space style={{ marginBottom: 12 }} wrap>
         <Input.Search
           placeholder="搜索名称/编码/地区"
@@ -371,19 +391,22 @@ export default function SitesPage() {
           : `管理员任命正网格长；正网格长在本网格设立副网格长与工程师。一网格一名正网格长，工程师可跨网格。`}
       </Typography.Paragraph>
 
-      <Table
+      <FillTable
         rowKey="id"
         loading={loading}
         columns={columns}
         dataSource={data}
         scroll={{ x: 1100 }}
-        pagination={{
+        pagination={listTablePagination({
           current: page,
           total,
-          pageSize: 10,
-          showTotal: (t) => `共 ${t} 个电站`,
-          onChange: setPage,
-        }}
+          pageSize,
+          itemLabel: '个电站',
+          onChange: (p, ps) => {
+            setPage(p);
+            setPageSize(ps);
+          },
+        })}
       />
 
       <SiteFormModal

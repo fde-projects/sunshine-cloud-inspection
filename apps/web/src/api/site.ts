@@ -139,6 +139,18 @@ export async function fetchSites(params: SiteQuery = {}): Promise<Paginated<Site
   };
 }
 
+export async function isSiteCodeTaken(code: string, excludeId?: string): Promise<boolean> {
+  const trimmed = String(code || "").trim();
+  if (!trimmed) return false;
+  const data = await gql<{ sites: { id: string }[] }>(
+    `query ($code: String!) {
+      sites(where: { code: { _eq: $code } }, limit: 2) { id }
+    }`,
+    { code: trimmed },
+  );
+  return data.sites.some((row) => row.id !== excludeId);
+}
+
 export async function createSite(payload: Record<string, unknown>): Promise<SiteItem> {
   const obj = {
     name: payload.name,

@@ -53,6 +53,7 @@ import {
 import { formatDateTime } from '../../../utils/displayLabels';
 import type { ColumnsType } from 'antd/es/table';
 import RecordDetailDrawer from '../../../components/RecordDetailDrawer';
+import FillTable, { listTablePagination } from '../../../components/FillTable';
 import { fetchSiteMembers, fetchSites } from '../../../api/site';
 import { fetchTemplates, type TemplateItem } from '../../../api/template';
 import type { FinanceCase, FinanceInspectorOption } from '../../../types/finance';
@@ -215,6 +216,7 @@ export default function FinanceCasesPage() {
   const [data, setData] = useState<FinanceCase[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
   const [keyword, setKeyword] = useState(() => searchParams.get('keyword') || '');
   const [status, setStatus] = useState<string>();
   const [province, setProvince] = useState<string>();
@@ -431,7 +433,7 @@ export default function FinanceCasesPage() {
     try {
       const r = await fetchFinanceCases({
         page,
-        limit: 10,
+        limit: pageSize,
         keyword,
         status,
         province,
@@ -447,7 +449,7 @@ export default function FinanceCasesPage() {
     } finally {
       setLoading(false);
     }
-  }, [page, keyword, status, province, city, siteBind, filterSiteId, filterTaskType, dateFrom, dateTo]);
+  }, [page, pageSize, keyword, status, province, city, siteBind, filterSiteId, filterTaskType, dateFrom, dateTo]);
 
   useEffect(() => {
     void load();
@@ -512,226 +514,243 @@ export default function FinanceCasesPage() {
   };
 
   return (
-    <Card className="finance-card">
+    <Card className="finance-card admin-fill-page">
       <Alert
         type="info"
         showIcon
-        style={{ marginBottom: 12 }}
-        message={admin ? '管理员：分配/改派网格；可协助设服务类型与派单' : '网格长：设服务类型、派单与改派工程师'}
-        description={
-          admin
-            ? '建议批量：按省份/城市筛选 → 勾选未分配案例 → 批量分配网格 → 设服务类型 → 再批量派单（须同一网格）。改网格会清空全部原派单（须新网格重派）；设类型仅开工前可改；改工程师支持换人/加人/撤回（有完成进度或报告已交不可改）。'
-            : '仅显示管理员已分配到本网格的案例。设类型仅开工前可改；改工程师支持换人/加人/撤回；报告已提交后不可改派。'
+        closable
+        message={
+          <Tooltip
+            title={
+              admin
+                ? '建议批量：按省份/城市筛选 → 勾选未分配案例 → 批量分配网格 → 设服务类型 → 再批量派单（须同一网格）。改网格会清空全部原派单；设类型仅开工前可改；改工程师支持换人/加人/撤回。'
+                : '仅显示已分配到本网格的案例。设类型仅开工前可改；改工程师支持换人/加人/撤回；报告已提交后不可改派。'
+            }
+          >
+            <span>
+              {admin
+                ? '管理员：分配/改派网格，可协助设服务类型与派单（悬停看流程）'
+                : '网格长：设服务类型、派单与改派工程师（悬停看说明）'}
+            </span>
+          </Tooltip>
         }
       />
       <div className="finance-toolbar">
-        <Input.Search
-          allowClear
-          placeholder="案例号或项目名称"
-          onSearch={(v) => {
-            setPage(1);
-            setKeyword(v);
-          }}
-        />
-        <Select
-          allowClear
-          showSearch
-          optionFilterProp="label"
-          placeholder="省份"
-          value={province}
-          onChange={(v) => {
-            setPage(1);
-            setProvince(v);
-            setCity(undefined);
-            setFilterSiteId(undefined);
-            setSelectedRowKeys([]);
-          }}
-          options={provinces.map((p) => ({ value: p, label: p }))}
-        />
-        <Select
-          allowClear
-          showSearch
-          optionFilterProp="label"
-          placeholder="城市"
-          value={city}
-          disabled={!province}
-          onChange={(v) => {
-            setPage(1);
-            setCity(v);
-            setFilterSiteId(undefined);
-            setSelectedRowKeys([]);
-          }}
-          options={cityOptions.map((c) => ({ value: c, label: c }))}
-        />
-        {admin && (
+          <Input.Search
+            allowClear
+            placeholder="案例号或项目名称"
+            style={{ width: 240 }}
+            onSearch={(v) => {
+              setPage(1);
+              setKeyword(v);
+            }}
+          />
           <Select
             allowClear
-            placeholder="网格归属"
-            value={siteBind}
+            showSearch
+            optionFilterProp="label"
+            placeholder="省份"
+            value={province}
             onChange={(v) => {
               setPage(1);
-              setSiteBind(v);
+              setProvince(v);
+              setCity(undefined);
+              setFilterSiteId(undefined);
               setSelectedRowKeys([]);
             }}
-            options={[
-              { value: 'unassigned', label: '未分配网格' },
-              { value: 'assigned_site', label: '已分配网格' },
-            ]}
+            options={provinces.map((p) => ({ value: p, label: p }))}
           />
-        )}
-        <Select
-          allowClear
-          placeholder="派单状态"
-          value={status}
-          onChange={(v) => {
-            setPage(1);
-            setStatus(v);
-            setSelectedRowKeys([]);
-          }}
-          options={Object.entries(dispatchStatusLabel).map(([value, label]) => ({
-            value,
-            label,
-          }))}
-        />
-        <Select
-          allowClear
-          showSearch
-          optionFilterProp="label"
-          placeholder="筛选网格"
-          value={filterSiteId}
-          onChange={(v) => {
-            setPage(1);
-            setFilterSiteId(v);
-            setSelectedRowKeys([]);
-          }}
-          options={sitesInLocation.map((s) => ({
-            value: s.id,
-            label: `${s.name}${s.manager?.realName ? `（${s.manager.realName}）` : ''}`,
-          }))}
-        />
-        <Select
-          allowClear
-          showSearch
-          optionFilterProp="label"
-          placeholder="服务类型"
-          style={{ width: 160 }}
-          value={filterTaskType}
-          onChange={(v) => {
-            setPage(1);
-            setFilterTaskType(v);
-            setSelectedRowKeys([]);
-          }}
-          options={taskTypes.map((t) => ({ value: t.id, label: t.name }))}
-        />
-        <Input
-          type="date"
-          value={dateFrom}
-          onChange={(e) => {
-            setPage(1);
-            setDateFrom(e.target.value);
-          }}
-          title="起始日期（完工/创建）"
-          style={{ width: 150 }}
-        />
-        <span style={{ color: '#888' }}>至</span>
-        <Input
-          type="date"
-          value={dateTo}
-          onChange={(e) => {
-            setPage(1);
-            setDateTo(e.target.value);
-          }}
-          title="结束日期（完工/创建）"
-          style={{ width: 150 }}
-        />
-        <Button
-          icon={<DownloadOutlined />}
-          loading={exporting}
-          onClick={() => {
-            void (async () => {
-              setExporting(true);
-              try {
-                const ids = selectedRowKeys.map(String);
-                await exportFinanceCases(
-                  ids.length
-                    ? { ids }
-                    : {
-                        keyword: keyword || undefined,
-                        status,
-                        province,
-                        city,
-                        siteBind,
-                        siteId: filterSiteId,
-                        taskType: filterTaskType,
-                        dateFrom: dateFrom || undefined,
-                        dateTo: dateTo || undefined,
-                      },
-                );
-                message.success(ids.length ? `已导出勾选 ${ids.length} 条` : '已按当前筛选导出');
-              } catch (error) {
-                message.error(error instanceof Error ? error.message : '导出失败');
-              } finally {
-                setExporting(false);
-              }
-            })();
-          }}
-        >
-          {selectedRowKeys.length ? `导出勾选 (${selectedRowKeys.length})` : '导出 Excel'}
-        </Button>
-        {admin && (
-          <>
-            <Button
-              icon={<DownloadOutlined />}
-              onClick={() => {
-                void downloadFinanceImportTemplate('gsp').catch(() => undefined);
+          <Select
+            allowClear
+            showSearch
+            optionFilterProp="label"
+            placeholder="城市"
+            value={city}
+            disabled={!province}
+            onChange={(v) => {
+              setPage(1);
+              setCity(v);
+              setFilterSiteId(undefined);
+              setSelectedRowKeys([]);
+            }}
+            options={cityOptions.map((c) => ({ value: c, label: c }))}
+          />
+          {admin && (
+            <Select
+              allowClear
+              placeholder="网格归属"
+              value={siteBind}
+              onChange={(v) => {
+                setPage(1);
+                setSiteBind(v);
+                setSelectedRowKeys([]);
               }}
-            >
-              下载模板
-            </Button>
-            <Button type="primary" icon={<DownloadOutlined />} onClick={() => setOpen(true)}>
-              导入案例
-            </Button>
-            <Button
-              type="primary"
-              icon={<TeamOutlined />}
-              disabled={!selectedRowKeys.length}
-              onClick={() => {
-                setSiteId(undefined);
-                setSiteModal({ mode: 'batch' });
-              }}
-            >
-              批量分配/改派网格
-            </Button>
-          </>
-        )}
-        {(admin || isManager) && (
+              options={[
+                { value: 'unassigned', label: '未分配网格' },
+                { value: 'assigned_site', label: '已分配网格' },
+              ]}
+            />
+          )}
+          <Select
+            allowClear
+            placeholder="派单状态"
+            value={status}
+            onChange={(v) => {
+              setPage(1);
+              setStatus(v);
+              setSelectedRowKeys([]);
+            }}
+            options={Object.entries(dispatchStatusLabel).map(([value, label]) => ({
+              value,
+              label,
+            }))}
+          />
+          <Select
+            allowClear
+            showSearch
+            optionFilterProp="label"
+            placeholder="筛选网格"
+            value={filterSiteId}
+            onChange={(v) => {
+              setPage(1);
+              setFilterSiteId(v);
+              setSelectedRowKeys([]);
+            }}
+            options={sitesInLocation.map((s) => ({
+              value: s.id,
+              label: `${s.name}${s.manager?.realName ? `（${s.manager.realName}）` : ''}`,
+            }))}
+          />
+          <Select
+            allowClear
+            showSearch
+            optionFilterProp="label"
+            placeholder="服务类型"
+            style={{ width: 160 }}
+            value={filterTaskType}
+            onChange={(v) => {
+              setPage(1);
+              setFilterTaskType(v);
+              setSelectedRowKeys([]);
+            }}
+            options={taskTypes.map((t) => ({ value: t.id, label: t.name }))}
+          />
+          <Input
+            type="date"
+            value={dateFrom}
+            onChange={(e) => {
+              setPage(1);
+              setDateFrom(e.target.value);
+            }}
+            title="起始日期（完工/创建）"
+            style={{ width: 150 }}
+          />
+          <span style={{ color: '#888' }}>至</span>
+          <Input
+            type="date"
+            value={dateTo}
+            onChange={(e) => {
+              setPage(1);
+              setDateTo(e.target.value);
+            }}
+            title="结束日期（完工/创建）"
+            style={{ width: 150 }}
+          />
           <Button
-            type={isManager ? 'primary' : 'default'}
-            icon={<SettingOutlined />}
-            disabled={!selectedRowKeys.length}
-            onClick={() => void openBatchTasks()}
+            icon={<DownloadOutlined />}
+            loading={exporting}
+            onClick={() => {
+              void (async () => {
+                setExporting(true);
+                try {
+                  const ids = selectedRowKeys.map(String);
+                  await exportFinanceCases(
+                    ids.length
+                      ? { ids }
+                      : {
+                          keyword: keyword || undefined,
+                          status,
+                          province,
+                          city,
+                          siteBind,
+                          siteId: filterSiteId,
+                          taskType: filterTaskType,
+                          dateFrom: dateFrom || undefined,
+                          dateTo: dateTo || undefined,
+                        },
+                  );
+                  message.success(ids.length ? `已导出勾选 ${ids.length} 条` : '已按当前筛选导出');
+                } catch (error) {
+                  message.error(error instanceof Error ? error.message : '导出失败');
+                } finally {
+                  setExporting(false);
+                }
+              })();
+            }}
           >
-            批量派单
+            {selectedRowKeys.length ? `导出勾选 (${selectedRowKeys.length})` : '导出 Excel'}
           </Button>
-        )}
-        {canClear && (
-          <Tooltip title="仅测试用。会删除全部 GSP 案例；已匹配 PO 会回到待匹配，PO 本身不删。日常请用案例号，不要点这里。">
-            <Button danger icon={<DeleteOutlined />} loading={clearing} onClick={() => void onClear()}>
-              清空全部案例
+          {admin && (
+            <>
+              <Button
+                icon={<DownloadOutlined />}
+                onClick={() => {
+                  void downloadFinanceImportTemplate('gsp').catch(() => undefined);
+                }}
+              >
+                下载模板
+              </Button>
+              <Button type="primary" icon={<DownloadOutlined />} onClick={() => setOpen(true)}>
+                导入案例
+              </Button>
+              <Button
+                type="primary"
+                icon={<TeamOutlined />}
+                disabled={!selectedRowKeys.length}
+                onClick={() => {
+                  setSiteId(undefined);
+                  setSiteModal({ mode: 'batch' });
+                }}
+              >
+                批量分配/改派网格
+              </Button>
+            </>
+          )}
+          {(admin || isManager) && (
+            <Button
+              type={isManager ? 'primary' : 'default'}
+              icon={<SettingOutlined />}
+              disabled={!selectedRowKeys.length}
+              onClick={() => void openBatchTasks()}
+            >
+              批量派单
             </Button>
-          </Tooltip>
-        )}
+          )}
+          {canClear && (
+            <Tooltip title="仅测试用。会删除全部 GSP 案例；已匹配 PO 会回到待匹配，PO 本身不删。日常请用案例号，不要点这里。">
+              <Button danger icon={<DeleteOutlined />} loading={clearing} onClick={() => void onClear()}>
+                清空全部案例
+              </Button>
+            </Tooltip>
+          )}
       </div>
-      <Table
+      <FillTable
         rowKey="id"
         loading={loading}
         dataSource={data}
-        size="middle"
         rowSelection={{
           selectedRowKeys,
           onChange: setSelectedRowKeys,
         }}
-        pagination={{ current: page, total, pageSize: 10, onChange: setPage }}
+        pagination={listTablePagination({
+          current: page,
+          total,
+          pageSize,
+          onChange: (p, ps) => {
+            setPage(p);
+            setPageSize(ps);
+          },
+        })}
         scroll={{ x: 1180 }}
         columns={[
           {
@@ -754,7 +773,7 @@ export default function FinanceCasesPage() {
           {
             title: '项目名称',
             dataIndex: 'projectName',
-            width: 200,
+            width: 280,
             ellipsis: { showTitle: false },
             render: (v) => <EllipsisTip text={v} />,
           },
@@ -779,31 +798,36 @@ export default function FinanceCasesPage() {
                 navigate(`/templates?${qs.toString()}`);
               };
               return (
-                <div style={{ lineHeight: 1.35, minWidth: 0 }}>
-                  <div>
-                    {typeLabel ? (
-                      <Tag color={matched ? 'blue' : 'default'} style={{ marginInlineEnd: 4 }}>
-                        {typeLabel}
-                      </Tag>
-                    ) : (
-                      <Tag>未匹配类型</Tag>
-                    )}
-                    {r.assignMode === 'multi' ? <Tag color="purple">多人</Tag> : null}
-                    {gap === 'unbound_type' ? (
-                      <Tag
-                        color="orange"
-                        style={{ cursor: 'pointer' }}
-                        onClick={goTemplateSetup}
-                        title="点击前往服务类型新增"
-                      >
-                        待补类型
-                      </Tag>
-                    ) : null}
-                  </div>
+                <div
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 4,
+                    minWidth: 0,
+                    overflow: 'hidden',
+                  }}
+                >
+                  {typeLabel ? (
+                    <Tag color={matched ? 'blue' : 'default'} style={{ marginInlineEnd: 0 }}>
+                      {typeLabel}
+                    </Tag>
+                  ) : (
+                    <Tag>未匹配类型</Tag>
+                  )}
+                  {r.assignMode === 'multi' ? <Tag color="purple">多人</Tag> : null}
+                  {gap === 'unbound_type' ? (
+                    <Tag
+                      color="orange"
+                      style={{ cursor: 'pointer' }}
+                      onClick={goTemplateSetup}
+                      title="点击前往服务类型新增"
+                    >
+                      待补类型
+                    </Tag>
+                  ) : null}
                   <Tooltip title={pl || undefined}>
-                    <div
+                    <span
                       style={{
-                        marginTop: 2,
                         fontSize: 12,
                         color: '#595959',
                         overflow: 'hidden',
@@ -812,23 +836,19 @@ export default function FinanceCasesPage() {
                       }}
                     >
                       {pl || <span style={{ color: '#bfbfbf' }}>无产品线</span>}
-                      {gap === 'unconfigured' ? (
-                        <Tag
-                          color="orange"
-                          style={{ marginLeft: 4, cursor: 'pointer' }}
-                          onClick={goTemplateSetup}
-                          title="点击前往服务类型新增该产品线"
-                        >
-                          待补产品线
-                        </Tag>
-                      ) : null}
-                      {gap === 'empty' ? (
-                        <Tag color="warning" style={{ marginLeft: 4 }}>
-                          未选产品线
-                        </Tag>
-                      ) : null}
-                    </div>
+                    </span>
                   </Tooltip>
+                  {gap === 'unconfigured' ? (
+                    <Tag
+                      color="orange"
+                      style={{ cursor: 'pointer' }}
+                      onClick={goTemplateSetup}
+                      title="点击前往服务类型新增该产品线"
+                    >
+                      待补产品线
+                    </Tag>
+                  ) : null}
+                  {gap === 'empty' ? <Tag color="warning">未选产品线</Tag> : null}
                 </div>
               );
             },
@@ -886,27 +906,26 @@ export default function FinanceCasesPage() {
             width: 120,
             render: (_, r) => {
               const s = dispatchStatus(r);
+              const extra = [
+                r.hasPo === false ? '不计件结算' : '',
+                r.assignMode === 'multi' || Number(r.plannedUnits || 1) > 1
+                  ? `${r.completedUnits || 0}/${r.plannedUnits || 1}${r.unitLabel || '台'}`
+                  : '',
+              ]
+                .filter(Boolean)
+                .join(' · ');
               return (
-                <div style={{ lineHeight: 1.35 }}>
-                  <Tag color={s.color}>{s.text}</Tag>
-                  {r.hasPo === false ? (
-                    <div style={{ marginTop: 2 }}>
-                      <Tag>不计件结算</Tag>
-                    </div>
-                  ) : null}
-                  {r.assignMode === 'multi' || Number(r.plannedUnits || 1) > 1 ? (
-                    <div style={{ marginTop: 2, fontSize: 12, color: '#8c8c8c' }}>
-                      {r.completedUnits || 0}/{r.plannedUnits || 1}
-                      {r.unitLabel || '台'}
-                    </div>
-                  ) : null}
-                </div>
+                <Tooltip title={extra || undefined}>
+                  <span>
+                    <Tag color={s.color}>{s.text}</Tag>
+                  </span>
+                </Tooltip>
               );
             },
           },
           {
             title: '操作',
-            width: 220,
+            width: 260,
             fixed: 'right',
             render: (_, r) => {
               const typeActionNeeded =
@@ -914,7 +933,7 @@ export default function FinanceCasesPage() {
                 needsProductLine(r, taskTypes) ||
                 productLineGap(r, taskTypes) === 'unbound_type';
               return (
-              <Space wrap size={0}>
+              <Space size={0} style={{ flexWrap: 'nowrap' }}>
                 {admin &&
                   !['finished', 'settle_review', 'settled', 'month_locked'].includes(r.status) && (
                   <Button

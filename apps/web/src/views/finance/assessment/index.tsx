@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from 'react';
-import { Button, Card, Input, InputNumber, Select, Space, Table, Tag, Tooltip, message } from 'antd';
+import { Button, Card, Input, InputNumber, Select, Space, Tag, Tooltip, message } from 'antd';
 import { DeleteOutlined, QuestionCircleOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import {
@@ -18,6 +18,8 @@ import { canUseDangerousClear, confirmDangerousClear } from '../../../utils/fina
 import AssessmentEventDrawer from '../components/AssessmentEventDrawer';
 import AssessmentScoreRuleDrawer from '../components/AssessmentScoreRuleDrawer';
 import AssessmentScoreDrawer from '../components/AssessmentScoreDrawer';
+import FillTable from '../../../components/FillTable';
+import { LAYOUT_DEMO_COUNT, padLayoutDemo } from '../../../utils/layoutDemo';
 
 const colTip = (title: string, tip: string) => (
   <span>
@@ -55,12 +57,31 @@ export default function FinanceAssessmentPage() {
     setLoading(true);
     try {
       setRows(
-        await fetchFinanceAssessments({
-          month,
-          keyword: keyword || undefined,
-          siteId: isAdmin ? siteId : undefined,
-          role: isAdmin ? role : undefined,
-        }),
+        padLayoutDemo(
+          await fetchFinanceAssessments({
+            month,
+            keyword: keyword || undefined,
+            siteId: isAdmin ? siteId : undefined,
+            role: isAdmin ? role : undefined,
+          }),
+          LAYOUT_DEMO_COUNT,
+          (n) => ({
+            id: `layout-demo-assess-${n}`,
+            month,
+            userId: `layout-demo-user-${n}`,
+            realName: `预览人员${n}`,
+            username: `demo${n}`,
+            userRole: n % 3 === 0 ? 'site_manager' : 'inspector',
+            siteName: `预览网格${(n % 5) + 1}`,
+            totalScore: String(80 + (n % 20)),
+            siteRankResult: String((n % 8) + 1),
+            rankResult: String(n),
+            rewardAmount: n <= 3 ? '500' : '0',
+            eventPenalty: n % 7 === 0 ? '100' : '0',
+            toolSubsidy: '50',
+            otherSubsidy: '0',
+          }),
+        ),
       );
     } finally {
       setLoading(false);
@@ -176,7 +197,7 @@ export default function FinanceAssessmentPage() {
   };
 
   return (
-    <Card className="finance-card" title="月度考核与补助">
+    <Card className="finance-card admin-fill-page" title="月度考核与补助">
       <div className="finance-review-tip">
         {isManager
           ? '本页给本网格已聘工程师打分（含自己兼工程师且已聘网格）。不能改自己的分数，本人考核由管理员录入。点「打分」按规则填分项，总分自动汇总。网格内名次仅参考；全司奖罚：兼岗只进网格长池。'
@@ -245,7 +266,7 @@ export default function FinanceAssessmentPage() {
           </>
         )}
       </Space>
-      <Table
+      <FillTable
         rowKey="userId"
         loading={loading}
         dataSource={rows}

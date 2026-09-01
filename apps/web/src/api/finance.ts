@@ -216,6 +216,7 @@ export async function exportFinanceCases(payload: {
   siteId?: string;
   siteBind?: 'unassigned' | 'assigned_site';
   taskType?: string;
+  productLine?: string;
   dateFrom?: string;
   dateTo?: string;
 }) {

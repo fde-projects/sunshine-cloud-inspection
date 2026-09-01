@@ -372,15 +372,57 @@ export async function exportPoOrders(body: Record<string, unknown>) {
 export async function exportFinanceCases(body: Record<string, unknown>) {
   const ids = Array.isArray(body.ids) ? (body.ids as unknown[]).map(String).filter(Boolean) : [];
   const where: Record<string, unknown> = {};
-  if (ids.length) where.id = { _in: ids };
-  else {
-    if (body.status) where.status = { _eq: body.status };
-    if (body.keyword) {
-      where._or = [
-        { gsp_case_no: { _ilike: `%${body.keyword}%` } },
-        { project_name: { _ilike: `%${body.keyword}%` } },
-      ];
+  if (ids.length) {
+    where.id = { _in: ids };
+  } else {
+    const and: Record<string, unknown>[] = [];
+    if (body.status) and.push({ status: { _eq: body.status } });
+    if (body.province) and.push({ province: { _eq: String(body.province).trim() } });
+    if (body.city) and.push({ city: { _eq: String(body.city).trim() } });
+    if (body.siteId) and.push({ site_id: { _eq: body.siteId } });
+    if (body.siteBind === "unassigned") and.push({ site_id: { _is_null: true } });
+    if (body.siteBind === "assigned_site") and.push({ site_id: { _is_null: false } });
+    if (body.taskType) and.push({ task_template_id: { _eq: body.taskType } });
+    const productLine = String(body.productLine || "").trim();
+    if (productLine === "__empty__") {
+      and.push({
+        _or: [{ product_line: { _is_null: true } }, { product_line: { _eq: "" } }],
+      });
+    } else if (productLine) {
+      and.push({ product_line: { _eq: productLine } });
     }
+    const dateFrom = String(body.dateFrom || "").trim();
+    const dateTo = String(body.dateTo || "").trim();
+    if (dateFrom || dateTo) {
+      const finishRange: Record<string, string> = {};
+      const createdRange: Record<string, string> = {};
+      if (dateFrom) {
+        finishRange._gte = dateFrom;
+        createdRange._gte = dateFrom;
+      }
+      if (dateTo) {
+        finishRange._lte = `${dateTo}T23:59:59.999`;
+        createdRange._lte = `${dateTo}T23:59:59.999`;
+      }
+      and.push({
+        _or: [
+          { finish_time: finishRange },
+          {
+            _and: [{ finish_time: { _is_null: true } }, { created_at: createdRange }],
+          },
+        ],
+      });
+    }
+    const keyword = String(body.keyword || "").trim();
+    if (keyword) {
+      and.push({
+        _or: [
+          { gsp_case_no: { _ilike: `%${keyword}%` } },
+          { project_name: { _ilike: `%${keyword}%` } },
+        ],
+      });
+    }
+    if (and.length) where._and = and;
   }
   const cases = await gqlPages<Record<string, unknown>>(
     "service_cases",

@@ -19,55 +19,22 @@ import { PlusOutlined, EditOutlined, MobileOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import {
   fetchStaffingUsers,
+  fetchStaffingAppointments,
   createUser,
   updateUser,
   updateUserStatus,
   resetUserPassword,
   enableMyInspector,
 } from '../../api/user';
-import { fetchMyStaffSites, addSiteMember, removeSiteMember, fetchSiteMembers } from '../../api/site';
+import { fetchMyStaffSites, syncPrimaryManagerInspector } from '../../api/site';
+import { roleTagsOf, userRolesOf, type StaffingAppointment } from '../../lib/staffing-roles';
 import { useAuthStore } from '../../stores/auth';
-import type { UserInfo, SiteItem, UserRole, CommonStatus } from '../../types';
+import type { UserInfo, UserRole, CommonStatus } from '../../types';
 import { isAntValidateError } from '../../utils/ant-form';
 import { chineseErrorMessage } from '../../utils/displayLabels';
 import FillTable, { listTablePagination } from '../../components/FillTable';
 
-function userRolesOf(record: UserInfo): UserRole[] {
-  return record.roles?.length ? record.roles : record.role ? [record.role] : [];
-}
-
-function roleTagsOf(
-  record: UserInfo,
-  opts?: {
-    viewerIsAdmin?: boolean;
-    isPrimaryManager?: boolean;
-    isDeputyManager?: boolean;
-    currentUserId?: string;
-  },
-) {
-  const list = userRolesOf(record);
-  const tags: string[] = [];
-  if (list.includes("super_admin")) {
-    tags.push("超级管理员");
-    return tags;
-  }
-  if (list.includes("site_manager")) {
-    if (opts?.viewerIsAdmin) {
-      tags.push("正网格长");
-    } else if (record.id === opts?.currentUserId) {
-      if (opts.isPrimaryManager) tags.push("正网格长");
-      else if (opts.isDeputyManager) tags.push("副网格长");
-      else tags.push("网格长（未任命）");
-    } else {
-      tags.push("副网格长");
-    }
-  }
-  if (list.includes("inspector")) tags.push("工程师");
-  if (!tags.length) tags.push("未知角色");
-  return tags;
-}
-
-/** 用户管理：管理员→正网格长；正/副网格长在列表内设立账号并聘用工程师到网格 */
+/** 账号管理：只管登录身份；网格编制在「网格管理 → 人员」 */
 export default function UsersPage() {
   const currentUser = useAuthStore((s) => s.user);
   const isAdmin = currentUser?.role === 'super_admin';
@@ -75,6 +42,7 @@ export default function UsersPage() {
 
   const [loading, setLoading] = useState(false);
   const [data, setData] = useState<UserInfo[]>([]);
+  const [appointments, setAppointments] = useState<Record<string, StaffingAppointment>>({});
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
@@ -85,91 +53,80 @@ export default function UsersPage() {
   const [editing, setEditing] = useState<UserInfo | null>(null);
   const [form] = Form.useForm();
   const pendingFormValues = useRef<Record<string, unknown> | null>(null);
-  const [draftUsername, setDraftUsername] = useState('');
-  const [draftPhone, setDraftPhone] = useState('');
 
   const [pwdOpen, setPwdOpen] = useState(false);
   const [pwdUser, setPwdUser] = useState<UserInfo | null>(null);
   const [pwdForm] = Form.useForm();
 
-  const [hireOpen, setHireOpen] = useState(false);
-  const [hireUser, setHireUser] = useState<UserInfo | null>(null);
-  const [hireSiteId, setHireSiteId] = useState<string>();
-  const [managedSites, setManagedSites] = useState<SiteItem[]>([]);
   const [isPrimaryManager, setIsPrimaryManager] = useState(false);
   const [isDeputyManager, setIsDeputyManager] = useState(false);
-  const [memberMap, setMemberMap] = useState<Record<string, string[]>>({});
 
   const canStaffAsManager = isSiteManager && (isPrimaryManager || isDeputyManager);
   const canStaffAccounts = isAdmin || canStaffAsManager;
-
-  const creatingForSelf =
-    modalOpen &&
-    !editing &&
-    isSiteManager &&
-    Boolean(currentUser) &&
-    ((draftUsername && draftUsername === currentUser?.username) ||
-      (draftPhone && draftPhone === currentUser?.phone));
+  /** 副长只能开工程师号；正长可开副长+工程师；管理员账号页只开待任命网格长 */
+  const deputyOnly = isSiteManager && isDeputyManager && !isPrimaryManager;
 
   const editingSelf = Boolean(editing && editing.id === currentUser?.id);
 
   const roleOptions = useMemo(() => {
     if (isAdmin) {
-      return [{ value: 'site_manager', label: '正网格长' }];
+      return [{ value: 'site_manager', label: '网格长登录账号（待任命）' }];
     }
-    if (creatingForSelf || editingSelf) {
+    if (editingSelf) {
       return [
         {
           value: 'site_manager',
-          label: isPrimaryManager ? '正网格长（本账号）' : isDeputyManager ? '副网格长（本账号）' : '网格长（本账号）',
+          label: isPrimaryManager
+            ? '正网格长（本账号）'
+            : isDeputyManager
+              ? '副网格长（本账号）'
+              : '网格长（本账号）',
           disabled: true,
         },
-        { value: 'inspector', label: '工程师（H5）' },
+        { value: 'inspector', label: '工程师（可登 H5）' },
       ];
     }
-    return [
-      { value: 'site_manager', label: '副网格长（PC）' },
-      { value: 'inspector', label: '工程师（H5）' },
-    ];
-  }, [isAdmin, creatingForSelf, editingSelf, isPrimaryManager, isDeputyManager]);
-
-  useEffect(() => {
-    if (modalOpen && creatingForSelf) {
-      form.setFieldsValue({ roles: ['site_manager', 'inspector'] });
+    if (deputyOnly) {
+      return [{ value: 'inspector', label: '工程师（可登 H5）' }];
     }
-  }, [modalOpen, creatingForSelf, form]);
+    return [
+      { value: 'site_manager', label: '副网格长登录账号（PC）' },
+      { value: 'inspector', label: '工程师（可登 H5）' },
+    ];
+  }, [
+    isAdmin,
+    editingSelf,
+    isPrimaryManager,
+    isDeputyManager,
+    deputyOnly,
+  ]);
 
-  const loadManagedSites = useCallback(async () => {
+  const loadStaffFlags = useCallback(async () => {
     if (!isSiteManager || !currentUser?.id) {
-      setManagedSites([]);
       setIsPrimaryManager(false);
       setIsDeputyManager(false);
       return;
     }
     const staff = await fetchMyStaffSites(currentUser.id);
-    setManagedSites(staff.list);
     setIsPrimaryManager(staff.isPrimary);
     setIsDeputyManager(staff.isDeputy);
   }, [isSiteManager, currentUser?.id]);
 
   useEffect(() => {
-    void loadManagedSites();
-  }, [loadManagedSites]);
+    void loadStaffFlags();
+  }, [loadStaffFlags]);
 
-  const loadMemberMap = useCallback(async (sites: SiteItem[]) => {
-    if (!sites.length) {
-      setMemberMap({});
-      return;
+  /** 正网格长开通工程师后，自动写入所管站工程师编制 */
+  const syncSelfPrimaryInspector = async (userId: string) => {
+    const staff = await fetchMyStaffSites(userId);
+    let created = 0;
+    for (const site of staff.list) {
+      if (site.managerId !== userId) continue;
+      const r = await syncPrimaryManagerInspector(site.id, userId, true);
+      if (r === 'created') created += 1;
     }
-    const map: Record<string, string[]> = {};
-    await Promise.all(
-      sites.map(async (site) => {
-        const members = await fetchSiteMembers(site.id, 'inspector');
-        map[site.id] = members.filter((m) => m.status === 'active').map((m) => m.userId);
-      }),
-    );
-    setMemberMap(map);
-  }, []);
+    return created;
+  };
 
   const loadList = useCallback(async () => {
     setLoading(true);
@@ -182,18 +139,15 @@ export default function UsersPage() {
       });
       setData(res.list);
       setTotal(res.total);
-      if (canStaffAsManager) {
-        await loadMemberMap(managedSites);
-      } else {
-        setMemberMap({});
-      }
+      const appt = await fetchStaffingAppointments(res.list.map((u) => u.id));
+      setAppointments(appt);
     } catch (error) {
       const shown = chineseErrorMessage(error instanceof Error ? error.message : error);
       if (shown) message.error(shown);
     } finally {
       setLoading(false);
     }
-  }, [page, pageSize, keyword, role, canStaffAsManager, managedSites, loadMemberMap]);
+  }, [page, pageSize, keyword, role]);
 
   useEffect(() => {
     void loadList();
@@ -204,10 +158,14 @@ export default function UsersPage() {
   );
 
   const openCreate = () => {
+    if (!canStaffAccounts) {
+      message.info('请先被任命为正网格长或副网格长');
+      return;
+    }
     setEditing(null);
-    setDraftUsername('');
-    setDraftPhone('');
-    pendingFormValues.current = { roles: isAdmin ? ['site_manager'] : ['inspector'] };
+    pendingFormValues.current = {
+      roles: isAdmin ? ['site_manager'] : deputyOnly ? ['inspector'] : ['inspector'],
+    };
     setModalOpen(true);
   };
 
@@ -215,8 +173,6 @@ export default function UsersPage() {
     setEditing(record);
     const list = userRolesOf(record);
     const isSelf = record.id === currentUser?.id;
-    setDraftUsername(record.username);
-    setDraftPhone(record.phone);
     pendingFormValues.current = {
       ...record,
       roles: isAdmin
@@ -225,7 +181,9 @@ export default function UsersPage() {
           ? list.includes('inspector')
             ? ['site_manager', 'inspector']
             : ['site_manager']
-          : list,
+          : deputyOnly
+            ? ['inspector']
+            : list,
     };
     setModalOpen(true);
   };
@@ -245,86 +203,119 @@ export default function UsersPage() {
       if (isAntValidateError(error)) return;
       throw error;
     }
-    const isSelfCreate =
-      !editing &&
-      (values.username === currentUser?.username || values.phone === currentUser?.phone);
-
-    if (!editing && isSelfCreate) {
-      if (!values.roles?.includes('inspector')) {
-        message.error('给自己开通时请勾选工程师');
+    try {
+      if (
+        !editing &&
+        isSiteManager &&
+        (values.username === currentUser?.username || values.phone === currentUser?.phone)
+      ) {
+        message.warning(
+          '用户名或手机号与当前登录账号相同。新建下属工程师请换用不同的用户名和手机号；给自己开通 H5 请点页面上方「开通工程师身份」。',
+        );
         return;
       }
-      await enableMyInspector();
-      await useAuthStore.getState().fetchMe();
-      message.success('已为本账号开通工程师身份，请退出后用同一账号登录 H5');
+
+      if (editing && editing.id === currentUser?.id && !isAdmin) {
+        const nextRoles: UserRole[] = ['site_manager'];
+        if (values.roles?.includes('inspector')) nextRoles.push('inspector');
+        await updateUser(editing.id, {
+          realName: values.realName,
+          employeeNo: values.employeeNo,
+          phone: values.phone,
+          roles: nextRoles,
+        });
+        let synced = 0;
+        if (nextRoles.includes('inspector')) {
+          synced = await syncSelfPrimaryInspector(editing.id);
+        }
+        await useAuthStore.getState().fetchMe();
+        message.success(
+          nextRoles.includes('inspector')
+            ? synced > 0
+              ? `已更新，并同步写入 ${synced} 个正管网格编制`
+              : deputyOnly
+                ? '已更新；请到「网格管理 → 人员」点「聘用本人」加入编制'
+                : '已更新；工程师身份已保留/开通。编制请到「网格管理 → 人员」'
+            : '已更新（未勾选工程师则无法登录 H5）',
+        );
+        setModalOpen(false);
+        void loadList();
+        return;
+      }
+
+      const roles: UserRole[] = isAdmin
+        ? ['site_manager']
+        : deputyOnly
+          ? ['inspector']
+          : values.roles?.length
+            ? values.roles
+            : [values.role as UserRole].filter(Boolean);
+      if (editing) {
+        await updateUser(editing.id, {
+          realName: values.realName,
+          employeeNo: values.employeeNo,
+          phone: values.phone,
+          roles,
+          role: roles.includes('site_manager') ? 'site_manager' : roles[0],
+        });
+        message.success('账号已更新');
+        if (editing.id === currentUser?.id) await useAuthStore.getState().fetchMe();
+      } else {
+        await createUser({
+          username: values.username,
+          password: values.password,
+          realName: values.realName,
+          employeeNo: values.employeeNo,
+          phone: values.phone,
+          roles,
+          role: roles.includes('site_manager') ? 'site_manager' : roles[0],
+        });
+        message.success(
+          isAdmin
+            ? '登录账号已创建（待任命）。请到「网格管理」任命为正网格长后才算正网格长'
+            : deputyOnly
+              ? '工程师账号已创建，请到「网格管理 → 人员」加入编制'
+              : '账号已创建，请到「网格管理 → 人员」加入编制（或「新建并加入」）',
+        );
+      }
       setModalOpen(false);
       void loadList();
-      return;
+    } catch (error) {
+      const shown = chineseErrorMessage(error instanceof Error ? error.message : error);
+      message.error(shown || '操作失败');
     }
-
-    if (editing && editing.id === currentUser?.id && !isAdmin) {
-      const nextRoles: UserRole[] = ['site_manager'];
-      if (values.roles?.includes('inspector')) nextRoles.push('inspector');
-      await updateUser(editing.id, {
-        realName: values.realName,
-        employeeNo: values.employeeNo,
-        phone: values.phone,
-        roles: nextRoles,
-      });
-      await useAuthStore.getState().fetchMe();
-      message.success(
-        nextRoles.includes('inspector')
-          ? '已更新；工程师身份已保留/开通，请用同一账号重新登录 H5'
-          : '已更新（未勾选工程师则无法登录 H5）',
-      );
-      setModalOpen(false);
-      void loadList();
-      return;
-    }
-
-    const roles: UserRole[] = isAdmin
-      ? ['site_manager']
-      : values.roles?.length
-        ? values.roles
-        : [values.role].filter(Boolean);
-    if (editing) {
-      await updateUser(editing.id, {
-        realName: values.realName,
-        employeeNo: values.employeeNo,
-        phone: values.phone,
-        roles,
-        role: roles.includes('site_manager') ? 'site_manager' : roles[0],
-      });
-      message.success('用户已更新');
-      if (editing.id === currentUser?.id) await useAuthStore.getState().fetchMe();
-    } else {
-      await createUser({
-        username: values.username,
-        password: values.password,
-        realName: values.realName,
-        employeeNo: values.employeeNo,
-        phone: values.phone,
-        roles,
-        role: roles.includes('site_manager') ? 'site_manager' : roles[0],
-      });
-      message.success('用户已创建');
-    }
-    setModalOpen(false);
-    void loadList();
   };
 
   const onEnableMyInspector = async () => {
-    await enableMyInspector();
-    await useAuthStore.getState().fetchMe();
-    message.success('已开通工程师身份，请退出后用同一账号登录 H5 作业端');
-    void loadList();
+    try {
+      await enableMyInspector();
+      let synced = 0;
+      if (currentUser?.id) synced = await syncSelfPrimaryInspector(currentUser.id);
+      await useAuthStore.getState().fetchMe();
+      message.success(
+        synced > 0
+          ? `已开通工程师，并同步写入 ${synced} 个正管网格编制`
+          : deputyOnly
+            ? '已开通工程师身份；请到「网格管理 → 人员」点「聘用本人」加入编制后登录 H5'
+            : '已开通工程师身份；请到「网格管理 → 人员」加入编制后登录 H5',
+      );
+      void loadList();
+    } catch (error) {
+      const shown = chineseErrorMessage(error instanceof Error ? error.message : error);
+      message.error(shown || '开通失败');
+    }
   };
 
   const toggleStatus = async (record: UserInfo) => {
-    const next: CommonStatus = record.status === 'active' ? 'inactive' : 'active';
-    await updateUserStatus(record.id, next);
-    message.success(next === 'active' ? '已启用' : '已停用');
-    void loadList();
+    try {
+      const next: CommonStatus = record.status === 'active' ? 'inactive' : 'active';
+      await updateUserStatus(record.id, next);
+      message.success(next === 'active' ? '已启用' : '已停用');
+      void loadList();
+    } catch (error) {
+      const shown = chineseErrorMessage(error instanceof Error ? error.message : error);
+      message.error(shown || '操作失败');
+    }
   };
 
   const submitPwd = async () => {
@@ -336,29 +327,14 @@ export default function UsersPage() {
       throw error;
     }
     if (!pwdUser) return;
-    await resetUserPassword(pwdUser.id, values.newPassword);
-    message.success('密码已重置');
-    setPwdOpen(false);
-  };
-
-  const openHire = (user: UserInfo) => {
-    setHireUser(user);
-    setHireSiteId(managedSites[0]?.id);
-    setHireOpen(true);
-  };
-
-  const submitHire = async () => {
-    if (!hireUser || !hireSiteId) return;
-    await addSiteMember(hireSiteId, hireUser.id);
-    message.success('聘用成功');
-    setHireOpen(false);
-    void loadList();
-  };
-
-  const doFire = async (userId: string, siteId: string) => {
-    await removeSiteMember(siteId, userId);
-    message.success('已解聘');
-    void loadList();
+    try {
+      await resetUserPassword(pwdUser.id, values.newPassword!);
+      message.success('密码已重置');
+      setPwdOpen(false);
+    } catch (error) {
+      const shown = chineseErrorMessage(error instanceof Error ? error.message : error);
+      message.error(shown || '重置失败');
+    }
   };
 
   const listColumns: ColumnsType<UserInfo> = [
@@ -367,14 +343,12 @@ export default function UsersPage() {
     { title: '姓名', dataIndex: 'realName', width: 100 },
     { title: '手机号', dataIndex: 'phone', width: 130 },
     {
-      title: '角色',
+      title: '身份',
       dataIndex: 'roles',
-      width: 140,
+      width: 200,
       render: (_roles: UserRole[] | undefined, r) => {
         const tags = roleTagsOf(r, {
-          viewerIsAdmin: isAdmin,
-          isPrimaryManager,
-          isDeputyManager,
+          appointment: appointments[r.id] || 'none',
           currentUserId: currentUser?.id,
         });
         return (
@@ -382,7 +356,15 @@ export default function UsersPage() {
             {tags.map((t) => (
               <Tag
                 key={t}
-                color={t === "工程师" ? "blue" : t === "超级管理员" ? "gold" : "green"}
+                color={
+                  t === '工程师'
+                    ? 'blue'
+                    : t === '超级管理员'
+                      ? 'gold'
+                      : t.includes('待任命')
+                        ? 'default'
+                        : 'green'
+                }
               >
                 {t}
               </Tag>
@@ -391,30 +373,6 @@ export default function UsersPage() {
         );
       },
     },
-    ...(canStaffAsManager
-      ? ([
-          {
-            title: '已聘网格',
-            width: 160,
-            render: (_: unknown, record: UserInfo) => {
-              if (!userRolesOf(record).includes('inspector')) {
-                return <Typography.Text type="secondary">—</Typography.Text>;
-              }
-              const hired = managedSites.filter((s) => (memberMap[s.id] || []).includes(record.id));
-              if (!hired.length) {
-                return <Typography.Text type="secondary">未聘用</Typography.Text>;
-              }
-              return (
-                <Space size={[4, 4]} wrap>
-                  {hired.map((s) => (
-                    <Tag key={s.id}>{s.name}</Tag>
-                  ))}
-                </Space>
-              );
-            },
-          },
-        ] as ColumnsType<UserInfo>)
-      : []),
     {
       title: '状态',
       dataIndex: 'status',
@@ -425,38 +383,17 @@ export default function UsersPage() {
     },
     {
       title: '操作',
-      width: canStaffAsManager ? 360 : 260,
+      width: 260,
       fixed: 'right',
       render: (_, record) => {
         if (!canStaffAccounts) {
           return <Typography.Text type="secondary">只读</Typography.Text>;
         }
-        const roles = userRolesOf(record);
-        const canHire = canStaffAsManager && roles.includes('inspector');
-        const hiredSites = canHire
-          ? managedSites.filter((s) => (memberMap[s.id] || []).includes(record.id))
-          : [];
         return (
           <Space wrap>
             <Button type="link" icon={<EditOutlined />} onClick={() => openEdit(record)}>
               编辑
             </Button>
-            {canHire && (
-              <Button type="link" onClick={() => openHire(record)}>
-                聘用到网格
-              </Button>
-            )}
-            {hiredSites.map((s) => (
-              <Popconfirm
-                key={s.id}
-                title={`确认从「${s.name}」解聘？`}
-                onConfirm={() => void doFire(record.id, s.id)}
-              >
-                <Button type="link" danger>
-                  解聘·{s.name}
-                </Button>
-              </Popconfirm>
-            ))}
             <Button
               type="link"
               onClick={() => {
@@ -468,7 +405,7 @@ export default function UsersPage() {
               重置密码
             </Button>
             <Popconfirm
-              title={`确认${record.status === 'active' ? '停用' : '启用'}该用户？`}
+              title={`确认${record.status === 'active' ? '停用' : '启用'}该账号？`}
               onConfirm={() => void toggleStatus(record)}
             >
               <Button type="link" danger={record.status === 'active'}>
@@ -489,12 +426,14 @@ export default function UsersPage() {
         style={{ marginBottom: 12 }}
         message={
           isAdmin
-            ? '本列表只显示您设立的正网格长。工程师由正/副网格长在各自网格内编制，不会出现在这里。'
+            ? '账号管理：在此创建「网格长登录账号（待任命）」。成为正网格长请到「网格管理 → 正网格长」任命；编制可到「人员」代配。'
             : canStaffAsManager
-              ? '在用户列表设立副网格长/工程师；工程师可直接「聘用到网格」。正网格长不能给自己设副网格长，可开通工程师后同一账号登 H5。'
+              ? deputyOnly
+                ? '账号管理：副网格长只能开工程师登录账号。聘用/解聘请到「网格管理 → 人员」（不可设置副网格长）。'
+                : '账号管理：正网格长可开副网格长/工程师登录账号。上岗请到「网格管理 → 人员」（支持新建并加入）。'
               : isSiteManager
-                ? '当前账号尚未任命到任何电站，因此只能查看、不能编制下属。请让管理员在「网格管理」任命为正网格长，或由正网格长添加为副网格长后再试。'
-                : '请先被任命为正网格长或副网格长后，再编制下属账号。'
+                ? '当前账号尚未任命到任何电站，只能查看。请让管理员在「网格管理」任命为正网格长，或由正网格长添加为副网格长。'
+                : '请先被任命为正网格长或副网格长后，再管理下属账号。'
         }
       />
 
@@ -504,10 +443,14 @@ export default function UsersPage() {
           showIcon
           style={{ marginBottom: 12 }}
           message="本账号尚未开通工程师身份"
-          description="开通后可用同一用户名登录 H5 作业端接单作业。"
+          description={
+            isPrimaryManager
+              ? '开通后可用同一用户名登录 H5；正管电站将自动写入工程师编制。'
+              : '开通后可用同一用户名登录 H5；请再到「网格管理 → 人员」点「聘用本人」加入编制。'
+          }
           action={
             <Button type="primary" icon={<MobileOutlined />} onClick={() => void onEnableMyInspector()}>
-              开通我的工程师身份
+              开通工程师身份
             </Button>
           }
         />
@@ -525,8 +468,8 @@ export default function UsersPage() {
         />
         <Select
           allowClear
-          placeholder="角色"
-          style={{ width: 140 }}
+          placeholder="身份"
+          style={{ width: 160 }}
           value={role}
           onChange={(v) => {
             setPage(1);
@@ -534,17 +477,23 @@ export default function UsersPage() {
           }}
           options={
             isAdmin
-              ? [{ value: 'site_manager', label: '正网格长' }]
-              : [
-                  { value: 'site_manager', label: '副网格长' },
-                  { value: 'inspector', label: '工程师' },
-                ]
+              ? [{ value: 'site_manager', label: '网格长账号' }]
+              : deputyOnly
+                ? [{ value: 'inspector', label: '工程师' }]
+                : [
+                    { value: 'site_manager', label: '副网格长账号' },
+                    { value: 'inspector', label: '工程师' },
+                  ]
           }
         />
-        {canStaffAccounts && (
+        {canStaffAccounts ? (
           <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
-            新增用户
+            新增账号
           </Button>
+        ) : (
+          isSiteManager && (
+            <Typography.Text type="secondary">先完成任命后再新增账号</Typography.Text>
+          )
         )}
       </Space>
 
@@ -553,7 +502,7 @@ export default function UsersPage() {
         loading={loading}
         columns={listColumns}
         dataSource={data}
-        scroll={{ x: canStaffAsManager ? 1100 : 900 }}
+        scroll={{ x: 960 }}
         pagination={listTablePagination({
           current: page,
           total,
@@ -566,7 +515,7 @@ export default function UsersPage() {
       />
 
       <Modal
-        title={editing ? '编辑用户' : '新增用户'}
+        title={editing ? '编辑账号' : '新增账号'}
         open={modalOpen}
         onCancel={() => setModalOpen(false)}
         onOk={() => void submitUser()}
@@ -580,36 +529,27 @@ export default function UsersPage() {
           form.setFieldsValue(values);
         }}
       >
-        <Form
-          form={form}
-          layout="vertical"
-          onValuesChange={(_, all) => {
-            setDraftUsername(String(all.username || ''));
-            setDraftPhone(String(all.phone || ''));
-          }}
-        >
+        <Form form={form} layout="vertical">
           {!editing && (
             <>
               <Form.Item
                 name="username"
                 label="用户名"
                 rules={[{ required: true, message: '请输入用户名' }]}
+                extra={
+                  isSiteManager
+                    ? '须与您的登录名不同；给自己开通 H5 请点页面上方「开通工程师身份」。'
+                    : undefined
+                }
               >
                 <Input />
               </Form.Item>
               <Form.Item
                 name="password"
                 label="密码"
-                rules={
-                  creatingForSelf
-                    ? []
-                    : [{ required: true, min: 6, message: '至少6位' }]
-                }
+                rules={[{ required: true, min: 6, message: '至少6位' }]}
               >
-                <Input.Password
-                  placeholder={creatingForSelf ? '给自己开通工程师时无需填写' : undefined}
-                  disabled={creatingForSelf}
-                />
+                <Input.Password />
               </Form.Item>
             </>
           )}
@@ -623,19 +563,12 @@ export default function UsersPage() {
           <Form.Item
             name="employeeNo"
             label="工号"
-            rules={
-              creatingForSelf
-                ? []
-                : [
-                    { required: true, message: '请输入工号' },
-                    { min: 2, max: 32, message: '工号 2-32 位' },
-                  ]
-            }
+            rules={[
+              { required: true, message: '请输入工号' },
+              { min: 2, max: 32, message: '工号 2-32 位' },
+            ]}
           >
-            <Input
-              placeholder={creatingForSelf ? '给自己开通工程师时无需填写' : '员工工号，不可重复'}
-              disabled={creatingForSelf}
-            />
+            <Input placeholder="员工工号，不可重复" />
           </Form.Item>
           <Form.Item
             name="phone"
@@ -649,14 +582,18 @@ export default function UsersPage() {
           </Form.Item>
           <Form.Item
             name="roles"
-            label={isAdmin ? '角色' : '角色（可多选）'}
-            rules={[{ required: true, type: 'array', min: 1, message: '请选择角色' }]}
+            label={isAdmin || deputyOnly ? '登录身份' : '登录身份（可多选）'}
+            rules={[{ required: true, type: 'array', min: 1, message: '请选择身份' }]}
             extra={
               isAdmin
-                ? '正网格长登录 PC；创建后到「网格管理」任命到电站'
-                : creatingForSelf || editingSelf
-                  ? '本账号只能开通/取消工程师，不能设为副网格长（与正网格长冲突）。开通后请重新登录 H5。'
-                  : '可设立副网格长或工程师。创建工程师后，在列表中点「聘用到网格」即可安排上岗。'
+                ? '此处只开登录账号，不会自动成为正网格长；请到「网格管理」任命。'
+                : editingSelf
+                  ? isPrimaryManager
+                    ? '本账号可开通工程师以登录 H5；正管电站会自动同步工程师编制。'
+                    : '本账号可开通工程师以登录 H5；开通后请到「人员」点「聘用本人」。'
+                  : deputyOnly
+                    ? '副网格长只能开工程师账号；上岗请到「人员」。'
+                    : '此处只开账号。加入哪座电站请到「网格管理 → 人员」。'
             }
           >
             <Checkbox.Group options={roleOptions} />
@@ -679,21 +616,6 @@ export default function UsersPage() {
             <Input.Password />
           </Form.Item>
         </Form>
-      </Modal>
-
-      <Modal
-        title={`聘用到网格 - ${hireUser?.realName || ''}`}
-        open={hireOpen}
-        onCancel={() => setHireOpen(false)}
-        onOk={() => void submitHire()}
-      >
-        <Select
-          style={{ width: '100%' }}
-          placeholder="选择所管网格"
-          value={hireSiteId}
-          onChange={setHireSiteId}
-          options={managedSites.map((s) => ({ value: s.id, label: `${s.name}（${s.code}）` }))}
-        />
       </Modal>
     </div>
   );

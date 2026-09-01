@@ -19,6 +19,9 @@ export interface TaskItem {
   createdAt?: string;
   serviceCaseId?: string | null;
   workUnitId?: string | null;
+  /** 费用案例号 */
+  gspCaseNo?: string | null;
+  productLine?: string | null;
   /** 费用案例服务类型名（故障恢复/维护等），优先用于文案 */
   taskTypeName?: string | null;
   serviceType?: string | null;

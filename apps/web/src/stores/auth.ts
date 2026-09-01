@@ -89,6 +89,10 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         rolePicked: true,
         hydrated: true,
       });
+      // 本地会话不含网格编制；后台补拉，避免个人资料显示「暂无所属网格」
+      void get()
+        .fetchMe()
+        .catch(() => undefined);
       return;
     }
     set({ token: null, user: null, currentSite: null, rolePicked: false, hydrated: true });

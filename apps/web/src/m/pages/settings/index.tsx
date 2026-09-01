@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { NavBar, Form, Field, Button, Toast, Popup } from 'react-vant';
+import { NavBar, Form, Field, Button, Toast, Popup } from '@/m/lib/react-vant';
 import { useAuthStore } from '../../stores/auth';
 import { updateProfileApi, changePasswordApi } from '../../api/auth';
 import './settings.css';
@@ -22,7 +22,7 @@ const STATUS_LABEL: Record<string, string> = {
 /** H5 设置：资料与改密 */
 export default function SettingsPage() {
   const navigate = useNavigate();
-  const { user, fetchMe } = useAuthStore();
+  const { user, currentSite, fetchMe } = useAuthStore();
   const [realName, setRealName] = useState('');
   const [phone, setPhone] = useState('');
   const [email, setEmail] = useState('');
@@ -33,6 +33,10 @@ export default function SettingsPage() {
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [pwdSaving, setPwdSaving] = useState(false);
+
+  useEffect(() => {
+    void fetchMe().catch(() => undefined);
+  }, [fetchMe]);
 
   useEffect(() => {
     setRealName(user?.realName || '');
@@ -49,9 +53,11 @@ export default function SettingsPage() {
   const sitesText = useMemo(() => {
     const names = (user?.siteMemberships || [])
       .map((m) => m.site?.name)
-      .filter(Boolean);
-    return names.length ? names.join('、') : '暂无所属网格';
-  }, [user]);
+      .filter(Boolean) as string[];
+    if (names.length) return names.join('、');
+    if (currentSite?.name) return currentSite.name;
+    return '暂无所属网格';
+  }, [user, currentSite]);
 
   const saveProfile = async () => {
     if (!realName.trim()) {

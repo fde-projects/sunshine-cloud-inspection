@@ -1,8 +1,9 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { Loading, Toast, ActionSheet, DatetimePicker } from 'react-vant';
+import { Loading, Toast, ActionSheet, DatetimePicker } from '@/m/lib/react-vant';
 import {
   completeFinanceUnit,
   fetchMyFinanceCase,
@@ -136,6 +137,35 @@ type DraftLine = {
   voucherUrls: string[];
   photoUrls: string[];
 };
+
+function lineStatusHint(line: DraftLine): { ready: boolean; text: string } {
+  if (line.type === 'trip') {
+    const hasStart =
+      !!line.startOdometerUrl &&
+      line.startNavShots.length > 0 &&
+      line.startMileage !== '' &&
+      Number.isFinite(Number(line.startMileage));
+    const hasEnd =
+      !!line.endOdometerUrl &&
+      line.endNavShots.length > 0 &&
+      line.endMileage !== '' &&
+      Number.isFinite(Number(line.endMileage));
+    if (hasStart && hasEnd && line.expenseDate) return { ready: true, text: '已齐' };
+    if (!hasStart) return { ready: false, text: '缺开始里程/导航' };
+    if (!hasEnd) return { ready: false, text: '缺结束里程/导航' };
+    if (!line.expenseDate) return { ready: false, text: '缺日期' };
+    return { ready: false, text: '未填完' };
+  }
+  if (!line.content.trim()) return { ready: false, text: '缺内容' };
+  if (!(Number(line.amount) > 0)) return { ready: false, text: '缺金额' };
+  if (!line.photoUrls.length) return { ready: false, text: '缺照片' };
+  if (!line.expenseDate) return { ready: false, text: '缺日期' };
+  return { ready: true, text: '已齐' };
+}
+
+function typeLabel(type: LineType) {
+  return type === 'trip' ? '行程' : type === 'toll' ? '过路费' : '其他';
+}
 
 const newId = () =>
   typeof crypto !== 'undefined' && crypto.randomUUID
@@ -312,6 +342,9 @@ export default function FinanceExpensePage() {
   const [viewer, setViewer] = useState<{ urls: string[]; index: number } | null>(null);
 
   const [lines, setLines] = useState<DraftLine[]>([emptyLine('trip')]);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [focusLineId, setFocusLineId] = useState<string | null>(null);
+  const lineSnapshotRef = useRef<DraftLine | null>(null);
   const [status, setStatus] = useState('draft');
   const [reviewNote, setReviewNote] = useState<string | null>(null);
   const [claimAmount, setClaimAmount] = useState<string | null>(null);
@@ -320,8 +353,39 @@ export default function FinanceExpensePage() {
   const unitLabel = item?.unitLabel || '台';
   const isMulti = item?.assignMode === 'multi';
 
+  const openLine = (lineId: string) => {
+    const line = lines.find((l) => l.id === lineId);
+    lineSnapshotRef.current = line ? (JSON.parse(JSON.stringify(line)) as DraftLine) : null;
+    setEditingId(lineId);
+    window.setTimeout(() => {
+      document
+        .getElementById(`exp-line-${lineId}`)
+        ?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 50);
+  };
+
+  const collapseEditing = (discard = false) => {
+    if (discard && lineSnapshotRef.current) {
+      const snap = lineSnapshotRef.current;
+      setLines((prev) => prev.map((l) => (l.id === snap.id ? { ...snap } : l)));
+      Toast.info('已还原本条修改');
+    }
+    lineSnapshotRef.current = null;
+    setEditingId(null);
+  };
+
+  const focusExpenseLine = (lineId: string, message: string) => {
+    openLine(lineId);
+    setFocusLineId(lineId);
+    Toast.fail(message);
+    window.setTimeout(() => setFocusLineId((cur) => (cur === lineId ? null : cur)), 2800);
+  };
+
   const applyClaim = (claim?: TripExpenseClaim | null) => {
-    setLines(claimToLines(claim));
+    const next = claimToLines(claim);
+    setLines(next);
+    // 多条默认收起只看摘要；仅一条时直接展开编辑
+    setEditingId(next.length === 1 ? next[0].id : null);
     if (!claim || claim.tripSkipped) {
       setStatus('draft');
       setReviewNote(null);
@@ -372,6 +436,28 @@ export default function FinanceExpensePage() {
     () => lines.reduce((sum, line) => sum + (Number(line.amount) || 0), 0),
     [lines],
   );
+  const incompleteLines = useMemo(
+    () => lines.filter((line) => !lineStatusHint(line).ready),
+    [lines],
+  );
+
+  const editingLine = useMemo(
+    () => (editingId ? lines.find((l) => l.id === editingId) || null : null),
+    [editingId, lines],
+  );
+  const editingIndex = editingLine
+    ? lines.findIndex((l) => l.id === editingLine.id)
+    : -1;
+
+  const jumpToNextIncomplete = () => {
+    if (!incompleteLines.length) {
+      Toast.success('明细已齐');
+      return;
+    }
+    const curIdx = incompleteLines.findIndex((l) => l.id === editingId);
+    const next = incompleteLines[(curIdx + 1) % incompleteLines.length] || incompleteLines[0];
+    openLine(next.id);
+  };
 
   const updateLine = (lineId: string, patch: Partial<DraftLine>) => {
     setLines((prev) =>
@@ -394,34 +480,35 @@ export default function FinanceExpensePage() {
   };
 
   const addLine = (type: LineType = 'toll') => {
-    setLines((prev) => [...prev, emptyLine(type)]);
+    const created = emptyLine(type);
+    setLines((prev) => [...prev, created]);
+    openLine(created.id);
   };
 
   const copyLine = (lineId: string) => {
     setLines((prev) => {
       const src = prev.find((l) => l.id === lineId);
       if (!src) return prev;
-      return [
-        ...prev,
-        {
-          ...src,
-          id: newId(),
-          // 复制时不带图，避免误交旧凭证；字段可改
-          startOdometerUrl: '',
-          startMileage: '',
-          startNavShots: [],
-          endOdometerUrl: '',
-          endMileage: '',
-          endNavShots: [],
-          voucherUrls: [],
-          photoUrls: [],
-        },
-      ];
+      const created: DraftLine = {
+        ...src,
+        id: newId(),
+        startOdometerUrl: '',
+        startMileage: '',
+        startNavShots: [],
+        endOdometerUrl: '',
+        endMileage: '',
+        endNavShots: [],
+        voucherUrls: [],
+        photoUrls: [],
+      };
+      window.setTimeout(() => openLine(created.id), 0);
+      return [...prev, created];
     });
   };
 
   const removeLine = (lineId: string) => {
     setLines((prev) => (prev.length <= 1 ? prev : prev.filter((l) => l.id !== lineId)));
+    setEditingId((cur) => (cur === lineId ? null : cur));
   };
 
   const openPick = (target: string, multi = false) => {
@@ -433,17 +520,12 @@ export default function FinanceExpensePage() {
 
   const runFilePick = (mode: 'camera' | 'gallery') => {
     const multi = pickMulti && mode === 'gallery';
-    if (mode === 'camera') {
-      if (cameraRef.current) {
-        cameraRef.current.multiple = false;
-        setTimeout(() => cameraRef.current?.click(), 0);
-      }
-      return;
-    }
-    if (fileRef.current) {
-      fileRef.current.multiple = multi;
-      setTimeout(() => fileRef.current?.click(), 0);
-    }
+    const input = mode === 'camera' ? cameraRef.current : fileRef.current;
+    if (!input) return;
+    input.multiple = multi;
+    // 必须在同一用户点击栈内同步 click；ActionSheet.onSelect 自带 setTimeout，不可依赖
+    input.value = '';
+    input.click();
   };
 
   const runOcr = async (lineId: string, imageUrl: string, kind: 'start' | 'end') => {
@@ -483,7 +565,7 @@ export default function FinanceExpensePage() {
         uploaded.push(url);
       }
       if (!uploaded.length) {
-        Toast.fail('上传失败');
+        Toast.fail('上传失败，请重试');
         return;
       }
 
@@ -551,8 +633,17 @@ export default function FinanceExpensePage() {
         );
         Toast.success(uploaded.length > 1 ? `已上传 ${uploaded.length} 张` : '已上传');
       }
-    } catch {
-      Toast.fail('上传失败');
+    } catch (err) {
+      const msg =
+        err instanceof Error && err.message
+          ? err.message
+          : typeof err === 'object' &&
+              err &&
+              'message' in err &&
+              typeof (err as { message?: unknown }).message === 'string'
+            ? String((err as { message: string }).message)
+            : '';
+      Toast.fail(msg && msg.length < 80 ? msg : '上传失败，请重试');
     } finally {
       setUploading(false);
       setPickTarget(null);
@@ -576,44 +667,43 @@ export default function FinanceExpensePage() {
       const line = lines[i];
       const n = i + 1;
       if (line.type === 'other' && !line.content.trim()) {
-        Toast.fail(`费用明细 ${n}：请填写内容`);
+        focusExpenseLine(line.id, `费用明细 ${n}：请填写内容`);
         return false;
       }
       if (forSubmit && !line.expenseDate) {
-        Toast.fail(`费用明细 ${n}：请选择日期`);
+        focusExpenseLine(line.id, `费用明细 ${n}：请选择日期`);
         return false;
       }
       if (line.type === 'trip') {
         if (forSubmit) {
           if (!line.startOdometerUrl || !line.startNavShots.length) {
-            Toast.fail(`费用明细 ${n}：请上传开始里程图和导航截图`);
+            focusExpenseLine(line.id, `费用明细 ${n}：请上传开始里程图和导航截图`);
             return false;
           }
           if (line.startMileage === '' || !Number.isFinite(Number(line.startMileage))) {
-            Toast.fail(`费用明细 ${n}：请填写开始里程`);
+            focusExpenseLine(line.id, `费用明细 ${n}：请填写开始里程`);
             return false;
           }
           if (!line.endOdometerUrl || !line.endNavShots.length) {
-            Toast.fail(`费用明细 ${n}：请上传结束里程图和导航截图`);
+            focusExpenseLine(line.id, `费用明细 ${n}：请上传结束里程图和导航截图`);
             return false;
           }
           if (line.endMileage === '' || !Number.isFinite(Number(line.endMileage))) {
-            Toast.fail(`费用明细 ${n}：请填写结束里程`);
+            focusExpenseLine(line.id, `费用明细 ${n}：请填写结束里程`);
             return false;
           }
           if (Number(line.endMileage) < Number(line.startMileage)) {
-            Toast.fail(`费用明细 ${n}：结束里程不能小于开始里程`);
+            focusExpenseLine(line.id, `费用明细 ${n}：结束里程不能小于开始里程`);
             return false;
           }
-          // 行程已有里程/导航作依据，费用凭证可选
         }
       } else if (forSubmit) {
         if (!(Number(line.amount) > 0)) {
-          Toast.fail(`费用明细 ${n}：请填写金额`);
+          focusExpenseLine(line.id, `费用明细 ${n}：请填写金额`);
           return false;
         }
         if (!line.photoUrls.length) {
-          Toast.fail(`费用明细 ${n}：请上传照片`);
+          focusExpenseLine(line.id, `费用明细 ${n}：请上传照片`);
           return false;
         }
       }
@@ -634,9 +724,17 @@ export default function FinanceExpensePage() {
       for (const [key, idxs] of rangeIndex) {
         if (idxs.length < 2) continue;
         const [start, end] = key.split('->');
-        Toast.fail(
-          `行程明细 ${idxs.join('、')} 起止里程完全相同（${start} → ${end}），请核对是否重复填写`,
-        );
+        const first = lines[idxs[0] - 1];
+        if (first) {
+          focusExpenseLine(
+            first.id,
+            `行程明细 ${idxs.join('、')} 起止里程完全相同（${start} → ${end}），请核对是否重复填写`,
+          );
+        } else {
+          Toast.fail(
+            `行程明细 ${idxs.join('、')} 起止里程完全相同（${start} → ${end}），请核对是否重复填写`,
+          );
+        }
         return false;
       }
     }
@@ -748,25 +846,85 @@ export default function FinanceExpensePage() {
   }
 
   return (
-    <div className="mobile-finance-page">
-      <header className="mobile-finance-head">
-        <button type="button" onClick={() => navigate(`/m/finance-cases/${id}`)}>
-          ← 返回
-        </button>
-        <h1>费用明细</h1>
-      </header>
+    <div
+      className={`mobile-finance-page exp-page${readonly ? ' is-readonly' : ''}${
+        editingId ? ' is-editing-line' : ''
+      }`}
+    >
+      <div className="exp-sticky-chrome">
+        <header className="mobile-finance-head exp-page-head">
+          <button
+            type="button"
+            onClick={() => {
+              if (editingId) collapseEditing(false);
+              navigate(`/m/finance-cases/${id}`);
+            }}
+          >
+            ← 返回
+          </button>
+          <h1>费用明细</h1>
+        </header>
 
-      <section className="mobile-finance-card">
+        <div className={`exp-sticky-bar${editingId ? ' is-editing' : ''}`}>
+          {editingId && editingLine ? (
+            <>
+              <div className="exp-sticky-bar-main">
+                <button
+                  type="button"
+                  className="exp-sticky-collapse"
+                  onClick={() => collapseEditing(false)}
+                >
+                  收起
+                </button>
+                <strong className="exp-sticky-edit-title">
+                  明细 {editingIndex + 1} · {typeLabel(editingLine.type)}
+                </strong>
+              </div>
+              <div className="exp-sticky-bar-actions">
+                {!readonly && (
+                  <button
+                    type="button"
+                    className="exp-sticky-bar-link"
+                    onClick={() => collapseEditing(true)}
+                  >
+                    放弃修改
+                  </button>
+                )}
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="exp-sticky-bar-main">
+                <span
+                  className={`mobile-finance-status ${
+                    status === 'rejected' ? 'is-reject' : status === 'draft' ? 'is-pending' : ''
+                  }`}
+                >
+                  {STATUS_LABEL[status] || status}
+                </span>
+                <strong>合计 ¥{totalAmount.toFixed(2)}</strong>
+              </div>
+              {!readonly && (
+                <button
+                  type="button"
+                  className={`exp-sticky-bar-link ${incompleteLines.length ? 'is-warn' : 'is-ok'}`}
+                  onClick={jumpToNextIncomplete}
+                >
+                  {incompleteLines.length ? `未齐 ${incompleteLines.length} 条` : '明细已齐'}
+                </button>
+              )}
+            </>
+          )}
+        </div>
+      </div>
+
+      <section className="mobile-finance-card exp-case-card">
         <div className="mobile-finance-row">
           <h2>{item.projectName || item.gspCaseNo}</h2>
-          <span className="mobile-finance-status">{STATUS_LABEL[status] || status}</span>
         </div>
-        <div className="trip-remind-banner" style={{ marginTop: 10 }}>
-          <strong>按需填写</strong>
-          <p>
-            可添加多条费用明细。行程需填里程与导航；过路费等上传凭证即可。不报销直接返回。
-          </p>
-        </div>
+        <p className="exp-case-tip">
+          点摘要展开编辑；行程需里程与导航。不报销可直接返回。
+        </p>
         {status === 'approved' && approvedAmount != null && (
           <p className="trip-diff" style={{ marginTop: 10 }}>
             申报 ¥{Number(claimAmount || totalAmount || 0).toFixed(2)} · 核定报销{' '}
@@ -777,20 +935,54 @@ export default function FinanceExpensePage() {
           <p className="trip-reject">驳回原因：{reviewNote}</p>
         )}
         {isMulti && unitId ? (
-          <p className="trip-unit-tag">
-            关联{unitLabel} · 可选
-          </p>
+          <p className="trip-unit-tag">关联{unitLabel} · 可选</p>
         ) : null}
       </section>
 
       {lines.map((line, index) => {
         const diff = mileageDiff(line);
-        return (
-          <section className="exp-line-card" key={line.id}>
-            <div className="exp-line-head">
-              <h3>费用明细 {index + 1}</h3>
+        const expanded = editingId === line.id;
+        const hint = lineStatusHint(line);
+        const title =
+          line.type === 'other' && line.content.trim()
+            ? line.content.trim()
+            : typeLabel(line.type);
+        const amountText =
+          line.amount !== '' && Number.isFinite(Number(line.amount))
+            ? `¥${Number(line.amount).toFixed(2)}`
+            : '金额未填';
+
+        if (!expanded) {
+          return (
+            <section
+              id={`exp-line-${line.id}`}
+              key={line.id}
+              className={`exp-line-card exp-line-summary ${
+                focusLineId === line.id ? 'is-focus' : ''
+              } ${hint.ready ? 'is-ready' : 'is-todo'}`}
+            >
+              <button
+                type="button"
+                className="exp-summary-main"
+                onClick={() => openLine(line.id)}
+              >
+                <div className="exp-summary-top">
+                  <strong>
+                    {index + 1}. {title}
+                  </strong>
+                  <em className={hint.ready ? 'is-ok' : 'is-warn'}>{hint.text}</em>
+                </div>
+                <div className="exp-summary-meta">
+                  <span>{typeLabel(line.type)}</span>
+                  <span>{line.expenseDate || '未选日期'}</span>
+                  <span>{amountText}</span>
+                </div>
+              </button>
               {!readonly && (
-                <div className="exp-line-actions">
+                <div className="exp-line-actions exp-summary-actions">
+                  <button type="button" onClick={() => openLine(line.id)}>
+                    编辑
+                  </button>
                   <button type="button" onClick={() => copyLine(line.id)}>
                     复制
                   </button>
@@ -804,8 +996,46 @@ export default function FinanceExpensePage() {
                   </button>
                 </div>
               )}
+            </section>
+          );
+        }
+
+        return (
+          <section
+            id={`exp-line-${line.id}`}
+            className={`exp-line-card exp-line-card--editing ${
+              focusLineId === line.id ? 'is-focus' : ''
+            }`}
+            key={line.id}
+          >
+            <div className="exp-line-head">
+              <h3>
+                明细 {index + 1} · {typeLabel(line.type)}
+                <small className={hint.ready ? 'is-ok' : 'is-warn'}>{hint.text}</small>
+              </h3>
+              <div className="exp-line-actions">
+                {!readonly && (
+                  <>
+                    <button type="button" onClick={() => copyLine(line.id)}>
+                      复制
+                    </button>
+                    <button
+                      type="button"
+                      className="is-danger"
+                      disabled={lines.length <= 1}
+                      onClick={() => removeLine(line.id)}
+                    >
+                      删除
+                    </button>
+                  </>
+                )}
+                <button type="button" onClick={() => collapseEditing(false)}>
+                  收起
+                </button>
+              </div>
             </div>
 
+            <div className="exp-line-body">
             <label className="trip-field">
               <span>类型 *</span>
               <select
@@ -1050,44 +1280,58 @@ export default function FinanceExpensePage() {
                 onChange={(e) => updateLine(line.id, { note: e.target.value })}
               />
             </label>
+
+            <button
+              type="button"
+              className="exp-collapse-btn"
+              onClick={() => collapseEditing(false)}
+            >
+              完成编辑并收起
+            </button>
+            </div>
           </section>
         );
       })}
 
-      {!readonly && (
-        <section className="mobile-finance-card exp-add-card">
-          <button type="button" className="exp-add-btn" onClick={() => addLine('toll')}>
-            + 添加明细
-          </button>
-          <p className="exp-line-hint" style={{ marginTop: 8 }}>
-            合计申报 ¥{totalAmount.toFixed(2)}
-          </p>
-          <button
-            type="button"
-            className="mobile-finance-secondary"
-            style={{ width: '100%', marginTop: 12 }}
-            disabled={busy}
-            onClick={() => void save(false)}
-          >
-            保存草稿
-          </button>
-          <button
-            type="button"
-            className="mobile-finance-primary"
-            style={{ width: '100%', marginTop: 10 }}
-            disabled={busy}
-            onClick={() => void save(true)}
-          >
-            提交费用审核
-          </button>
-        </section>
-      )}
+      {!readonly &&
+        createPortal(
+          <div className="exp-sticky-dock">
+            <div className="exp-sticky-dock-row">
+              <button type="button" className="exp-dock-add" onClick={() => addLine('toll')}>
+                + 明细
+              </button>
+              <div className="exp-dock-total">
+                <span>合计申报</span>
+                <strong>¥{totalAmount.toFixed(2)}</strong>
+              </div>
+            </div>
+            <div className="exp-sticky-dock-actions">
+              <button
+                type="button"
+                className="mobile-finance-secondary"
+                disabled={busy}
+                onClick={() => void save(false)}
+              >
+                保存草稿
+              </button>
+              <button
+                type="button"
+                className="mobile-finance-primary"
+                disabled={busy}
+                onClick={() => void save(true)}
+              >
+                提交审核
+              </button>
+            </div>
+          </div>,
+          document.body,
+        )}
 
       <input
         ref={fileRef}
         type="file"
         accept="image/*"
-        hidden
+        className="exp-file-input"
         onChange={(e) => void onPick(e.target.files)}
       />
       <input
@@ -1095,27 +1339,26 @@ export default function FinanceExpensePage() {
         type="file"
         accept="image/*"
         capture="environment"
-        hidden
+        className="exp-file-input"
         onChange={(e) => void onPick(e.target.files)}
       />
 
       <ActionSheet
         visible={pickSheetOpen}
-        onCancel={() => {
-          setPickSheetOpen(false);
-          setPickTarget(null);
-        }}
+        closeOnClickAction
+        onCancel={() => setPickSheetOpen(false)}
         cancelText="取消"
         actions={[
-          { name: '拍照' },
+          {
+            name: '拍照',
+            callback: () => runFilePick('camera'),
+          },
           {
             name: pickMulti ? '从相册选择（可多选）' : '从相册选择',
+            callback: () => runFilePick('gallery'),
           },
         ]}
-        onSelect={(action) => {
-          setPickSheetOpen(false);
-          runFilePick(action.name === '拍照' ? 'camera' : 'gallery');
-        }}
+        onSelect={() => setPickSheetOpen(false)}
       />
 
       {viewer && (

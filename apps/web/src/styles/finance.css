@@ -44,6 +44,29 @@
   min-width: 132px;
   flex: 0 0 auto;
 }
+/* 仅案例管理：日期成组不拆行；其余仍用公共 .finance-toolbar 换行 */
+.finance-cases-page .finance-cases-toolbar .ant-input-search {
+  width: 220px;
+}
+.finance-cases-page .finance-cases-toolbar .ant-input,
+.finance-cases-page .finance-cases-toolbar .ant-select {
+  min-width: 0;
+}
+.finance-cases-page .finance-date-range {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+.finance-cases-page .finance-date-range .ant-input {
+  width: 142px;
+  min-width: 142px;
+}
+.finance-cases-page .finance-date-range > span {
+  color: #888;
+  flex: 0 0 auto;
+}
 .finance-card {
   border: 0 !important;
   box-shadow: 0 8px 30px rgba(25, 82, 65, 0.07);
@@ -177,6 +200,19 @@
   .finance-toolbar > * {
     width: 100% !important;
     max-width: 100%;
+  }
+  .finance-cases-page .finance-cases-toolbar > *:not(.finance-date-range) {
+    width: 100% !important;
+    max-width: 100%;
+  }
+  .finance-cases-page .finance-date-range {
+    width: 100% !important;
+    justify-content: space-between;
+  }
+  .finance-cases-page .finance-date-range .ant-input {
+    flex: 1 1 0;
+    width: auto !important;
+    min-width: 0;
   }
   .finance-card .ant-table-wrapper {
     position: relative;

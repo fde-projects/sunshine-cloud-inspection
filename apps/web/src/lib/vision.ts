@@ -2,6 +2,7 @@ import { adminGql } from "./hasura-admin";
 import {
   failReasonIfShortOfRequiredShots,
   failReasonIfSlotsUncovered,
+  failReasonIfFaultTabsNotDistinct,
   fallbackViewLabel,
   HARD_RULE_FAIL_SAMPLE_LIMIT,
   HARD_RULE_PASS_SAMPLE_LIMIT,
@@ -37,17 +38,25 @@ function extractJson(text: string): Record<string, unknown> {
   }
 }
 
-/** 模型常把 status 写成 pass，理由却以「因此不合格」收尾；以理由最后结论为准，且只允许把误标的合格改成不合格。 */
+/** 模型常把 status 与 reason 最后结论写反；以理由末尾结论为准对齐 status。 */
 export function reconcileStatusWithReason(
   status: "pass" | "fail",
   reason: string,
 ): "pass" | "fail" {
   const t = reason.trim();
   if (!t) return status;
-  const tail = t.slice(-60);
+  const tail = t.slice(-80);
+  // 先认不合格结论，避免「不能判合格」被合格规则误伤
   const failTail =
-    /因此不合格|故不合格|判定为不合格|结论[:：]\s*不合格|必须判\s*fail|不合格[。．!！]?$/i.test(tail);
+    /因此不合格|故不合格|判定为不合格|结论[:：]\s*不合格|必须判\s*fail|不能判合格|不算合格|并非合格|不合格[。．!！]?$/i.test(
+      tail,
+    );
   if (failTail) return "fail";
+  const passTail =
+    /因此[^。；;]{0,24}合格|故合格|判定为合格|结论[:：]\s*合格|(?:本检查项|此项|该项)合格|必须判\s*pass|合格[。．!！]?$/i.test(
+      tail,
+    );
+  if (passTail) return "pass";
   return status;
 }
 
@@ -154,10 +163,22 @@ export async function analyzePhotos(input: {
   }
 
   const hasRefs = passViews.length + sampleFail.length > 0;
+  const needFaultTabs =
+    /实时故障/.test(`${input.title}\n${ruleBlock}\n${passViews.map((v) => v.label).join("\n")}`) &&
+    /历史故障/.test(`${input.title}\n${ruleBlock}\n${passViews.map((v) => v.label).join("\n")}`);
   const slotLine =
     passViews.length >= 2
-      ? `合格样共 ${passViews.length} 张，编号 1 到 ${passViews.length}：${passViews.map((item, i) => `${i + 1}=${item.label}`).join("，")}。covers 必须与待判定照片一一对应，值为合格样编号或 0（对不上）。每种合格样都必须被至少一张待判定对上；两张都像同一种则缺另一种，status 必须 fail。`
+      ? `合格样共 ${passViews.length} 张，编号 1 到 ${passViews.length}：${passViews.map((item, i) => `${i + 1}=${item.label}`).join("，")}。covers 必须与待判定照片一一对应，值为合格样编号或 0（对不上）。每种合格样都必须被至少一张待判定对上；两张都像同一种则 covers 必须写成同一编号（如[1,1]），status 必须 fail。禁止为了凑数把两张同一种图标成不同编号。`
       : "";
+  const faultLine = needFaultTabs
+    ? `故障页签专项：逐张只认「当前选中」的页签（高亮/下划线/填充色），未选中页签上的标题不算已拍。两张都必须分别是实时故障与历史故障；两张都是历史或都是实时 → fail。evidence.photoTypes 必须与待判定张数相同，取值只能是 realtime / historical / other；也可在 evidence.photoFindings 里写 selectedTab。`
+    : "";
+  const jsonExtra = [
+    passViews.length >= 2 ? `,"covers":[与待判定张数相同的合格样编号]` : "",
+    needFaultTabs
+      ? `,"evidence":{"photoTypes":["realtime或historical或other", "..."],"photoFindings":[{"photoIndex":1,"selectedTab":"实时故障或历史故障","note":"选中态依据"}]}`
+      : "",
+  ].join("");
   const prompt = `你是光伏/储能现场质检员。根据照片判断检查项是否合格。
 检查项：${input.title}
 标准：${input.description}
@@ -167,8 +188,9 @@ ${strict ? "判定纪律：证据不足或拿不准必须判 fail，禁止猜测
 必须看完每一张待判定照片再下结论，禁止只根据第一张判定。
 页签或按钮上的标题不等于已经拍了那一页：必须单独截到点开后的内容。一张图里同时看见「实时故障」和「历史故障」等标题，只算当前选中的那一页，未点开的那一页视为缺失，必须 fail。
 ${slotLine}
+${faultLine}
 status 必须与 reason 最后一句一致：理由写不合格则 status 必须是 fail，写合格则必须是 pass。
-只输出 JSON：{"status":"pass 或 fail","confidence":0到1的数字,"reason":"中文理由，最后一句写合格或不合格"${passViews.length >= 2 ? `,"covers":[与待判定张数相同的合格样编号]` : ""}}`;
+只输出 JSON：{"status":"pass 或 fail","confidence":0到1的数字,"reason":"中文理由，最后一句写合格或不合格"${jsonExtra}}`;
 
   const content: unknown[] = [{ type: "text", text: prompt }];
   passViews.forEach((item, i) => {
@@ -197,7 +219,7 @@ status 必须与 reason 最后一句一致：理由写不合格则 status 必须
       model,
       messages: [{ role: "user", content }],
       temperature: 0,
-      max_tokens: 500,
+      max_tokens: 800,
     }),
   });
   if (!res.ok) {
@@ -219,6 +241,15 @@ status 必须与 reason 最后一句一致：理由写不合格则 status 必须
   const uncovered = failReasonIfSlotsUncovered(passViews, covers);
   if (uncovered) {
     return { status: "fail", confidence: 1, reason: uncovered, provider: "siliconflow" };
+  }
+  const faultTabs = failReasonIfFaultTabsNotDistinct(parsed, {
+    title: input.title,
+    ruleText: ruleBlock,
+    passLabels: passViews.map((item) => item.label),
+    photoCount: fieldPhotos.length,
+  });
+  if (faultTabs) {
+    return { status: "fail", confidence: 1, reason: faultTabs, provider: "siliconflow" };
   }
   const rawStatus = parsed.status === "fail" ? "fail" : parsed.status === "pass" ? "pass" : "fail";
   return {
@@ -360,4 +391,97 @@ export async function suggestPassViewLabels(input: {
     return { labels: fallback, provider: "siliconflow" };
   }
   return { labels: uniquifyViewLabels(raw), provider: "siliconflow" };
+}
+
+async function callVisionJson(prompt: string, imageUrl: string): Promise<{
+  parsed: Record<string, unknown>;
+  rawText: string;
+  provider: string;
+}> {
+  const apiKey = (process.env.VISION_API_KEY || "").trim();
+  const base = (process.env.VISION_BASE_URL || "https://api.siliconflow.cn/v1").replace(/\/$/, "");
+  const model = process.env.VISION_MODEL || "Qwen/Qwen3-VL-8B-Instruct";
+  if (!apiKey) {
+    return { parsed: {}, rawText: "", provider: "mock" };
+  }
+  const res = await fetch(`${base}/chat/completions`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      authorization: `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({
+      model,
+      messages: [
+        {
+          role: "user",
+          content: [
+            { type: "text", text: prompt },
+            { type: "image_url", image_url: { url: imageUrl } },
+          ],
+        },
+      ],
+      temperature: 0,
+      max_tokens: 300,
+    }),
+  });
+  if (!res.ok) {
+    const t = await res.text();
+    return {
+      parsed: {},
+      rawText: `vision_error:${res.status}:${t.slice(0, 120)}`,
+      provider: "siliconflow",
+    };
+  }
+  const json = (await res.json()) as { choices?: { message?: { content?: string } }[] };
+  const text = json.choices?.[0]?.message?.content || "";
+  return { parsed: extractJson(text), rawText: text, provider: "siliconflow" };
+}
+
+/** 里程表 OCR：读出公里数，失败时 mileage 为 null（前端可手填） */
+export async function ocrMileageFromImage(imageUrl: string, kind: "start" | "end" | string = "start") {
+  const { parsed, rawText, provider } = await callVisionJson(
+    `这是汽车/工程车里程表照片（${kind === "end" ? "结束" : "开始"}里程）。
+请识别表上当前显示的总里程数字（单位 km）。忽略小数位以外的干扰字符。
+只输出 JSON：{"mileage":数字或null,"confidence":0到1,"rawText":"你看到的数字原文"}`,
+    imageUrl,
+  );
+  const mileageRaw = parsed.mileage;
+  const mileage =
+    typeof mileageRaw === "number"
+      ? mileageRaw
+      : typeof mileageRaw === "string" && mileageRaw.trim()
+        ? Number(mileageRaw.replace(/[^\d.]/g, ""))
+        : null;
+  const confidence =
+    typeof parsed.confidence === "number" ? parsed.confidence : mileage != null && !Number.isNaN(mileage) ? 0.6 : 0;
+  return {
+    mileage: mileage != null && !Number.isNaN(mileage) ? mileage : null,
+    confidence,
+    rawText: String(parsed.rawText || rawText || "").slice(0, 200),
+    kind,
+    provider,
+  };
+}
+
+/** 设备铭牌/机身序列号 OCR */
+export async function ocrDeviceSerialFromImage(imageUrl: string) {
+  const { parsed, rawText, provider } = await callVisionJson(
+    `这是光伏/储能设备铭牌或机身序列号照片。
+请识别设备序列号（Serial Number / SN），去掉空格，保留字母数字与常见分隔符。
+只输出 JSON：{"serial":"序列号或空字符串","confidence":0到1,"rawText":"原文"}`,
+    imageUrl,
+  );
+  const serial = String(parsed.serial || "")
+    .trim()
+    .replace(/\s+/g, "")
+    .toUpperCase();
+  const confidence =
+    typeof parsed.confidence === "number" ? parsed.confidence : serial.length >= 4 ? 0.6 : 0;
+  return {
+    serial: serial.length >= 4 ? serial : null,
+    confidence,
+    rawText: String(parsed.rawText || rawText || "").slice(0, 200),
+    provider,
+  };
 }

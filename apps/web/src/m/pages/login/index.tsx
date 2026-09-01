@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Button, Form, Field, Toast } from "react-vant";
+import { Button, Form, Field, Toast } from "@/m/lib/react-vant";
 import { nextPathAfterAuth, useAuthStore } from "@/stores/auth";
 import { brandMarkText, useBrandingStore } from "@/stores/branding";
 import "./login.css";

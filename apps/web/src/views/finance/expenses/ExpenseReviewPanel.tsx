@@ -22,7 +22,6 @@ import { displayPhotoUrl } from '../../../utils/photo-url';
 import { useDrawerWidth } from '../../../hooks/useDrawerWidth';
 import DayDatePicker from '../../../components/DayDatePicker';
 import FillTable from '../../../components/FillTable';
-import { LAYOUT_DEMO_COUNT, padLayoutDemo } from '../../../utils/layoutDemo';
 
 export type ExpenseReviewItem = {
   id: string;
@@ -86,7 +85,10 @@ const tabLabel: Record<ExpenseTab, string> = {
 
 type TripMileageSummary = {
   tripCount: number;
-  totalKm: number | null;
+  /** 各段填写的里程差之和（段1差+段2差+…） */
+  filledTotalKm: number | null;
+  /** 最早开始 → 最晚结束 的跨度差 */
+  spanKm: number | null;
   startMileage: string | null;
   endMileage: string | null;
 };
@@ -94,8 +96,8 @@ type TripMileageSummary = {
 function tripMileageSummary(row: ExpenseReviewItem): TripMileageSummary {
   const trips = (row.lineItems || []).filter((l) => l.type === 'trip');
   if (trips.length) {
-    let total = 0;
-    let hasKm = false;
+    let filledTotal = 0;
+    let hasFilled = false;
     let minStart: number | null = null;
     let maxEnd: number | null = null;
     for (const trip of trips) {
@@ -121,19 +123,34 @@ function tripMileageSummary(row: ExpenseReviewItem): TripMileageSummary {
         km = Math.round((endM - startM) * 10) / 10;
       }
       if (km != null) {
-        total += km;
-        hasKm = true;
+        filledTotal += km;
+        hasFilled = true;
       }
     }
+    const spanKm =
+      minStart != null && maxEnd != null && maxEnd >= minStart
+        ? Math.round((maxEnd - minStart) * 10) / 10
+        : null;
     return {
       tripCount: trips.length,
-      totalKm: hasKm ? Math.round(total * 10) / 10 : null,
-      startMileage: minStart != null ? minStart.toFixed(1) : null,
-      endMileage: maxEnd != null ? maxEnd.toFixed(1) : null,
+      filledTotalKm: hasFilled ? Math.round(filledTotal * 10) / 10 : null,
+      spanKm,
+      startMileage: minStart != null ? String(minStart) : null,
+      endMileage: maxEnd != null ? String(maxEnd) : null,
     };
   }
   const fallbackKm =
     row.mileageKm != null && row.mileageKm !== '' ? Number(row.mileageKm) : NaN;
+  const startM =
+    row.startMileage != null && row.startMileage !== ''
+      ? Number(row.startMileage)
+      : NaN;
+  const endM =
+    row.endMileage != null && row.endMileage !== '' ? Number(row.endMileage) : NaN;
+  const spanKm =
+    Number.isFinite(startM) && Number.isFinite(endM) && endM >= startM
+      ? Math.round((endM - startM) * 10) / 10
+      : null;
   const hasLegacy = !!(
     row.startMileage ||
     row.endMileage ||
@@ -141,7 +158,10 @@ function tripMileageSummary(row: ExpenseReviewItem): TripMileageSummary {
   );
   return {
     tripCount: hasLegacy ? 1 : 0,
-    totalKm: Number.isFinite(fallbackKm) ? fallbackKm : null,
+    filledTotalKm: Number.isFinite(fallbackKm)
+      ? fallbackKm
+      : spanKm,
+    spanKm,
     startMileage: row.startMileage ?? null,
     endMileage: row.endMileage ?? null,
   };
@@ -149,13 +169,33 @@ function tripMileageSummary(row: ExpenseReviewItem): TripMileageSummary {
 
 function formatMileageLabel(summary: TripMileageSummary): string {
   if (summary.tripCount <= 0) return '-';
-  if (summary.totalKm == null) {
-    return summary.tripCount > 1 ? `共${summary.tripCount}段` : '-';
+  const filled =
+    summary.filledTotalKm != null ? `填写合计 ${summary.filledTotalKm} km` : null;
+  const span =
+    summary.spanKm != null ? `跨度 ${summary.spanKm} km` : null;
+  if (filled && span && summary.tripCount > 1) return `${filled} / ${span}`;
+  if (filled) return filled;
+  if (span) return span;
+  return summary.tripCount > 1 ? `共${summary.tripCount}段` : '-';
+}
+
+function lineTripDiffKm(line: NonNullable<ExpenseReviewItem['lineItems']>[number]) {
+  if (line.mileageKm != null && line.mileageKm !== '') {
+    const n = Number(line.mileageKm);
+    if (Number.isFinite(n)) return n;
   }
-  if (summary.tripCount > 1) {
-    return `共${summary.tripCount}段 ${summary.totalKm} km`;
+  const startM =
+    line.startMileage != null && line.startMileage !== ''
+      ? Number(line.startMileage)
+      : NaN;
+  const endM =
+    line.endMileage != null && line.endMileage !== ''
+      ? Number(line.endMileage)
+      : NaN;
+  if (Number.isFinite(startM) && Number.isFinite(endM) && endM >= startM) {
+    return Math.round((endM - startM) * 10) / 10;
   }
-  return `${summary.totalKm} km`;
+  return null;
 }
 
 const statusTag = (status?: string) => {
@@ -175,7 +215,8 @@ function VoucherGallery({
   showAllInGrid?: boolean;
 }) {
   if (!urls.length) return <span>-</span>;
-  const displayUrls = urls.map((url) => displayPhotoUrl(url));
+  const displayUrls = urls.map((url) => displayPhotoUrl(url)).filter(Boolean);
+  if (!displayUrls.length) return <span>-</span>;
   if (showAllInGrid) {
     return (
       <Image.PreviewGroup>
@@ -184,6 +225,7 @@ function VoucherGallery({
             <Image
               key={url}
               src={url}
+              referrerPolicy="no-referrer"
               width={96}
               height={96}
               style={{ objectFit: 'cover', borderRadius: 8 }}
@@ -198,12 +240,18 @@ function VoucherGallery({
       <Space size={6} align="center">
         <Image
           src={displayUrls[0]}
+          referrerPolicy="no-referrer"
           width={coverSize}
           height={coverSize}
           style={{ objectFit: 'cover', borderRadius: 8, cursor: 'pointer' }}
         />
         {displayUrls.slice(1).map((url) => (
-          <Image key={url} src={url} style={{ display: 'none' }} />
+          <Image
+            key={url}
+            src={url}
+            referrerPolicy="no-referrer"
+            style={{ display: 'none' }}
+          />
         ))}
         <Tag style={{ marginInlineEnd: 0 }}>共 {urls.length} 张 · 点击查看</Tag>
       </Space>
@@ -283,48 +331,7 @@ export default function ExpenseReviewPanel({ onChanged }: Props) {
         keyword: keyword.trim() || undefined,
         month: month || undefined,
       })) as ExpenseReviewItem[];
-      const status =
-        tab === 'approved' ? 'approved' : tab === 'rejected' ? 'rejected' : 'submitted';
-      setRows(
-        padLayoutDemo(list, LAYOUT_DEMO_COUNT, (n) => {
-          const claim = 80 + n * 7;
-          return {
-            id: `layout-demo-expense-${n}`,
-            serviceCaseId: `layout-demo-case-${n}`,
-            gspCaseNo: `LAYOUT-EXP-${String(n).padStart(3, '0')}`,
-            projectName: `【排版预览】报销案例 ${n}`,
-            inspectorId: `layout-demo-insp-${n}`,
-            inspectorName: `预览工程师${n}`,
-            completedUnits: (n % 3) + 1,
-            unitLabel: '台',
-            amount: String(claim),
-            claimAmount: String(claim),
-            caseExpenseTotal: String(claim + 50),
-            note: `排版预览行程说明 ${n}`,
-            tripSkipped: n % 5 === 0,
-            mileageKm: n % 5 === 0 ? null : String(12 + (n % 40)),
-            startMileage: n % 5 === 0 ? null : String(1000 + n * 10),
-            endMileage: n % 5 === 0 ? null : String(1012 + n * 10),
-            voucherUrls: [],
-            lineItems:
-              n % 5 === 0
-                ? []
-                : [
-                    {
-                      type: 'trip',
-                      content: '往返现场',
-                      startMileage: 1000 + n * 10,
-                      endMileage: 1012 + n * 10,
-                      mileageKm: 12 + (n % 40),
-                      amount: claim,
-                    },
-                  ],
-            status,
-            month: month || new Date().toISOString().slice(0, 7),
-            createdAt: new Date().toISOString(),
-          };
-        }),
-      );
+      setRows(list);
     } finally {
       setLoading(false);
     }
@@ -424,9 +431,9 @@ export default function ExpenseReviewPanel({ onChanged }: Props) {
       render: (v) => `¥${Number(v || 0).toFixed(2)}`,
     },
     {
-      title: '里程差',
+      title: '填写合计 / 跨度',
       dataIndex: 'mileageKm',
-      width: 130,
+      width: 168,
       render: (_, r) => formatMileageLabel(tripMileageSummary(r)),
     },
     {
@@ -616,33 +623,27 @@ export default function ExpenseReviewPanel({ onChanged }: Props) {
               <Descriptions.Item label="案例合计">
                 ¥{Number(current.caseExpenseTotal || 0).toFixed(2)}
               </Descriptions.Item>
-              {summary.tripCount > 1 ? (
+              {summary.tripCount > 0 ? (
                 <>
                   <Descriptions.Item label="行程段数">
                     共 {summary.tripCount} 段
                   </Descriptions.Item>
-                  <Descriptions.Item label="合计里程差（参考）">
-                    {summary.totalKm != null ? `${summary.totalKm} km` : '-'}
+                  <Descriptions.Item label="实际填写合计里程差">
+                    {summary.filledTotalKm != null
+                      ? `${summary.filledTotalKm} km`
+                      : '-'}
                   </Descriptions.Item>
-                  <Descriptions.Item label="起止跨度（参考）" span={2}>
+                  <Descriptions.Item label="起止跨度里程差" span={2}>
                     {summary.startMileage != null && summary.endMileage != null
-                      ? `${summary.startMileage} → ${summary.endMileage} km`
+                      ? `${summary.startMileage} → ${summary.endMileage}${
+                          summary.spanKm != null
+                            ? `（${summary.spanKm} km）`
+                            : ''
+                        }`
                       : '-'}
                   </Descriptions.Item>
                 </>
-              ) : (
-                <>
-                  <Descriptions.Item label="里程差（参考）">
-                    {summary.totalKm != null ? `${summary.totalKm} km` : '-'}
-                  </Descriptions.Item>
-                  <Descriptions.Item label="开始里程">
-                    {summary.startMileage != null ? `${summary.startMileage} km` : '-'}
-                  </Descriptions.Item>
-                  <Descriptions.Item label="结束里程">
-                    {summary.endMileage != null ? `${summary.endMileage} km` : '-'}
-                  </Descriptions.Item>
-                </>
-              )}
+              ) : null}
             </Descriptions>
             {current.note ? (
               <p style={{ color: '#61756b' }}>备注：{current.note}</p>
@@ -675,7 +676,10 @@ export default function ExpenseReviewPanel({ onChanged }: Props) {
                       <>
                         <p style={{ margin: '6px 0 0', color: '#61756b' }}>
                           里程 {line.startMileage ?? '-'} → {line.endMileage ?? '-'}
-                          {line.mileageKm != null ? `（差 ${line.mileageKm} km）` : ''}
+                          {(() => {
+                            const diff = lineTripDiffKm(line);
+                            return diff != null ? `（差 ${diff} km）` : '';
+                          })()}
                         </p>
                         <PhotoBlock
                           label="开始里程表"

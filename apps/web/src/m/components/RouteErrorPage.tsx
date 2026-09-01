@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from 'react';
-import { Button, Loading } from 'react-vant';
+import { Button, Loading } from '@/m/lib/react-vant';
 import { useRouteError } from 'react-router-dom';
 import {
   isStaleAssetError,

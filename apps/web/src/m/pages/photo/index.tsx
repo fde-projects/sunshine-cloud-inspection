@@ -2,7 +2,7 @@
 
 import { useMemo, useState, type CSSProperties } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { NavBar } from 'react-vant';
+import { NavBar } from '@/m/lib/react-vant';
 import { displayPhotoUrl } from '../../utils/photo-url';
 
 /** 照片预览（自定义全屏，避免 react-vant ImagePreview closeIcon 崩溃） */

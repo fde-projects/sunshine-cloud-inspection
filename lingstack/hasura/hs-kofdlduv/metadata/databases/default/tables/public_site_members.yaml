@@ -24,15 +24,23 @@ insert_permissions:
   - role: site_manager
     permission:
       check:
-        site:
-          _or:
-            - manager_id:
+        _or:
+          # 正网格长：可加人（副长或工程师）
+          - site:
+              manager_id:
                 _eq: X-Hasura-User-Id
-            - site_members:
-                status:
-                  _eq: active
-                user_id:
-                  _eq: X-Hasura-User-Id
+          # 副网格长：只能加工程师
+          - _and:
+              - member_role:
+                  _eq: inspector
+              - site:
+                  site_members:
+                    status:
+                      _eq: active
+                    member_role:
+                      _eq: deputy_manager
+                    user_id:
+                      _eq: X-Hasura-User-Id
       columns:
         - id
         - joined_at
@@ -160,15 +168,23 @@ delete_permissions:
   - role: site_manager
     permission:
       filter:
-        site:
-          _or:
-            - manager_id:
+        _or:
+          # 正网格长可删本站任意编制
+          - site:
+              manager_id:
                 _eq: X-Hasura-User-Id
-            - site_members:
-                status:
-                  _eq: active
-                user_id:
-                  _eq: X-Hasura-User-Id
+          # 副网格长只能解聘工程师
+          - _and:
+              - member_role:
+                  _eq: inspector
+              - site:
+                  site_members:
+                    status:
+                      _eq: active
+                    member_role:
+                      _eq: deputy_manager
+                    user_id:
+                      _eq: X-Hasura-User-Id
   - role: super_admin
     permission:
       filter: {}

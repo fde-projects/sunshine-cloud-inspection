@@ -4,8 +4,16 @@ import AntdProvider from "@/components/AntdProvider";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "阳光运维系统",
+  title: {
+    default: "阳光运维系统",
+    template: "%s",
+  },
   description: "为管理与现场作业提供清晰、可靠的一体化工作台",
+  icons: {
+    icon: [{ url: "/api/system/favicon", type: "image/png" }],
+    shortcut: "/api/system/favicon",
+    apple: "/api/system/favicon",
+  },
 };
 
 export const viewport: Viewport = {

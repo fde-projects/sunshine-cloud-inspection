@@ -2,7 +2,7 @@
 
 import { useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Cell, Button, Dialog, Empty } from 'react-vant';
+import { Cell, Button, Dialog, Empty } from '@/m/lib/react-vant';
 import { useAuthStore } from '../../stores/auth';
 import { canSwitchPortal, normalizeRoles } from '@/lib/portal';
 import type { AppRole } from '@/lib/types';

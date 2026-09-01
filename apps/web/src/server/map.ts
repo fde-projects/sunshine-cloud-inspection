@@ -177,6 +177,39 @@ export function caseWhere(user: AppUser, query: URLSearchParams) {
   if (query.get("province")?.trim()) and.push({ province: { _eq: query.get("province")!.trim() } });
   if (query.get("city")?.trim()) and.push({ city: { _eq: query.get("city")!.trim() } });
   if (query.get("status")) and.push({ status: { _eq: query.get("status") } });
+  const taskType = query.get("taskType")?.trim();
+  if (taskType) and.push({ task_template_id: { _eq: taskType } });
+  const productLine = query.get("productLine")?.trim();
+  if (productLine === "__empty__") {
+    and.push({
+      _or: [{ product_line: { _is_null: true } }, { product_line: { _eq: "" } }],
+    });
+  } else if (productLine) {
+    and.push({ product_line: { _eq: productLine } });
+  }
+  const dateFrom = query.get("dateFrom")?.trim();
+  const dateTo = query.get("dateTo")?.trim();
+  if (dateFrom || dateTo) {
+    const finishRange: Record<string, string> = {};
+    const createdRange: Record<string, string> = {};
+    if (dateFrom) {
+      finishRange._gte = dateFrom;
+      createdRange._gte = dateFrom;
+    }
+    if (dateTo) {
+      // 含结束日当天
+      finishRange._lte = `${dateTo}T23:59:59.999`;
+      createdRange._lte = `${dateTo}T23:59:59.999`;
+    }
+    and.push({
+      _or: [
+        { finish_time: finishRange },
+        {
+          _and: [{ finish_time: { _is_null: true } }, { created_at: createdRange }],
+        },
+      ],
+    });
+  }
   const keyword = query.get("keyword")?.trim();
   if (keyword) {
     and.push({
@@ -279,6 +312,8 @@ export function mapTask(row: Record<string, unknown>) {
     taskType: row.task_type,
     taskTypeName: (sc?.task_template as { name?: string } | null)?.name || sc?.task_type,
     serviceType: sc?.service_type,
+    gspCaseNo: (sc?.gsp_case_no as string) || null,
+    productLine: (sc?.product_line as string) || null,
     templateSnapshot: row.template_snapshot,
     site: site
       ? {

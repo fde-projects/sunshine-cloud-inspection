@@ -60,8 +60,8 @@ export default function SiteFormModal({
   onCancel,
   onSubmit,
 }: SiteFormModalProps) {
-  const watchLat = Form.useWatch('latitude', form);
-  const watchLng = Form.useWatch('longitude', form);
+  const watchLat = Form.useWatch('latitude', open ? form : undefined);
+  const watchLng = Form.useWatch('longitude', open ? form : undefined);
   const [mounted, setMounted] = useState(false);
   const [locating, setLocating] = useState(false);
   const [geocoding, setGeocoding] = useState(false);

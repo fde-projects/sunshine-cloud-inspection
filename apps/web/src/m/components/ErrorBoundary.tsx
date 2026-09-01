@@ -1,7 +1,7 @@
 "use client";
 
 import { Component, type ErrorInfo, type ReactNode } from 'react';
-import { Button } from 'react-vant';
+import { Button } from '@/m/lib/react-vant';
 
 interface Props {
   children: ReactNode;

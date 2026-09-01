@@ -1,7 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
+  Alert,
   Button,
   Form,
   Input,
@@ -35,10 +36,11 @@ import {
   addSiteMember,
   removeSiteMember,
   isSiteCodeTaken,
+  syncPrimaryManagerInspector,
   type SiteMemberItem,
 } from '../../api/site';
-import { fetchStaffingUsers } from '../../api/user';
-import type { SiteItem, UserInfo } from '../../types';
+import { createUser, fetchStaffingUsers } from '../../api/user';
+import type { SiteItem, UserInfo, UserRole } from '../../types';
 import SiteFormModal from './SiteFormModal';
 import { composeFullAddress } from '../../utils/addressParse';
 import { isAntValidateError } from '../../utils/ant-form';
@@ -46,7 +48,7 @@ import { chineseErrorMessage } from '../../utils/displayLabels';
 import { useAuthStore } from '../../stores/auth';
 import FillTable, { listTablePagination } from '../../components/FillTable';
 
-/** 网格管理：管理员任命正网格长；正网格长管理副网格长与工程师 */
+/** 网格管理：电站档案 + 编制（正/副网格长、工程师） */
 export default function SitesPage() {
   const currentUser = useAuthStore((state) => state.user);
   const isAdmin = currentUser?.role === 'super_admin';
@@ -78,6 +80,11 @@ export default function SitesPage() {
   const [pickDeputyId, setPickDeputyId] = useState<string>();
   const [pickInspectorId, setPickInspectorId] = useState<string>();
   const [staffLoading, setStaffLoading] = useState(false);
+
+  const [createOpen, setCreateOpen] = useState(false);
+  const [createKind, setCreateKind] = useState<'deputy' | 'inspector'>('inspector');
+  const [createForm] = Form.useForm();
+  const [createSubmitting, setCreateSubmitting] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -189,7 +196,18 @@ export default function SitesPage() {
       return;
     }
     await appointManager(appointSite.id, managerId);
-    message.success('已任命正网格长');
+    const picked = managers.find((m) => m.id === managerId);
+    const roles = picked ? (picked.roles?.length ? picked.roles : [picked.role]) : [];
+    const synced = await syncPrimaryManagerInspector(
+      appointSite.id,
+      managerId,
+      roles.includes('inspector'),
+    );
+    message.success(
+      synced === 'created'
+        ? '已任命正网格长，并自动写入工程师编制（账号已开通工程师）'
+        : '已任命正网格长',
+    );
     setAppointOpen(false);
     load();
   };
@@ -200,14 +218,40 @@ export default function SitesPage() {
       const [dep, insp, allUsers] = await Promise.all([
         fetchSiteMembers(site.id, 'deputy_manager'),
         fetchSiteMembers(site.id, 'inspector'),
-        // 拉全量启用用户，多角色账号两边都能选到
         fetchStaffingUsers({ status: 'active', limit: 100 }),
       ]);
       setDeputies(dep);
       setInspectors(insp);
-      setStaffCandidates(
-        allUsers.list.filter((u) => !(u.roles?.length ? u.roles : [u.role]).includes('super_admin')),
+      const candidates = allUsers.list.filter(
+        (u) => !(u.roles?.length ? u.roles : [u.role]).includes('super_admin'),
       );
+      setStaffCandidates(candidates);
+
+      // 历史数据自愈：正网格长已开工程师但未进编制 → 自动写入
+      if (site.managerId) {
+        const manager =
+          candidates.find((u) => u.id === site.managerId) ||
+          (site.managerId === currentUserId ? currentUser : null);
+        const managerRoles = manager
+          ? ((manager as UserInfo).roles?.length
+              ? (manager as UserInfo).roles!
+              : [(manager as UserInfo).role])
+          : [];
+        const hasInspector =
+          managerRoles.includes('inspector') ||
+          (site.managerId === currentUserId &&
+            Boolean(
+              currentUser?.roles?.includes('inspector') || currentUser?.role === 'inspector',
+            ));
+        const already = insp.some((m) => m.userId === site.managerId && m.status !== 'inactive');
+        if (hasInspector && !already) {
+          const r = await syncPrimaryManagerInspector(site.id, site.managerId, true);
+          if (r === 'created') {
+            const nextInsp = await fetchSiteMembers(site.id, 'inspector');
+            setInspectors(nextInsp);
+          }
+        }
+      }
     } finally {
       setStaffLoading(false);
     }
@@ -221,15 +265,84 @@ export default function SitesPage() {
     await loadStaff(record);
   };
 
+  const submitCreateJoin = async () => {
+    if (!staffSite) return;
+    if (createKind === 'deputy' && !canManageDeputies) {
+      message.warning('仅正网格长或管理员可设置副网格长');
+      return;
+    }
+    if (createKind === 'inspector' && !canManageInspectors) {
+      message.warning('无权聘用工程师');
+      return;
+    }
+    let values: {
+      username?: string;
+      password?: string;
+      realName?: string;
+      phone?: string;
+      employeeNo?: string;
+    };
+    try {
+      values = await createForm.validateFields();
+    } catch (error) {
+      if (isAntValidateError(error)) return;
+      throw error;
+    }
+    setCreateSubmitting(true);
+    try {
+      const roles: UserRole[] =
+        createKind === 'deputy' ? ['site_manager'] : ['inspector'];
+      const created = await createUser({
+        username: values.username,
+        password: values.password,
+        realName: values.realName,
+        employeeNo: values.employeeNo,
+        phone: values.phone,
+        roles,
+        role: roles[0],
+      });
+      if (createKind === 'deputy') {
+        await appointDeputy(staffSite.id, created.id);
+        message.success(`已创建副网格长「${created.username}」，可用电脑管理后台登录`);
+      } else {
+        await addSiteMember(staffSite.id, created.id);
+        message.success(
+          `已创建工程师「${created.username}」。请打开首页选「手机作业端」或访问 /m/login 登录（不能进电脑管理后台）`,
+          6,
+        );
+      }
+      setCreateOpen(false);
+      await loadStaff(staffSite);
+    } catch (error) {
+      const shown = chineseErrorMessage(error instanceof Error ? error.message : error);
+      message.error(shown || '创建失败');
+    } finally {
+      setCreateSubmitting(false);
+    }
+  };
+
   const onAddDeputy = async () => {
+    if (!canManageDeputies) {
+      message.warning('仅正网格长或管理员可设置副网格长');
+      return;
+    }
     if (!staffSite || !pickDeputyId) {
       message.warning('请选择副网格长');
       return;
     }
-    await appointDeputy(staffSite.id, pickDeputyId);
-    message.success('已添加副网格长');
-    setPickDeputyId(undefined);
-    await loadStaff(staffSite);
+    if (inspectors.some((d) => d.userId === pickDeputyId)) {
+      message.warning('该账号已是本网格工程师，同一网格不可再设为副网格长');
+      return;
+    }
+    try {
+      await appointDeputy(staffSite.id, pickDeputyId);
+      message.success('已添加副网格长');
+      setPickDeputyId(undefined);
+      await loadStaff(staffSite);
+    } catch (error) {
+      const shown = chineseErrorMessage(error instanceof Error ? error.message : error);
+      message.error(shown || '添加失败');
+    }
   };
 
   const onAddInspector = async () => {
@@ -237,10 +350,38 @@ export default function SitesPage() {
       message.warning('请选择工程师');
       return;
     }
-    await addSiteMember(staffSite.id, pickInspectorId);
-    message.success('已聘用工程师（该员仍可同时服务于其他网格）');
-    setPickInspectorId(undefined);
-    await loadStaff(staffSite);
+    if (deputies.some((d) => d.userId === pickInspectorId)) {
+      message.warning('该账号已是本网格副网格长，同一网格不可再聘为工程师');
+      return;
+    }
+    if (inspectors.some((d) => d.userId === pickInspectorId)) {
+      message.info('该账号已聘为本网格工程师');
+      return;
+    }
+    try {
+      await addSiteMember(staffSite.id, pickInspectorId);
+      message.success(
+        '已聘用。该账号请用「手机作业端」(/m/login) 登录接单，不能登录电脑管理后台',
+        5,
+      );
+      setPickInspectorId(undefined);
+      await loadStaff(staffSite);
+    } catch (error) {
+      const shown = chineseErrorMessage(error instanceof Error ? error.message : error);
+      message.error(shown || '聘用失败');
+    }
+  };
+
+  const hireSelfAsInspector = async () => {
+    if (!staffSite || !currentUserId) return;
+    try {
+      await addSiteMember(staffSite.id, currentUserId);
+      message.success('已将本人聘为本网格工程师');
+      await loadStaff(staffSite);
+    } catch (error) {
+      const shown = chineseErrorMessage(error instanceof Error ? error.message : error);
+      message.error(shown || '聘用失败');
+    }
   };
 
   const regionHint = [province && `省「${province}」`, city && `市「${city}」`]
@@ -251,30 +392,76 @@ export default function SitesPage() {
     (d) => d.userId === currentUserId && d.status !== 'inactive',
   );
 
-  const canManageStaff =
+  const iAmPrimaryOnStaffSite = !!staffSite && !!currentUserId && staffSite.managerId === currentUserId;
+
+  /** 可管工程师：管理员 / 正长 / 副长 */
+  const canManageInspectors =
     !!staffSite &&
     !!currentUserId &&
-    (isAdmin || staffSite.managerId === currentUserId || iAmDeputyOnStaffSite);
+    (isAdmin || iAmPrimaryOnStaffSite || iAmDeputyOnStaffSite);
+
+  /** 可设副长：仅管理员或正长（副长不能再设副长） */
+  const canManageDeputies = !!staffSite && !!currentUserId && (isAdmin || iAmPrimaryOnStaffSite);
+
+  const canManageStaff = canManageInspectors;
+
+  const openCreateJoin = (kind: 'deputy' | 'inspector') => {
+    if (kind === 'deputy' && !canManageDeputies) {
+      message.warning('仅正网格长或管理员可设置副网格长');
+      return;
+    }
+    if (kind === 'inspector' && !canManageInspectors) {
+      message.warning('无权聘用工程师');
+      return;
+    }
+    setCreateKind(kind);
+    setCreateOpen(true);
+  };
 
   const hasRole = (u: UserInfo, role: string) =>
     (u.roles?.length ? u.roles : [u.role]).includes(role as UserInfo['role']);
 
-  // 副网格长候选：非超管、非本网格正网格长（任命时后端会自动赋予网格长角色）
+  const iAmInspectorRole = Boolean(
+    currentUser &&
+      (currentUser.roles?.includes('inspector') || currentUser.role === 'inspector'),
+  );
+
+  const iAmHiredInspector = inspectors.some(
+    (m) => m.userId === currentUserId && m.status !== 'inactive',
+  );
+
+  const selfCanQuickHire =
+    canManageInspectors &&
+    iAmInspectorRole &&
+    !iAmHiredInspector &&
+    !iAmDeputyOnStaffSite &&
+    !!currentUserId;
+
+  // 副网格长候选：非本网格正网格长、未在编
   const deputyOptions = staffCandidates
     .filter((u) => u.id !== staffSite?.managerId)
     .filter((u) => !deputies.some((d) => d.userId === u.id))
+    .filter((u) => !inspectors.some((d) => d.userId === u.id))
     .map((u) => ({
       value: u.id,
       label: `${u.realName}（${u.username} / ${hasRole(u, 'site_manager') ? '网格长' : '工程师'}）`,
     }));
 
-  const inspectorOptions = staffCandidates
-    .filter((u) => hasRole(u, 'inspector'))
-    .filter((u) => !inspectors.some((d) => d.userId === u.id))
-    .map((u) => ({
-      value: u.id,
-      label: `${u.realName}（${u.username}）`,
-    }));
+  const inspectorOptions = useMemo(
+    () =>
+      staffCandidates
+        .filter((u) => hasRole(u, 'inspector'))
+        .filter((u) => !inspectors.some((d) => d.userId === u.id))
+        .filter((u) => !deputies.some((d) => d.userId === u.id))
+        .map((u) => ({
+          value: u.id,
+          label:
+            u.id === staffSite?.managerId
+              ? `${u.realName}（${u.username} / 正网格长·兼工程师）`
+              : `${u.realName}（${u.username}）`,
+        })),
+    [staffCandidates, inspectors, deputies, staffSite?.managerId],
+  );
 
   const columns: ColumnsType<SiteItem> = [
     { title: '网格名称', dataIndex: 'name', width: 140 },
@@ -388,7 +575,7 @@ export default function SitesPage() {
       <Typography.Paragraph type="secondary" style={{ marginBottom: 12 }}>
         {regionHint
           ? `当前筛选：${regionHint} → 共 ${total} 个网格`
-          : `管理员任命正网格长；正网格长在本网格设立副网格长与工程师。一网格一名正网格长，工程师可跨网格。`}
+          : '管理员任命正网格长；正网格长可设副长与工程师，副网格长只能管工程师。人员支持「新建并加入」。一网格一名正网格长，工程师可跨网格。'}
       </Typography.Paragraph>
 
       <FillTable
@@ -424,7 +611,7 @@ export default function SitesPage() {
         onOk={() => void submitAppoint()}
       >
         <Typography.Paragraph type="secondary">
-          每站仅一名正网格长。请先在「用户管理」创建正网格长账号，再在此任命。
+          每站仅一名正网格长。请先在「账号管理」创建网格长登录账号（待任命）；任命后才会成为正网格长。若该账号已开通工程师，任命后会自动写入本站工程师编制。
         </Typography.Paragraph>
         <Select
           showSearch
@@ -438,7 +625,7 @@ export default function SitesPage() {
             const roles = m.roles?.length ? m.roles : [m.role];
             return {
               value: m.id,
-              label: `${m.realName}（${m.username} / ${roles.includes('site_manager') ? '网格长' : '工程师'}）`,
+              label: `${m.realName}（${m.username} / ${roles.includes('site_manager') ? '网格长账号' : '工程师'}）`,
             };
           })}
         />
@@ -478,9 +665,13 @@ export default function SitesPage() {
           </Space>
         </div>
         <Typography.Paragraph type="secondary" style={{ marginBottom: 12 }}>
-          {canManageStaff
-            ? '正/副网格长可在此设立副网格长与聘用工程师。工程师账号须单独设立，才能登录 H5。'
-            : '当前账号未任职本网格编制管理；请联系正网格长或管理员。'}
+          {isAdmin
+            ? '管理员可代正网格长配置编制。工程师请用「手机作业端」(/m/login)；副网格长用电脑管理后台。同一网格副长与工程师只能任其一。'
+            : canManageDeputies
+              ? '正网格长可设副长与工程师：可选用已有账号，或「新建并加入」。工程师请用「手机作业端」；副网格长用电脑管理后台。同一网格副长与工程师只能任其一。'
+              : canManageInspectors
+                ? '副网格长只能管理工程师，不能设置副网格长。工程师请用「手机作业端」(/m/login) 登录。'
+                : '当前账号未任职本网格编制管理；请联系正网格长或管理员。'}
         </Typography.Paragraph>
         <Tabs
           items={[
@@ -489,21 +680,30 @@ export default function SitesPage() {
               label: `副网格长（${deputies.length}）`,
               children: (
                 <div>
-                  {canManageStaff && (
+                  {canManageDeputies && (
                     <Space style={{ marginBottom: 12 }} wrap>
                       <Select
                         showSearch
                         style={{ width: 280 }}
-                        placeholder="选择账号"
+                        placeholder="选择已有账号"
                         value={pickDeputyId}
                         onChange={setPickDeputyId}
                         optionFilterProp="label"
                         options={deputyOptions}
                       />
                       <Button type="primary" onClick={() => void onAddDeputy()}>
-                        添加副网格长
+                        加入
                       </Button>
+                      <Button onClick={() => openCreateJoin('deputy')}>新建并加入</Button>
                     </Space>
+                  )}
+                  {!canManageDeputies && canManageInspectors && (
+                    <Alert
+                      type="info"
+                      showIcon
+                      style={{ marginBottom: 12 }}
+                      message="副网格长无权设置其他副网格长，仅正网格长或管理员可操作。"
+                    />
                   )}
                   <Table
                     rowKey="id"
@@ -514,7 +714,7 @@ export default function SitesPage() {
                     columns={[
                       { title: '姓名', dataIndex: ['user', 'realName'] },
                       { title: '用户名', dataIndex: ['user', 'username'] },
-                      ...(canManageStaff
+                      ...(canManageDeputies
                         ? [
                             {
                               title: '操作',
@@ -524,9 +724,16 @@ export default function SitesPage() {
                                   title="确认移除该副网格长？"
                                   onConfirm={async () => {
                                     if (!staffSite) return;
-                                    await removeDeputy(staffSite.id, r.userId);
-                                    message.success('已移除');
-                                    await loadStaff(staffSite);
+                                    try {
+                                      await removeDeputy(staffSite.id, r.userId);
+                                      message.success('已移除');
+                                      await loadStaff(staffSite);
+                                    } catch (error) {
+                                      const shown = chineseErrorMessage(
+                                        error instanceof Error ? error.message : error,
+                                      );
+                                      message.error(shown || '移除失败');
+                                    }
                                   }}
                                 >
                                   <Button type="link" danger>
@@ -547,20 +754,42 @@ export default function SitesPage() {
               label: `工程师（${inspectors.length}）`,
               children: (
                 <div>
-                  {canManageStaff && (
+                  {canManageInspectors && (
+                    <Alert
+                      type="info"
+                      showIcon
+                      style={{ marginBottom: 12 }}
+                      message="工程师登录方式"
+                      description={
+                        <span>
+                          用下表「用户名」+ 创建时的密码，打开{' '}
+                          <Typography.Link href="/m/login" target="_blank">
+                            /m/login
+                          </Typography.Link>{' '}
+                          （或首页 → 手机作业端）。电脑管理后台无法登录纯工程师账号。
+                        </span>
+                      }
+                    />
+                  )}
+                  {canManageInspectors && (
                     <Space style={{ marginBottom: 12 }} wrap>
                       <Select
                         showSearch
                         style={{ width: 280 }}
-                        placeholder="选择工程师账号"
+                        placeholder="选择已有工程师账号"
                         value={pickInspectorId}
                         onChange={setPickInspectorId}
                         optionFilterProp="label"
                         options={inspectorOptions}
+                        notFoundContent="暂无可选账号，可点「新建并加入」"
                       />
                       <Button type="primary" onClick={() => void onAddInspector()}>
-                        聘用工程师
+                        聘用
                       </Button>
+                      <Button onClick={() => openCreateJoin('inspector')}>新建并加入</Button>
+                      {selfCanQuickHire && (
+                        <Button onClick={() => void hireSelfAsInspector()}>聘用本人</Button>
+                      )}
                     </Space>
                   )}
                   <Table
@@ -572,7 +801,7 @@ export default function SitesPage() {
                     columns={[
                       { title: '姓名', dataIndex: ['user', 'realName'] },
                       { title: '用户名', dataIndex: ['user', 'username'] },
-                      ...(canManageStaff
+                      ...(canManageInspectors
                         ? [
                             {
                               title: '操作',
@@ -602,6 +831,68 @@ export default function SitesPage() {
             },
           ]}
         />
+      </Modal>
+
+      <Modal
+        title={createKind === 'deputy' ? '新建副网格长并加入' : '新建工程师并加入'}
+        open={createOpen}
+        onCancel={() => setCreateOpen(false)}
+        onOk={() => void submitCreateJoin()}
+        confirmLoading={createSubmitting}
+        okText="创建并加入本网格"
+        afterOpenChange={(visible) => {
+          if (visible) createForm.resetFields();
+        }}
+      >
+        <Typography.Paragraph type="secondary" style={{ marginBottom: 12 }}>
+          将创建登录账号并立即加入「{staffSite?.name || ''}」。
+          {createKind === 'deputy'
+            ? '副网格长可登电脑管理后台。'
+            : '工程师请用「手机作业端」(/m/login) 登录，不能进电脑管理后台。'}
+        </Typography.Paragraph>
+        <Form form={createForm} layout="vertical">
+          <Form.Item
+            name="username"
+            label="用户名"
+            rules={[{ required: true, message: '请输入用户名' }]}
+          >
+            <Input />
+          </Form.Item>
+          <Form.Item
+            name="password"
+            label="密码"
+            rules={[{ required: true, min: 6, message: '至少6位' }]}
+          >
+            <Input.Password />
+          </Form.Item>
+          <Form.Item
+            name="realName"
+            label="真实姓名"
+            rules={[{ required: true, message: '请输入姓名' }]}
+          >
+            <Input />
+          </Form.Item>
+          <Form.Item
+            name="employeeNo"
+            label="工号"
+            rules={[
+              { required: true, message: '请输入工号' },
+              { min: 2, max: 32, message: '工号 2-32 位' },
+            ]}
+          >
+            <Input placeholder="不可重复" />
+          </Form.Item>
+          <Form.Item
+            name="phone"
+            label="手机号"
+            rules={[
+              { required: true, message: '请输入手机号' },
+              { pattern: /^1\d{10}$/, message: '手机号格式不正确' },
+            ]}
+          >
+            <Input />
+          </Form.Item>
+        </Form>
       </Modal>
     </div>
   );

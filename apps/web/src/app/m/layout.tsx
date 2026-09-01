@@ -1,5 +1,6 @@
 "use client";
 
+import "@/m/lib/patch-react-dom";
 import { useEffect, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import TabLayout from "@/m/layouts/TabLayout";

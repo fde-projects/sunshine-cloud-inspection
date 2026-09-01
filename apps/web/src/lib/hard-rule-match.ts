@@ -117,6 +117,58 @@ export function failReasonIfSlotsUncovered(views: HardRulePassView[], covers: nu
   return `现场图没有对上全部合格样：缺「${missing.map((item) => item.label).join("、")}」。同一种图拍两张不能代替其他必拍图。`;
 }
 
+function classifyFaultTab(raw: string): "realtime" | "historical" | "other" {
+  const t = String(raw || "").toLowerCase();
+  if (/实时|realtime|real[\s_-]?time/.test(t)) return "realtime";
+  if (/历史|historical|history/.test(t)) return "historical";
+  return "other";
+}
+
+/** 故障记录类：两张必须分别是实时/历史；同页签拍两张不合格。 */
+export function failReasonIfFaultTabsNotDistinct(
+  parsed: Record<string, unknown>,
+  opts: { title: string; ruleText: string; passLabels: string[]; photoCount: number },
+): string | null {
+  const blob = [opts.title, opts.ruleText, ...opts.passLabels].join("\n");
+  if (!/实时故障/.test(blob) || !/历史故障/.test(blob)) return null;
+  if (opts.photoCount < 2) return null;
+
+  const evidence =
+    parsed.evidence && typeof parsed.evidence === "object" && !Array.isArray(parsed.evidence)
+      ? (parsed.evidence as Record<string, unknown>)
+      : {};
+
+  const rawTabs: string[] = [];
+  if (Array.isArray(evidence.photoTypes)) {
+    for (const item of evidence.photoTypes) rawTabs.push(String(item || ""));
+  }
+  if (Array.isArray(evidence.photoFindings)) {
+    for (const row of evidence.photoFindings) {
+      if (!row || typeof row !== "object" || Array.isArray(row)) continue;
+      const finding = row as Record<string, unknown>;
+      const tab = String(finding.selectedTab || finding.tab || finding.type || "");
+      if (tab) rawTabs.push(tab);
+    }
+  }
+
+  const classes = rawTabs.map(classifyFaultTab).filter((x) => x !== "other");
+  if (classes.length >= 2) {
+    const hasRealtime = classes.includes("realtime");
+    const hasHistorical = classes.includes("historical");
+    if (!hasRealtime || !hasHistorical) {
+      return "两张待判定未分别覆盖「实时故障」与「历史故障」（看起来是同一种页签）。同一种截图拍两张不能合格。";
+    }
+    return null;
+  }
+
+  // 模型没给出逐张页签时，不允许直接放行
+  const status = String(parsed.status || "").toLowerCase();
+  if (status === "pass" || status === "合格") {
+    return "未逐张标明当前选中页签（实时故障/历史故障），无法确认已拍齐两种页签，按不合格处理。";
+  }
+  return null;
+}
+
 export function parseCoverIndexes(raw: unknown, photoCount: number, views: HardRulePassView[] = []): number[] {
   const slots = labeledPassViews(views);
   const list = Array.isArray(raw) ? raw : [];

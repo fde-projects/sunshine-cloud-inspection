@@ -21,6 +21,7 @@ export type AppUser = {
   phone: string;
   email?: string | null;
   avatar?: string | null;
+  employeeNo?: string | null;
   role: AppRole;
   roles: AppRole[];
   status: string;
@@ -61,6 +62,7 @@ export async function requireUser(req: Request): Promise<AppUser> {
       phone: string;
       email?: string | null;
       avatar?: string | null;
+      employee_no?: string | null;
       role: AppRole;
       roles: AppRole[];
       status: string;
@@ -72,7 +74,7 @@ export async function requireUser(req: Request): Promise<AppUser> {
   }>(
     `query ($id: uuid!) {
       users_by_pk(id: $id) {
-        id username real_name phone email avatar role roles status region org_unit
+        id username real_name phone email avatar employee_no role roles status region org_unit
       }
       sites(where: { manager_id: { _eq: $id }, deleted_at: { _is_null: true } }) { id }
       site_members(where: { user_id: { _eq: $id }, status: { _eq: "active" } }) { site_id }
@@ -95,6 +97,7 @@ export async function requireUser(req: Request): Promise<AppUser> {
     phone: row.phone,
     email: row.email,
     avatar: row.avatar,
+    employeeNo: row.employee_no ?? null,
     role,
     roles,
     status: row.status,

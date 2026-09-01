@@ -681,7 +681,7 @@ export default function TemplatesPage() {
                       </Button>
                     </Upload>
                     <div style={{ color: '#888', fontSize: 12 }}>
-                      给现场看怎么拍：有几张示范，工程师就必须拍几张，少一张、多一张都不能交。硬规则里可一键导入为合格样。
+                      给现场看怎么拍：有几张示范，工程师就必须拍几张，少一张、多一张都不能交。硬规则会直接用本条示范图作合格样。
                     </div>
                   </>
                 ) : !isPhoto ? (

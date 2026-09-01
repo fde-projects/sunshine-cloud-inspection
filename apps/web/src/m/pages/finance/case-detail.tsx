@@ -1,10 +1,11 @@
 "use client";
 
 import { useEffect, useMemo, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
-import { Loading, Toast } from 'react-vant';
+import { useNavigate, useParams, useLocation } from 'react-router-dom';
+import { Loading, Toast, Dialog } from '@/m/lib/react-vant';
 import {
   claimFinanceUnit,
+  unclaimFinanceUnit,
   fetchMyFinanceCase,
   startFinanceCase,
   type MobileFinanceCase,
@@ -48,6 +49,7 @@ const GRID_PAGE = 12;
 export default function FinanceCaseDetailPage() {
   const { id = '' } = useParams();
   const navigate = useNavigate();
+  const location = useLocation();
   const userId = useAuthStore((s) => s.user?.id);
   const [item, setItem] = useState<MobileFinanceCase>();
   const [loading, setLoading] = useState(true);
@@ -93,7 +95,7 @@ export default function FinanceCaseDetailPage() {
 
   useEffect(() => {
     void load();
-  }, [id, userId]);
+  }, [id, userId, location.key]);
 
   useEffect(() => {
     setGridLimit(GRID_PAGE);
@@ -444,6 +446,21 @@ export default function FinanceCaseDetailPage() {
 
   /** 认领：可并行多台；已有作业时默认留在本页，方便继续认领 */
   const claimUnit = async (unitId: string, goAfter: boolean) => {
+    const target = units.find((u) => u.id === unitId);
+    try {
+      if (myInProgress.length > 0) {
+        await Dialog.confirm({
+          title: '确认认领',
+          message: target
+            ? `将再认领 ${unitLabel} #${target.seq}。点错可在「我的」里取消认领（未开始作业时）。`
+            : `确认再认领一台？点错可在「我的」里取消认领。`,
+          confirmButtonText: '确认认领',
+          cancelButtonText: '取消',
+        });
+      }
+    } catch {
+      return;
+    }
     setBusy(true);
     try {
       if (item.status === 'assigned') {
@@ -460,6 +477,33 @@ export default function FinanceCaseDetailPage() {
       }
     } catch {
       /* */
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const unclaimUnit = async (unitId: string) => {
+    const target = units.find((u) => u.id === unitId);
+    try {
+      await Dialog.confirm({
+        title: '取消认领',
+        message: target
+          ? `确认取消 ${unitLabel} #${target.seq}？将退回可认领池，其他人可认领。`
+          : '确认取消认领？将退回可认领池。',
+        confirmButtonText: '取消认领',
+        cancelButtonText: '再想想',
+      });
+    } catch {
+      return;
+    }
+    setBusy(true);
+    try {
+      const next = await unclaimFinanceUnit(id, unitId);
+      setItem(next);
+      if (focusUnitId === unitId) setFocusUnitId('');
+      Toast.success(target ? `已取消 ${unitLabel} #${target.seq}` : '已取消认领');
+    } catch {
+      /* 拦截器 */
     } finally {
       setBusy(false);
     }
@@ -514,7 +558,9 @@ export default function FinanceCaseDetailPage() {
   const progressPct = Math.min(
     100,
     Math.round(
-      ((item.completedUnits || 0) / Math.max(1, item.plannedUnits || 1)) * 100,
+      ((completedUnits.length || item.completedUnits || 0) /
+        Math.max(1, item.plannedUnits || 1)) *
+        100,
     ),
   );
 
@@ -637,7 +683,7 @@ export default function FinanceCaseDetailPage() {
           <div className="unit-progress-head">
             <div>
               <strong>
-                {item.completedUnits || 0}/{item.plannedUnits || 1}
+                {completedUnits.length || item.completedUnits || 0}/{item.plannedUnits || 1}
               </strong>
               <span>
                 {' '}
@@ -696,13 +742,16 @@ export default function FinanceCaseDetailPage() {
             </button>
           ) : multiWorking && !myActive ? (
             <p className="mobile-finance-muted unit-empty-tip">
-              暂无可认领{unitLabel}，请等待他人完成或结案。
+              暂无可认领{unitLabel}
+              {Number(item.plannedUnits) > 0 && !(item.units || []).length
+                ? '（作业台尚未生成，请下拉刷新或请网格长重新派单/调整计划台数）'
+                : '，请等待他人完成或结案。'}
             </p>
           ) : null}
 
           {multiWorking && myActive && openUnits.length > 0 && (
             <p className="mobile-finance-muted unit-hint">
-              也可先认领下一{unitLabel}；切换作业请到「我的」。
+              也可先认领下一{unitLabel}；点错可在「我的」取消认领。切换作业请到「我的」。
             </p>
           )}
 
@@ -760,6 +809,10 @@ export default function FinanceCaseDetailPage() {
               ) : (
                 filteredMine.map((u) => {
                   const canEnter = u.status === 'claimed';
+                  const canUnclaim =
+                    u.status === 'claimed' &&
+                    !u.deviceSerial?.trim() &&
+                    !u.serialPhotoUrl?.trim();
                   const canViewReport =
                     !!u.inspectionTaskId &&
                     (u.status === 'submitted' || u.status === 'completed');
@@ -787,6 +840,16 @@ export default function FinanceCaseDetailPage() {
                             onClick={() => void goInspectUnit(u, false)}
                           >
                             进入
+                          </button>
+                        )}
+                        {canUnclaim && (
+                          <button
+                            type="button"
+                            className="unit-enter-btn is-muted"
+                            disabled={busy}
+                            onClick={() => void unclaimUnit(u.id)}
+                          >
+                            取消认领
                           </button>
                         )}
                         {canViewReport && (
@@ -858,6 +921,11 @@ export default function FinanceCaseDetailPage() {
                     {filteredClaimed.map((u) => {
                       const mine = !!userId && u.inspectorId === userId;
                       const canEnter = mine && u.status === 'claimed';
+                      const canUnclaim =
+                        mine &&
+                        u.status === 'claimed' &&
+                        !u.deviceSerial?.trim() &&
+                        !u.serialPhotoUrl?.trim();
                       const canViewReport =
                         mine &&
                         !!u.inspectionTaskId &&
@@ -885,6 +953,16 @@ export default function FinanceCaseDetailPage() {
                                 onClick={() => void goInspectUnit(u, false)}
                               >
                                 进入
+                              </button>
+                            )}
+                            {canUnclaim && (
+                              <button
+                                type="button"
+                                className="unit-enter-btn is-muted"
+                                disabled={busy}
+                                onClick={() => void unclaimUnit(u.id)}
+                              >
+                                取消认领
                               </button>
                             )}
                             {canViewReport && (

@@ -263,6 +263,86 @@ async function seedHardRules() {
   return { inserted, updated };
 }
 
+/** 强制写入全部内置硬规则（清空后恢复用） */
+async function forceSeedHardRules() {
+  await adminGql(`mutation { delete_ai_hard_rules(where: {}) { affected_rows } }`);
+  let inserted = 0;
+  for (const def of HARD_RULE_DEFAULTS) {
+    await adminGql(
+      `mutation ($obj: ai_hard_rules_insert_input!) {
+        insert_ai_hard_rules_one(object: $obj) { code }
+      }`,
+      {
+        obj: {
+          code: def.code,
+          name: def.name,
+          match_mode: def.matchMode,
+          match_pattern: def.matchPattern,
+          prompt_text: def.promptText,
+          json_schema_hint: def.jsonSchemaHint,
+          enabled: true,
+          enforce_mode: def.enforceMode,
+          version: 1,
+          change_note: "系统恢复：内置硬规则",
+        },
+      },
+    );
+    inserted += 1;
+  }
+  return { inserted, updated: 0 };
+}
+
+function buildProductLinesFromDevices() {
+  return DEVICE_TEMPLATES.map((item) => ({
+    id: randomUUID(),
+    name: item.name,
+    entries: buildEntries(item.entries),
+  }));
+}
+
+async function seedInspectionDemandType() {
+  const productLines = buildProductLinesFromDevices();
+  await insertTemplate({
+    name: "巡检",
+    device_type: "string_inverter",
+    is_global: true,
+    site_id: null,
+    assign_mode: "single",
+    unit_label: "台",
+    expense_enabled_default: true,
+    version: 1,
+    entries: [],
+    product_lines: productLines,
+  });
+}
+
+/** 恢复内置服务类型 + AI 硬规则（不含测试脏数据 / 排版预览） */
+export async function restoreBuiltinCatalog(): Promise<CatalogSeedResult> {
+  await adminGql(`mutation { delete_inspection_templates(where: { is_global: { _eq: true } }) { affected_rows } }`);
+  const hardRules = await forceSeedHardRules();
+  await seedInspectionDemandType();
+  let demandTypes = 1;
+  for (const name of DEMAND_TYPES) {
+    if (name === "巡检") continue;
+    if (await seedDemandType(name)) demandTypes += 1;
+  }
+  await writePersistedSeedRev({
+    restoredAt: new Date().toISOString(),
+    hardRules,
+    demandTypes,
+    source: "restore-builtin-catalog",
+  });
+  completedRev = CATALOG_SEED_REV;
+  return {
+    hardRules,
+    devices: { created: 0, synced: 0 },
+    demandTypes,
+    caseTypes: 0,
+    productLines: DEVICE_TEMPLATES.length,
+    rematched: 0,
+  };
+}
+
 async function seedDemandType(name: string) {
   const all = await loadTemplates();
   if (all.some((t) => t.name === name)) return false;

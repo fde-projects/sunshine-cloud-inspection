@@ -816,6 +816,12 @@
   font-size: 12px;
   font-weight: 600;
 }
+.unit-enter-btn.is-muted {
+  border-color: #c5d4ce;
+  background: #f4f7f6;
+  color: #5f746d;
+  font-weight: 500;
+}
 .unit-enter-btn:disabled { opacity: 0.45; }
 .unit-all-groups { margin-top: 8px; display: grid; gap: 14px; }
 .unit-group-title {
@@ -1094,27 +1100,110 @@
 }
 
 .exp-line-card {
-  margin: 12px 16px;
+  margin: 12px 0;
   padding: 14px 14px 16px;
   border-radius: 16px;
   background: #fff;
   border: 1px solid #e4efe9;
   box-shadow: 0 1px 2px rgba(16, 56, 44, 0.04);
+  scroll-margin-top: 108px;
+}
+.exp-line-card.is-focus {
+  border-color: #e25b4a;
+  box-shadow: 0 0 0 3px rgba(226, 91, 74, 0.18);
+}
+.exp-line-card--editing {
+  /* 不限高、不套内滚动：避免与页面双滚动条 */
+  padding-bottom: 12px;
+}
+.exp-line-summary {
+  padding-top: 12px;
+  padding-bottom: 10px;
+}
+.exp-summary-main {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+}
+.exp-summary-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.exp-summary-top strong {
+  font-size: 15px;
+  color: #14362c;
+}
+.exp-summary-top em,
+.exp-line-head small {
+  font-style: normal;
+  font-size: 12px;
+  font-weight: 650;
+  padding: 2px 8px;
+  border-radius: 999px;
+  flex-shrink: 0;
+}
+.exp-summary-top em.is-ok,
+.exp-line-head small.is-ok {
+  color: #087b59;
+  background: #e8f7f1;
+}
+.exp-summary-top em.is-warn,
+.exp-line-head small.is-warn {
+  color: #b54708;
+  background: #fff4e5;
+}
+.exp-summary-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  margin-top: 8px;
+  color: #5f746d;
+  font-size: 12px;
+}
+.exp-summary-actions {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid #edf3f0;
+}
+.exp-collapse-btn {
+  width: 100%;
+  margin-top: 14px;
+  min-height: 42px;
+  border: 1px solid #087b59;
+  background: #e8f7f1;
+  color: #087b59;
+  border-radius: 12px;
+  padding: 10px 12px;
+  font-size: 14px;
+  font-weight: 650;
 }
 .exp-line-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 10px;
-  margin-bottom: 4px;
+  margin-bottom: 8px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid #edf3f0;
 }
 .exp-line-head h3 {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
   margin: 0;
-  font-size: 16px;
+  font-size: 15px;
   color: #163c33;
 }
 .exp-line-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 12px;
 }
 .exp-line-actions button {
@@ -1160,5 +1249,184 @@
   color: #163c33;
   font-size: 15px;
   font-weight: 600;
+}
+
+/* 费用页：顶栏状态 + 底栏操作固定（详情页已隐藏 Tab） */
+.mobile-finance-page.exp-page {
+  padding-bottom: calc(128px + env(safe-area-inset-bottom));
+}
+.mobile-finance-page.exp-page.is-readonly {
+  padding-bottom: calc(28px + env(safe-area-inset-bottom));
+}
+/* 编辑某条时：其余摘要压成一行，减少来回滚 */
+.exp-page.is-editing-line .exp-case-card {
+  display: none;
+}
+.exp-page.is-editing-line .exp-line-summary {
+  padding: 8px 12px;
+  margin: 6px 0;
+}
+.exp-page.is-editing-line .exp-summary-meta,
+.exp-page.is-editing-line .exp-summary-actions {
+  display: none;
+}
+.exp-page.is-editing-line .exp-summary-top strong {
+  font-size: 13px;
+}
+.exp-case-card {
+  padding-top: 14px;
+  padding-bottom: 14px;
+}
+.exp-case-card h2 {
+  font-size: 15px;
+  line-height: 1.4;
+}
+.exp-case-tip {
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: #6b7f78;
+  line-height: 1.5;
+}
+.exp-sticky-chrome {
+  position: sticky;
+  top: 0;
+  z-index: 45;
+  margin: 0 0 12px;
+  padding: 4px 0 0;
+  background: rgba(242, 248, 245, 0.94);
+  backdrop-filter: blur(12px);
+}
+.exp-page-head {
+  margin-bottom: 8px;
+}
+.exp-sticky-bar {
+  position: relative;
+  top: auto;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.96);
+  border: 1px solid #dce8e2;
+  box-shadow: 0 6px 18px rgba(16, 56, 44, 0.06);
+}
+.exp-sticky-bar.is-editing {
+  border-color: #b9d4ca;
+  background: #fff;
+}
+.exp-sticky-bar-main {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.exp-sticky-bar-main strong {
+  font-size: 16px;
+  color: #14362c;
+}
+.exp-sticky-edit-title {
+  font-size: 14px !important;
+  font-weight: 650;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.exp-sticky-collapse {
+  flex-shrink: 0;
+  border: 1px solid #087b59;
+  background: #e8f7f1;
+  color: #087b59;
+  border-radius: 999px;
+  padding: 4px 12px;
+  font-size: 13px;
+  font-weight: 650;
+}
+.exp-sticky-bar-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-shrink: 0;
+}
+.exp-sticky-bar-link {
+  border: 0;
+  background: transparent;
+  font-size: 13px;
+  font-weight: 650;
+  padding: 4px 0;
+  white-space: nowrap;
+}
+.exp-sticky-bar-link.is-warn {
+  color: #b54708;
+}
+.exp-sticky-bar-link.is-ok {
+  color: #087b59;
+}
+.exp-sticky-dock {
+  position: fixed;
+  left: 0;
+  right: 0;
+  margin: 0 auto;
+  width: min(100%, var(--h5-shell-max, 640px));
+  bottom: 0;
+  z-index: 90;
+  padding: 10px 14px calc(12px + env(safe-area-inset-bottom));
+  background: rgba(251, 252, 251, 0.98);
+  border-top: 1px solid #dce8e2;
+  box-shadow: 0 -10px 28px rgba(14, 52, 38, 0.08);
+  backdrop-filter: blur(14px);
+}
+.exp-sticky-dock-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+.exp-dock-add {
+  border: 1px dashed #087b59;
+  background: #fff;
+  color: #087b59;
+  border-radius: 999px;
+  padding: 6px 14px;
+  font-size: 13px;
+  font-weight: 650;
+}
+.exp-dock-total {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  color: #5f746d;
+  font-size: 12px;
+}
+.exp-dock-total strong {
+  font-size: 18px;
+  color: #14362c;
+}
+.exp-sticky-dock-actions {
+  display: grid;
+  grid-template-columns: 1fr 1.2fr;
+  gap: 10px;
+}
+.exp-sticky-dock-actions .mobile-finance-primary,
+.exp-sticky-dock-actions .mobile-finance-secondary {
+  min-height: 44px;
+  border-radius: 12px;
+  font-size: 15px;
+}
+
+/* display:none / hidden 会导致部分浏览器拒绝程序化触发选文件 */
+.exp-file-input {
+  position: fixed;
+  left: 0;
+  top: 0;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  overflow: hidden;
+  z-index: -1;
 }
 

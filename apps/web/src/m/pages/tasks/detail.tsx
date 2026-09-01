@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { NavBar, Cell, Button, Empty, Toast, Tag, Collapse, Dialog } from 'react-vant';
+import { NavBar, Cell, Button, Empty, Toast, Tag, Collapse, Dialog } from '@/m/lib/react-vant';
 import { fetchTask, startTask, deleteTask, type TaskItem } from '../../api/task';
 import { fetchDeviceHistory, type DeviceHistory } from '../../api/device';
 import { formatDateTime } from '../../utils/displayLabels';
@@ -189,9 +189,11 @@ export default function TaskDetailPage() {
               <Cell
                 title="案例号"
                 value={
+                  task.gspCaseNo ||
                   String(task.device?.serialNumber || '')
                     .replace(/^CASE-/, '')
-                    .replace(/-\d+$/, '') || '-'
+                    .replace(/-\d+$/, '') ||
+                  '-'
                 }
               />
             ) : (
@@ -201,7 +203,7 @@ export default function TaskDetailPage() {
               title={task.serviceCaseId ? '服务类型' : '设备类型'}
               value={
                 task.serviceCaseId
-                  ? task.device?.model || DEVICE_TYPE[task.device?.deviceType || ''] || '-'
+                  ? task.taskTypeName || task.serviceType || '-'
                   : DEVICE_TYPE[task.device?.deviceType || ''] || '未知设备类型'
               }
             />

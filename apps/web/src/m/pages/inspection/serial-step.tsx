@@ -1,7 +1,7 @@
 "use client";
 
 import { forwardRef, useImperativeHandle, useRef, useState } from 'react';
-import { ActionSheet, Field, Toast } from 'react-vant';
+import { ActionSheet, Field, Toast } from '@/m/lib/react-vant';
 import {
   ocrUnitDeviceSerial,
   saveUnitDeviceSerial,

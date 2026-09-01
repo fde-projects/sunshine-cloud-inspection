@@ -816,6 +816,12 @@
   font-size: 12px;
   font-weight: 600;
 }
+.unit-enter-btn.is-muted {
+  border-color: #c5d4ce;
+  background: #f4f7f6;
+  color: #5f746d;
+  font-weight: 500;
+}
 .unit-enter-btn:disabled { opacity: 0.45; }
 .unit-all-groups { margin-top: 8px; display: grid; gap: 14px; }
 .unit-group-title {

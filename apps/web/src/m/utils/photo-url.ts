@@ -1,4 +1,8 @@
-const imageProxyBase = "/api";
+const imageProxyBase = '/api';
+
+function isObjectStorageHost(url: string) {
+  return /(clouddn\.com|qiniucdn\.com|ctyunzos\.cn|\.qiniu\.com)/i.test(url);
+}
 
 /** 为 HTTP 页面和 HTTPS 部署环境生成可显示的巡检图片地址。 */
 export function displayPhotoUrl(source?: string | null) {
@@ -7,6 +11,12 @@ export function displayPhotoUrl(source?: string | null) {
 
   const isQiniuTestDomain = /^https?:\/\/[^/]+\.clouddn\.com\//i.test(url);
   const pageIsHttps = typeof window !== 'undefined' && window.location.protocol === 'https:';
+  const needsProxy =
+    isObjectStorageHost(url) || (pageIsHttps && /^http:/i.test(url));
+
+  if (typeof window !== 'undefined' && needsProxy && !isQiniuTestDomain) {
+    return `${imageProxyBase}/upload/image?url=${encodeURIComponent(url)}`;
+  }
 
   // 七牛测试域名没有可信 HTTPS 证书，本地 HTTP 开发时直接降级读取。
   if (!pageIsHttps && isQiniuTestDomain) {

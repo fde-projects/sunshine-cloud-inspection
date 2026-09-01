@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Empty, Loading } from 'react-vant';
+import { Empty, Loading } from '@/m/lib/react-vant';
 import { fetchMyFinanceCases, type MobileFinanceCase } from '../../api/finance';
 import './finance.css';
 

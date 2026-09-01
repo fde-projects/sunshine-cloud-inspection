@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import bcrypt from "bcryptjs";
 import { adminGql } from "@/lib/hasura-admin";
 import { issueRoleSession, loginWithPassword, requireActiveRole } from "./auth-login";
-import { analyzePhotos, draftRuleFromSamples, suggestPassViewLabels } from "@/lib/vision";
+import { analyzePhotos, draftRuleFromSamples, suggestPassViewLabels, ocrMileageFromImage, ocrDeviceSerialFromImage } from "@/lib/vision";
 import { createUploadToken, uploadBufferWithToken } from "@/lib/storage";
 import { fail, HttpError, ok, parseBody, q, requireUser, type AppUser } from "./http";
 import {
@@ -150,7 +150,7 @@ async function dispatch(ctx: {
 
   if (method === "POST" && path === "auth/login") return login(body);
   if (method === "POST" && path === "auth/switch-portal") return switchPortal(need(user), body);
-  if (method === "GET" && path === "auth/me") return ok(toPublicUser(need(user)));
+  if (method === "GET" && path === "auth/me") return getMe(need(user));
   if (method === "POST" && path === "auth/logout") return ok({ success: true });
   if (method === "PUT" && path === "auth/profile") return updateProfile(need(user), body);
   if (method === "PUT" && path === "auth/change-password") return changePassword(need(user), body);
@@ -377,14 +377,31 @@ async function dispatch(ctx: {
     if (wd && method === "POST") return withdrawAssignee(wd.id, wd.inspectorId);
     const cl = match(path, "cases/:id/units/:unitId/claim");
     if (cl && method === "POST") return claimUnit(need(user), cl.id, cl.unitId);
+    const ucl = match(path, "cases/:id/units/:unitId/unclaim");
+    if (ucl && method === "POST") return unclaimUnit(need(user), ucl.id, ucl.unitId);
     const cu = match(path, "cases/:id/units/:unitId/complete");
     if (cu && method === "POST") return completeUnit(need(user), cu.id, cu.unitId);
+    const ocrMy = match(path, "cases/:id/my-expense/ocr-mileage");
+    if (ocrMy && method === "POST") return ocrCaseMileage(body);
+    const ocrUnit = match(path, "cases/:id/units/:unitId/expense/ocr-mileage");
+    if (ocrUnit && method === "POST") return ocrCaseMileage(body);
+    const ocrSerial = match(path, "cases/:id/units/:unitId/serial/ocr");
+    if (ocrSerial && method === "POST") return ocrCaseSerial(body);
     const ex = match(path, "cases/:id/my-expense");
     if (ex && method === "POST") return saveExpense(need(user), ex.id, null, body);
     const uex = match(path, "cases/:id/units/:unitId/expense");
     if (uex && method === "POST") return saveExpense(need(user), uex.id, uex.unitId, body);
     const ser = match(path, "cases/:id/units/:unitId/serial");
     if (ser && method === "POST") return saveSerial(ser.unitId, body);
+    const expenses = match(path, "cases/:id/expenses");
+    if (expenses && method === "POST") {
+      const workUnitId = body.workUnitId ? String(body.workUnitId) : null;
+      return saveExpense(need(user), expenses.id, workUnitId, body);
+    }
+    const workPhoto = match(path, "cases/:id/work-photo");
+    if (workPhoto && method === "POST") return uploadPhoto(form, need(user));
+    const workRecord = match(path, "cases/:id/work-record");
+    if (workRecord && method === "PUT") return saveWorkRecord(body);
     const c1 = match(path, "cases/:id");
     if (c1 && method === "GET") {
       const row = await loadCaseDetail(c1.id);
@@ -528,7 +545,7 @@ async function dispatch(ctx: {
     return ok(await getFinanceVariance(need(user), query));
   }
 
-  if (path === "assessments" && method === "GET") return listAssessments(query);
+  if (path === "assessments" && method === "GET") return listAssessments(need(user), query);
   if (path === "assessments" && method === "POST") return saveAssessment(body);
   if (path === "assessments/score-rule" && method === "GET") return scoreRule();
   if (path === "assessments/score-rule" && method === "POST") return saveScoreRule(needAdmin(user), body);
@@ -552,7 +569,7 @@ async function dispatch(ctx: {
       return ok({ id: m.id });
     }
     const rk = match(path, "assessments/:month/rank");
-    if (rk && method === "POST") return rankAssessments(rk.month, body);
+    if (rk && method === "POST") return rankAssessments(need(user), rk.month, body);
   }
 
   if (path === "monthly-settlements" && method === "GET") return listMonthly(query);
@@ -663,12 +680,127 @@ function toPublicUser(u: AppUser) {
     phone: u.phone,
     email: u.email,
     avatar: u.avatar,
+    employeeNo: u.employeeNo ?? null,
     role: u.role,
     roles: u.roles,
     status: u.status,
     region: u.region,
     orgUnit: u.orgUnit,
   };
+}
+
+/** 当前用户资料 + 可作业网格（H5 选站依赖 siteMemberships） */
+async function getMe(user: AppUser) {
+  const data = await adminGql<{
+    site_members: Array<{
+      id: string;
+      site_id: string;
+      status: string;
+      member_role: string;
+      site: {
+        id: string;
+        name: string;
+        code: string;
+        province: string | null;
+        city: string | null;
+      } | null;
+    }>;
+    as_manager: Array<{
+      id: string;
+      name: string;
+      code: string;
+      province: string | null;
+      city: string | null;
+    }>;
+  }>(
+    `query ($uid: uuid!) {
+      site_members(
+        where: {
+          user_id: { _eq: $uid }
+          status: { _eq: "active" }
+          site: { deleted_at: { _is_null: true }, status: { _eq: "active" } }
+        }
+      ) {
+        id site_id status member_role
+        site { id name code province city }
+      }
+      as_manager: sites(
+        where: {
+          manager_id: { _eq: $uid }
+          deleted_at: { _is_null: true }
+          status: { _eq: "active" }
+        }
+      ) { id name code province city }
+    }`,
+    { uid: user.id },
+  );
+
+  const bySiteId = new Map<
+    string,
+    {
+      id: string;
+      siteId: string;
+      status: string;
+      site: {
+        id: string;
+        name: string;
+        code: string;
+        province?: string;
+        city?: string;
+      };
+    }
+  >();
+
+  // 工程师编制优先；副网格长若无工程师行则不进作业站列表
+  for (const m of data.site_members) {
+    if (!m.site) continue;
+    if (m.member_role !== "inspector") continue;
+    bySiteId.set(m.site_id, {
+      id: m.id,
+      siteId: m.site_id,
+      status: m.status,
+      site: {
+        id: m.site.id,
+        name: m.site.name,
+        code: m.site.code,
+        province: m.site.province || undefined,
+        city: m.site.city || undefined,
+      },
+    });
+  }
+
+  // 正网格长兼工程师：若尚未写入 site_members，仍用 manager 站点兜底（仅当前会话角色含工程师时）
+  if (user.roles.includes("inspector") || user.role === "inspector") {
+    for (const s of data.as_manager) {
+      if (bySiteId.has(s.id)) continue;
+      bySiteId.set(s.id, {
+        id: `manager:${s.id}`,
+        siteId: s.id,
+        status: "active",
+        site: {
+          id: s.id,
+          name: s.name,
+          code: s.code,
+          province: s.province || undefined,
+          city: s.city || undefined,
+        },
+      });
+    }
+  }
+
+  const siteMemberships = [...bySiteId.values()];
+  return ok({
+    ...toPublicUser(user),
+    siteMemberships,
+    membershipCount: siteMemberships.length,
+    managedSites: data.as_manager.map((s) => ({
+      id: s.id,
+      name: s.name,
+      code: s.code,
+      province: s.province || undefined,
+      city: s.city || undefined,
+    })),
+  });
 }
 
 async function login(body: Record<string, unknown>) {
@@ -957,9 +1089,10 @@ function collectTemplateEntries(
           push(tplId, tplName, lineId, lineName, entry);
         }
       }
-    }
-    for (const entry of Array.isArray(tpl.entries) ? tpl.entries : []) {
-      push(tplId, tplName, "", "", entry);
+    } else {
+      for (const entry of Array.isArray(tpl.entries) ? tpl.entries : []) {
+        push(tplId, tplName, "", "", entry);
+      }
     }
   }
   return items.sort((a, b) => {
@@ -1411,14 +1544,58 @@ async function locationOptions(user: AppUser) {
   return ok({ provinces: Object.keys(citiesByProvince), citiesByProvince });
 }
 
+const MOBILE_CASE_NESTED = `
+  case_work_units(order_by: { seq: asc }) {
+    id seq title status inspector_id inspection_task_id device_serial serial_photo_url serial_confirmed_at
+  }
+  inspection_tasks(
+    where: { inspector_id: { _eq: $uid } }
+    order_by: { created_at: desc }
+  ) {
+    id status work_unit_id inspector_id
+  }
+  case_expense_claims(
+    where: { inspector_id: { _eq: $uid } }
+    order_by: { created_at: desc }
+  ) {
+    id service_case_id work_unit_id inspector_id amount claim_amount
+    line_items voucher_urls trip_skipped note status review_note month created_at
+  }
+`;
+
+function mapExpenseClaim(r: Record<string, unknown>) {
+  return {
+    id: String(r.id),
+    workUnitId: (r.work_unit_id as string) || null,
+    inspectorId: (r.inspector_id as string) || undefined,
+    amount: String(r.amount ?? 0),
+    claimAmount: String(r.claim_amount ?? r.amount ?? 0),
+    note: (r.note as string) || null,
+    lineItems: Array.isArray(r.line_items) ? r.line_items : [],
+    voucherUrls: Array.isArray(r.voucher_urls) ? r.voucher_urls : [],
+    tripSkipped: !!r.trip_skipped,
+    status: String(r.status || "draft"),
+    reviewNote: (r.review_note as string) || null,
+  };
+}
+
+function sumExpenseLineAmount(lineItems: unknown): number {
+  if (!Array.isArray(lineItems)) return 0;
+  let total = 0;
+  for (const raw of lineItems) {
+    const line = (raw || {}) as { amount?: unknown };
+    const n = Number(line.amount);
+    if (Number.isFinite(n)) total += n;
+  }
+  return Math.round(total * 100) / 100;
+}
+
 async function myCases(user: AppUser) {
   const d = await adminGql<{ case_assignments: Array<{ service_case: Record<string, unknown> | null }> }>(
     `query ($uid: uuid!) {
       case_assignments(where: { inspector_id: { _eq: $uid }, status: { _neq: "withdrawn" } }) {
         service_case { ${CASE_FIELDS}
-          case_work_units(order_by: { seq: asc }) {
-            id seq title status inspector_id inspection_task_id device_serial
-          }
+          ${MOBILE_CASE_NESTED}
         }
       }
     }`,
@@ -1427,31 +1604,298 @@ async function myCases(user: AppUser) {
   const list = d.case_assignments
     .map((a) => a.service_case)
     .filter(Boolean)
-    .map((row) => {
-      const mapped = mapCase(row as Record<string, unknown>);
-      return {
-        ...mapped,
-        workUnits: (((row as { case_work_units?: unknown[] }).case_work_units || []) as Record<string, unknown>[]).map((u) => ({
-          id: u.id,
-          seq: u.seq,
-          title: u.title,
-          status: u.status,
-          inspectorId: u.inspector_id,
-          inspectionTaskId: u.inspection_task_id,
-          deviceSerial: u.device_serial,
-        })),
-      };
-    });
+    .map((row) => mapMobileCase(row as Record<string, unknown>, user.id));
   return ok(list);
 }
 
-async function myCase(user: AppUser, id: string) {
-  const all = await myCases(user);
-  const json = await all.json();
-  const list = json.data as Array<{ id: string }>;
-  const row = list.find((x) => x.id === id);
+async function ensureCaseWorkUnits(caseId: string, plannedUnits: number) {
+  const planned = Math.max(1, Number(plannedUnits) || 1);
+  const existing = await adminGql<{ case_work_units_aggregate: { aggregate: { count: number } } }>(
+    `query ($id: uuid!) {
+      case_work_units_aggregate(where: { service_case_id: { _eq: $id } }) { aggregate { count } }
+    }`,
+    { id: caseId },
+  );
+  const count = existing.case_work_units_aggregate.aggregate.count || 0;
+  if (count >= planned) return false;
+  const objects = [];
+  for (let seq = count + 1; seq <= planned; seq++) {
+    objects.push({
+      service_case_id: caseId,
+      seq,
+      title: `第${seq}台`,
+      status: "open",
+    });
+  }
+  await adminGql(
+    `mutation ($objects: [case_work_units_insert_input!]!) {
+      insert_case_work_units(objects: $objects) { affected_rows }
+    }`,
+    { objects },
+  );
+  return true;
+}
+
+function mapMobileCaseUnits(
+  rows: Record<string, unknown>[],
+  userId: string,
+) {
+  const units = rows.map((u) => ({
+    id: String(u.id),
+    seq: Number(u.seq) || 0,
+    title: (u.title as string) || null,
+    status: String(u.status || "open"),
+    inspectorId: (u.inspector_id as string) || null,
+    inspectionTaskId: (u.inspection_task_id as string) || null,
+    deviceSerial: (u.device_serial as string) || null,
+    serialPhotoUrl: (u.serial_photo_url as string) || null,
+    serialConfirmedAt: (u.serial_confirmed_at as string) || null,
+  }));
+  const myActiveUnits = units.filter(
+    (u) =>
+      u.inspectorId === userId &&
+      (u.status === "claimed" || u.status === "submitted"),
+  );
+  return {
+    units,
+    workUnits: units,
+    activeUnit: myActiveUnits[0] || null,
+    myActiveUnits,
+  };
+}
+
+function mapMobileCase(row: Record<string, unknown>, userId: string) {
+  const mapped = mapCase(row);
+  const rawUnits = ((row.case_work_units as Record<string, unknown>[]) || []);
+  const unitPack = mapMobileCaseUnits(rawUnits, userId);
+  const tasks = ((row.inspection_tasks as Record<string, unknown>[]) || []).map((t) => ({
+    id: String(t.id),
+    status: String(t.status || "pending"),
+    workUnitId: (t.work_unit_id as string) || null,
+  }));
+  const byActiveUnit = unitPack.activeUnit?.inspectionTaskId
+    ? tasks.find((t) => t.id === unitPack.activeUnit!.inspectionTaskId)
+    : null;
+  const mine = byActiveUnit || tasks.find((t) => !t.workUnitId) || tasks[0] || null;
+  const status = mine?.status || null;
+  const expenses = ((row.case_expense_claims as Record<string, unknown>[]) || []).map(mapExpenseClaim);
+  const approved = expenses.filter((e) => e.status === "approved");
+  const submitted = expenses.filter((e) => e.status === "submitted" || e.status === "approved");
+  const doneFromUnits = unitPack.units.filter((u) => u.status === "completed").length;
+  // 有台次明细时以实计为准，避免 case.completed_units 未同步导致一直 0/N
+  const completedUnits = unitPack.units.length
+    ? doneFromUnits
+    : Number(mapped.completedUnits) || 0;
+  return {
+    ...mapped,
+    ...unitPack,
+    completedUnits,
+    expenses,
+    expenseSummary: {
+      totalAmount: money(expenses.reduce((s, e) => s + Number(e.claimAmount || e.amount || 0), 0)),
+      approvedAmount: money(approved.reduce((s, e) => s + Number(e.amount || 0), 0)),
+      submittedAmount: money(submitted.reduce((s, e) => s + Number(e.claimAmount || e.amount || 0), 0)),
+      count: expenses.length,
+    },
+    inspectionTaskId: mine?.id || unitPack.activeUnit?.inspectionTaskId || null,
+    inspectionTaskStatus: status,
+    inspectionDone: status === "submitted" || status === "approved",
+  };
+}
+
+/** 按案例产品线取检查项快照；勿把所有产品线条目拼在一起 */
+async function loadTemplateSnapshot(
+  templateId: string | null | undefined,
+  productLine?: string | null,
+) {
+  if (!templateId) return [] as unknown[];
+  const d = await adminGql<{
+    inspection_templates_by_pk: { entries: unknown; product_lines: unknown } | null;
+  }>(
+    `query ($id: uuid!) {
+      inspection_templates_by_pk(id: $id) { entries product_lines }
+    }`,
+    { id: templateId },
+  );
+  const tpl = d.inspection_templates_by_pk;
+  if (!tpl) return [];
+  const lines = Array.isArray(tpl.product_lines) ? tpl.product_lines : [];
+  const want = String(productLine || "").trim();
+  if (lines.length) {
+    const hit = want
+      ? lines.find((p) => String((p as { name?: string })?.name || "").trim() === want)
+      : null;
+    const line = (hit || (lines.length === 1 ? lines[0] : null)) as
+      | { entries?: unknown }
+      | null;
+    if (line && Array.isArray(line.entries)) return line.entries;
+    // 有产品线配置但案例未匹配到：不回落成「全部拼一起」
+    if (want) return [];
+  }
+  if (Array.isArray(tpl.entries) && tpl.entries.length) return tpl.entries;
+  return [];
+}
+
+/** 单人单台：开工时若尚无 inspection_tasks，补建并挂到第 1 台 */
+async function ensureInspectorInspectionTask(
+  user: AppUser,
+  caseId: string,
+  row: Record<string, unknown>,
+) {
+  const planned = Math.max(1, Number(row.planned_units) || 1);
+  const assignMode = String(row.assign_mode || "single");
+  await ensureCaseWorkUnits(caseId, planned);
+
+  const existing = await adminGql<{
+    inspection_tasks: Array<{ id: string }>;
+  }>(
+    `query ($cid: uuid!, $uid: uuid!) {
+      inspection_tasks(
+        where: { service_case_id: { _eq: $cid }, inspector_id: { _eq: $uid } }
+        order_by: { created_at: desc }
+        limit: 1
+      ) { id }
+    }`,
+    { cid: caseId, uid: user.id },
+  );
+  if (existing.inspection_tasks[0]?.id) {
+    const tid = existing.inspection_tasks[0].id;
+    const cur = await adminGql<{ inspection_tasks_by_pk: Record<string, unknown> | null }>(
+      `query ($id: uuid!) {
+        inspection_tasks_by_pk(id: $id) {
+          id service_case_id work_unit_id inspector_id
+        }
+      }`,
+      { id: tid },
+    );
+    if (cur.inspection_tasks_by_pk) await healTaskWorkUnitLink(cur.inspection_tasks_by_pk);
+    return tid;
+  }
+
+  // 多人认领 / 多台：必须走认领，不自动建任务
+  if (assignMode === "multi" || planned > 1) return null;
+  if (!row.site_id) throw new HttpError(400, "案例未分配网格");
+
+  const units = await adminGql<{
+    case_work_units: Array<{ id: string; inspection_task_id: string | null; status: string }>;
+  }>(
+    `query ($id: uuid!) {
+      case_work_units(where: { service_case_id: { _eq: $id } }, order_by: { seq: asc }, limit: 1) {
+        id inspection_task_id status
+      }
+    }`,
+    { id: caseId },
+  );
+  const unit = units.case_work_units[0] || null;
+  const snap = await loadTemplateSnapshot(
+    row.task_template_id as string | null,
+    row.product_line as string | null,
+  );
+
+  const task = await adminGql<{ insert_inspection_tasks_one: { id: string } }>(
+    `mutation ($obj: inspection_tasks_insert_input!) {
+      insert_inspection_tasks_one(object: $obj) { id }
+    }`,
+    {
+      obj: {
+        site_id: row.site_id,
+        task_name: `${row.gsp_case_no} ${row.project_name}`,
+        inspector_id: user.id,
+        created_by_id: user.id,
+        service_case_id: caseId,
+        work_unit_id: unit?.id || null,
+        task_type: "service",
+        status: "pending",
+        ai_enabled: true,
+        template_snapshot: snap,
+      },
+    },
+  );
+  const taskId = task.insert_inspection_tasks_one.id;
+  if (unit && !unit.inspection_task_id) {
+    await adminGql(
+      `mutation ($id: uuid!, $uid: uuid!, $tid: uuid!, $now: timestamptz!) {
+        update_case_work_units_by_pk(pk_columns: { id: $id }, _set: {
+          status: "claimed", inspector_id: $uid, inspection_task_id: $tid, claimed_at: $now
+        }) { id }
+      }`,
+      { id: unit.id, uid: user.id, tid: taskId, now: new Date().toISOString() },
+    );
+  }
+  return taskId;
+}
+
+async function loadMyCaseData(user: AppUser, id: string) {
+  const d = await adminGql<{
+    case_assignments: Array<{ service_case: Record<string, unknown> | null }>;
+  }>(
+    `query ($uid: uuid!, $cid: uuid!) {
+      case_assignments(
+        where: {
+          inspector_id: { _eq: $uid }
+          service_case_id: { _eq: $cid }
+          status: { _neq: "withdrawn" }
+        }
+        limit: 1
+      ) {
+        service_case { ${CASE_FIELDS}
+          ${MOBILE_CASE_NESTED}
+        }
+      }
+    }`,
+    { uid: user.id, cid: id },
+  );
+  let row = d.case_assignments[0]?.service_case;
   if (!row) throw new HttpError(404, "案例不存在或无权查看");
-  return ok(row);
+
+  const planned = Math.max(1, Number(row.planned_units) || 1);
+  const created = await ensureCaseWorkUnits(id, planned);
+  if (created) {
+    const again = await adminGql<{
+      case_work_units: Record<string, unknown>[];
+      inspection_tasks: Record<string, unknown>[];
+      case_expense_claims: Record<string, unknown>[];
+    }>(
+      `query ($id: uuid!, $uid: uuid!) {
+        case_work_units(where: { service_case_id: { _eq: $id } }, order_by: { seq: asc }) {
+          id seq title status inspector_id inspection_task_id device_serial serial_photo_url serial_confirmed_at
+        }
+        inspection_tasks(
+          where: { service_case_id: { _eq: $id }, inspector_id: { _eq: $uid } }
+          order_by: { created_at: desc }
+        ) { id status work_unit_id inspector_id }
+        case_expense_claims(
+          where: { service_case_id: { _eq: $id }, inspector_id: { _eq: $uid } }
+          order_by: { created_at: desc }
+        ) {
+          id service_case_id work_unit_id inspector_id amount claim_amount
+          line_items voucher_urls trip_skipped note status review_note month created_at
+        }
+      }`,
+      { id, uid: user.id },
+    );
+    row = {
+      ...row,
+      case_work_units: again.case_work_units,
+      inspection_tasks: again.inspection_tasks,
+      case_expense_claims: again.case_expense_claims,
+    };
+  }
+
+  return mapMobileCase(row, user.id);
+}
+
+async function myCase(user: AppUser, id: string) {
+  const data = await loadMyCaseData(user, id);
+  const units = data.units || [];
+  if (!units.length) return ok(data);
+  const doneFromUnits = units.filter((u: { status: string }) => u.status === "completed").length;
+  const stored = Number((await loadCase(id))?.completed_units || 0);
+  if (doneFromUnits !== stored) {
+    await syncCaseUnitProgress(id);
+    return ok(await loadMyCaseData(user, id));
+  }
+  return ok(data);
 }
 
 async function caseInspectors(caseId: string) {
@@ -1501,7 +1945,13 @@ async function assignCase(user: AppUser, caseId: string, body: Record<string, un
   const assignMode = (body.assignMode as string) || (row.assign_mode as string) || "single";
   const plannedUnits = Math.max(1, Number(body.plannedUnits ?? row.planned_units ?? 1));
   const remark = body.reason !== undefined ? String(body.reason || "").trim() : row.assign_remark;
-  const tpl = row.task_template as { name?: string; entries?: unknown[]; product_lines?: unknown[]; device_type?: string } | null;
+  const tpl = row.task_template as {
+    id?: string;
+    name?: string;
+    entries?: unknown[];
+    product_lines?: unknown[];
+    device_type?: string;
+  } | null;
 
   await adminGql(
     `mutation ($id: uuid!, $set: service_cases_set_input!) {
@@ -1551,31 +2001,25 @@ async function assignCase(user: AppUser, caseId: string, body: Record<string, un
     }
   }
 
-  const existing = await adminGql<{ case_work_units_aggregate: { aggregate: { count: number } } }>(
-    `query ($id: uuid!) { case_work_units_aggregate(where: { service_case_id: { _eq: $id } }) { aggregate { count } } }`,
-    { id: caseId },
-  );
-  if ((existing.case_work_units_aggregate.aggregate.count || 0) < plannedUnits) {
-    const start = existing.case_work_units_aggregate.aggregate.count + 1;
-    const units = [];
-    for (let seq = start; seq <= plannedUnits; seq++) {
-      units.push({
-        service_case_id: caseId,
-        seq,
-        title: `第${seq}台`,
-        status: "open",
-      });
-    }
-    if (units.length) {
-      await adminGql(`mutation ($objects: [case_work_units_insert_input!]!) {
-        insert_case_work_units(objects: $objects) { affected_rows }
-      }`, { objects: units });
-    }
-  }
+  await ensureCaseWorkUnits(caseId, plannedUnits);
 
-  if (assignMode === "single" && ids.length === 1) {
-    const snap = tpl?.entries || [];
-    await adminGql(
+  if (assignMode === "single" && ids.length === 1 && plannedUnits <= 1) {
+    const snap = await loadTemplateSnapshot(
+      (row.task_template_id as string) || tpl?.id || null,
+      row.product_line as string | null,
+    );
+    const units = await adminGql<{
+      case_work_units: Array<{ id: string }>;
+    }>(
+      `query ($id: uuid!) {
+        case_work_units(where: { service_case_id: { _eq: $id } }, order_by: { seq: asc }, limit: 1) {
+          id
+        }
+      }`,
+      { id: caseId },
+    );
+    const unitId = units.case_work_units[0]?.id || null;
+    const created = await adminGql<{ insert_inspection_tasks_one: { id: string } }>(
       `mutation ($obj: inspection_tasks_insert_input!) {
         insert_inspection_tasks_one(object: $obj) { id }
       }`,
@@ -1586,6 +2030,7 @@ async function assignCase(user: AppUser, caseId: string, body: Record<string, un
           inspector_id: ids[0],
           created_by_id: user.id,
           service_case_id: caseId,
+          work_unit_id: unitId,
           task_type: "service",
           status: "pending",
           ai_enabled: true,
@@ -1593,6 +2038,21 @@ async function assignCase(user: AppUser, caseId: string, body: Record<string, un
         },
       },
     );
+    if (unitId) {
+      await adminGql(
+        `mutation ($id: uuid!, $uid: uuid!, $tid: uuid!, $now: timestamptz!) {
+          update_case_work_units_by_pk(pk_columns: { id: $id }, _set: {
+            status: "claimed", inspector_id: $uid, inspection_task_id: $tid, claimed_at: $now
+          }) { id }
+        }`,
+        {
+          id: unitId,
+          uid: ids[0],
+          tid: created.insert_inspection_tasks_one.id,
+          now: new Date().toISOString(),
+        },
+      );
+    }
   }
 
   const next = await loadCase(caseId);
@@ -1656,6 +2116,8 @@ async function setCaseTaskType(user: AppUser, caseId: string, body: Record<strin
 }
 
 async function setWorkPlan(caseId: string, body: Record<string, unknown>) {
+  const planned =
+    body.plannedUnits != null ? Math.max(1, Number(body.plannedUnits) || 1) : undefined;
   await adminGql(
     `mutation ($id: uuid!, $set: service_cases_set_input!) {
       update_service_cases_by_pk(pk_columns: { id: $id }, _set: $set) { id }
@@ -1663,11 +2125,14 @@ async function setWorkPlan(caseId: string, body: Record<string, unknown>) {
     {
       id: caseId,
       set: {
-        planned_units: body.plannedUnits != null ? Number(body.plannedUnits) : undefined,
+        planned_units: planned,
         expense_enabled: body.expenseEnabled,
       },
     },
   );
+  if (planned != null) {
+    await ensureCaseWorkUnits(caseId, planned);
+  }
   return ok(mapCase((await loadCase(caseId))!));
 }
 
@@ -1715,6 +2180,8 @@ async function startMyCase(user: AppUser, caseId: string) {
     }`,
     { id: caseId, uid: user.id },
   );
+  const row = await loadCase(caseId);
+  if (row) await ensureInspectorInspectionTask(user, caseId, row);
   return myCase(user, caseId);
 }
 
@@ -1731,7 +2198,27 @@ async function finishMyCase(user: AppUser, caseId: string) {
 async function claimUnit(user: AppUser, caseId: string, unitId: string) {
   const row = await loadCase(caseId);
   if (!row?.site_id) throw new HttpError(400, "案例未分配网格");
-  const tpl = row.task_template as { entries?: unknown[] } | null;
+  const unitRow = await adminGql<{
+    case_work_units_by_pk: {
+      id: string;
+      status: string;
+      inspector_id: string | null;
+      service_case_id: string;
+    } | null;
+  }>(
+    `query ($id: uuid!) {
+      case_work_units_by_pk(id: $id) { id status inspector_id service_case_id }
+    }`,
+    { id: unitId },
+  );
+  const unit = unitRow.case_work_units_by_pk;
+  if (!unit || unit.service_case_id !== caseId) throw new HttpError(404, "作业单元不存在");
+  if (unit.status !== "open") throw new HttpError(400, "该台已被认领或不可认领");
+
+  const snap = await loadTemplateSnapshot(
+    row.task_template_id as string | null,
+    row.product_line as string | null,
+  );
   const task = await adminGql<{ insert_inspection_tasks_one: { id: string } }>(
     `mutation ($obj: inspection_tasks_insert_input!) { insert_inspection_tasks_one(object: $obj) { id } }`,
     {
@@ -1745,7 +2232,7 @@ async function claimUnit(user: AppUser, caseId: string, unitId: string) {
         task_type: "service",
         status: "pending",
         ai_enabled: true,
-        template_snapshot: tpl?.entries || [],
+        template_snapshot: snap,
       },
     },
   );
@@ -1757,100 +2244,462 @@ async function claimUnit(user: AppUser, caseId: string, unitId: string) {
     }`,
     { id: unitId, uid: user.id, tid: task.insert_inspection_tasks_one.id, now: new Date().toISOString() },
   );
-  return ok({ inspectionTaskId: task.insert_inspection_tasks_one.id, case: mapCase((await loadCase(caseId))!) });
+  return ok({
+    inspectionTaskId: task.insert_inspection_tasks_one.id,
+    case: await loadMyCaseData(user, caseId),
+  });
+}
+
+/** 取消认领：仅本人认领、未确认序列号、检查项无照片时可退回可认领池 */
+async function unclaimUnit(user: AppUser, caseId: string, unitId: string) {
+  const unitRow = await adminGql<{
+    case_work_units_by_pk: {
+      id: string;
+      status: string;
+      inspector_id: string | null;
+      inspection_task_id: string | null;
+      device_serial: string | null;
+      serial_photo_url: string | null;
+      serial_confirmed_at: string | null;
+      service_case_id: string;
+    } | null;
+  }>(
+    `query ($id: uuid!) {
+      case_work_units_by_pk(id: $id) {
+        id status inspector_id inspection_task_id
+        device_serial serial_photo_url serial_confirmed_at service_case_id
+      }
+    }`,
+    { id: unitId },
+  );
+  const unit = unitRow.case_work_units_by_pk;
+  if (!unit || unit.service_case_id !== caseId) throw new HttpError(404, "作业单元不存在");
+  if (unit.inspector_id !== user.id) throw new HttpError(403, "只能取消自己认领的台次");
+  if (unit.status !== "claimed") {
+    throw new HttpError(400, unit.status === "open" ? "该台尚未认领" : "已提交或已完成，不能取消认领");
+  }
+  if (unit.device_serial || unit.serial_confirmed_at || unit.serial_photo_url) {
+    throw new HttpError(400, "已录入序列号或铭牌照片，不能取消认领");
+  }
+
+  const taskId = unit.inspection_task_id;
+  if (taskId) {
+    const taskData = await adminGql<{
+      inspection_tasks_by_pk: {
+        id: string;
+        status: string;
+        inspector_id: string | null;
+        inspection_records: Array<{ status: string; entries: unknown }>;
+      } | null;
+    }>(
+      `query ($id: uuid!) {
+        inspection_tasks_by_pk(id: $id) {
+          id status inspector_id
+          inspection_records { status entries }
+        }
+      }`,
+      { id: taskId },
+    );
+    const task = taskData.inspection_tasks_by_pk;
+    if (task) {
+      if (task.inspector_id && task.inspector_id !== user.id) {
+        throw new HttpError(403, "只能取消自己的作业");
+      }
+      if (task.status === "submitted" || task.status === "approved") {
+        throw new HttpError(400, "作业已提交，不能取消认领");
+      }
+      for (const rec of task.inspection_records || []) {
+        if (rec.status !== "draft") {
+          throw new HttpError(400, "作业记录已提交，不能取消认领");
+        }
+        const entries = Array.isArray(rec.entries) ? rec.entries : [];
+        const hasPhotos = entries.some((e) => {
+          const photos = (e as { photos?: unknown })?.photos;
+          return Array.isArray(photos) && photos.length > 0;
+        });
+        if (hasPhotos) throw new HttpError(400, "已上传检查照片，不能取消认领");
+      }
+    }
+
+    // 先断开单元对任务的引用，再删任务（记录级联删除）
+    await adminGql(
+      `mutation ($id: uuid!) {
+        update_case_work_units_by_pk(pk_columns: { id: $id }, _set: {
+          status: "open",
+          inspector_id: null,
+          inspection_task_id: null,
+          claimed_at: null,
+          device_serial: null,
+          serial_photo_url: null,
+          serial_confirmed_at: null
+        }) { id }
+      }`,
+      { id: unitId },
+    );
+    await adminGql(
+      `mutation ($id: uuid!) { delete_inspection_tasks_by_pk(id: $id) { id } }`,
+      { id: taskId },
+    );
+  } else {
+    await adminGql(
+      `mutation ($id: uuid!) {
+        update_case_work_units_by_pk(pk_columns: { id: $id }, _set: {
+          status: "open",
+          inspector_id: null,
+          inspection_task_id: null,
+          claimed_at: null,
+          device_serial: null,
+          serial_photo_url: null,
+          serial_confirmed_at: null
+        }) { id }
+      }`,
+      { id: unitId },
+    );
+  }
+
+  return ok(await loadMyCaseData(user, caseId));
+}
+
+async function syncCaseUnitProgress(caseId: string) {
+  const d = await adminGql<{
+    service_cases_by_pk: {
+      id: string;
+      status: string;
+      planned_units: number | null;
+    } | null;
+    case_work_units: Array<{ id: string; status: string; inspector_id: string | null }>;
+  }>(
+    `query ($id: uuid!) {
+      service_cases_by_pk(id: $id) { id status planned_units }
+      case_work_units(where: { service_case_id: { _eq: $id } }) {
+        id status inspector_id
+      }
+    }`,
+    { id: caseId },
+  );
+  const row = d.service_cases_by_pk;
+  if (!row) return { completed: 0, planned: 1, finished: false };
+  const planned = Math.max(1, Number(row.planned_units) || 1);
+  const units = d.case_work_units || [];
+  const completed = units.filter((u) => u.status === "completed").length;
+
+  const byInspector = new Map<string, number>();
+  for (const u of units) {
+    if (u.status !== "completed" || !u.inspector_id) continue;
+    byInspector.set(u.inspector_id, (byInspector.get(u.inspector_id) || 0) + 1);
+  }
+  for (const [uid, n] of byInspector) {
+    await adminGql(
+      `mutation ($cid: uuid!, $uid: uuid!, $n: Int!) {
+        update_case_assignments(
+          where: {
+            service_case_id: { _eq: $cid }
+            inspector_id: { _eq: $uid }
+            status: { _neq: "withdrawn" }
+          }
+          _set: { completed_units: $n }
+        ) { affected_rows }
+      }`,
+      { cid: caseId, uid, n },
+    );
+  }
+
+  const shouldFinish =
+    completed >= planned && ["assigned", "working"].includes(String(row.status || ""));
+  if (shouldFinish) {
+    await adminGql(
+      `mutation ($id: uuid!, $n: Int!, $now: timestamptz!) {
+        update_service_cases_by_pk(
+          pk_columns: { id: $id }
+          _set: { status: "finished", finish_time: $now, completed_units: $n }
+        ) { id }
+      }`,
+      { id: caseId, n: completed, now: new Date().toISOString() },
+    );
+  } else {
+    await adminGql(
+      `mutation ($id: uuid!, $n: Int!) {
+        update_service_cases_by_pk(pk_columns: { id: $id }, _set: { completed_units: $n }) { id }
+      }`,
+      { id: caseId, n: completed },
+    );
+  }
+
+  return { completed, planned, finished: shouldFinish };
 }
 
 async function completeUnit(user: AppUser, caseId: string, unitId: string) {
-  await adminGql(
-    `mutation ($id: uuid!, $now: timestamptz!) {
-      update_case_work_units_by_pk(pk_columns: { id: $id }, _set: { status: "completed", completed_at: $now }) { id }
+  const unitRow = await adminGql<{
+    case_work_units_by_pk: {
+      id: string;
+      status: string;
+      inspector_id: string | null;
+      service_case_id: string;
+    } | null;
+  }>(
+    `query ($id: uuid!) {
+      case_work_units_by_pk(id: $id) { id status inspector_id service_case_id }
     }`,
-    { id: unitId, now: new Date().toISOString() },
+    { id: unitId },
   );
+  const unit = unitRow.case_work_units_by_pk;
+  if (!unit || unit.service_case_id !== caseId) throw new HttpError(404, "作业单元不存在");
+  if (unit.inspector_id && unit.inspector_id !== user.id) {
+    throw new HttpError(403, "只能完成自己认领的台次");
+  }
+
+  if (unit.status !== "completed") {
+    await adminGql(
+      `mutation ($id: uuid!, $now: timestamptz!) {
+        update_case_work_units_by_pk(pk_columns: { id: $id }, _set: {
+          status: "completed", completed_at: $now
+        }) { id }
+      }`,
+      { id: unitId, now: new Date().toISOString() },
+    );
+  }
+
+  await syncCaseUnitProgress(caseId);
   return myCase(user, caseId);
 }
 
 async function saveSerial(unitId: string, body: Record<string, unknown>) {
-  await adminGql(
+  const deviceSerial = String(body.deviceSerial || body.serial || "")
+    .trim()
+    .replace(/\s+/g, "")
+    .toUpperCase();
+  const serialPhotoUrl = (body.serialPhotoUrl || body.photoUrl || null) as string | null;
+  const now = new Date().toISOString();
+  const d = await adminGql<{
+    update_case_work_units_by_pk: {
+      id: string;
+      seq: number;
+      device_serial: string | null;
+      serial_photo_url: string | null;
+      serial_confirmed_at: string | null;
+    } | null;
+  }>(
     `mutation ($id: uuid!, $set: case_work_units_set_input!) {
-      update_case_work_units_by_pk(pk_columns: { id: $id }, _set: $set) { id }
+      update_case_work_units_by_pk(pk_columns: { id: $id }, _set: $set) {
+        id seq device_serial serial_photo_url serial_confirmed_at
+      }
     }`,
     {
       id: unitId,
       set: {
-        device_serial: body.deviceSerial || body.serial,
-        serial_photo_url: body.serialPhotoUrl || body.photoUrl,
-        serial_confirmed_at: new Date().toISOString(),
+        device_serial: deviceSerial || null,
+        serial_photo_url: serialPhotoUrl,
+        serial_confirmed_at: now,
       },
     },
   );
-  return ok({ success: true });
-}
-
-async function saveExpense(user: AppUser, caseId: string, unitId: string | null, body: Record<string, unknown>) {
-  const amount = Number(body.amount ?? body.claimAmount ?? 0);
-  const d = await adminGql<{ insert_case_expense_claims_one: Record<string, unknown> }>(
-    `mutation ($obj: case_expense_claims_insert_input!) { insert_case_expense_claims_one(object: $obj) { id amount claim_amount status note line_items voucher_urls trip_skipped } }`,
-    {
-      obj: {
-        service_case_id: caseId,
-        work_unit_id: unitId,
-        inspector_id: user.id,
-        amount,
-        claim_amount: amount,
-        line_items: body.lineItems || [],
-        voucher_urls: body.voucherUrls || [],
-        trip_skipped: body.tripSkipped || false,
-        note: body.note || null,
-        status: "submitted",
-        month: new Date().toISOString().slice(0, 7),
-      },
-    },
-  );
-  const row = d.insert_case_expense_claims_one;
+  const row = d.update_case_work_units_by_pk;
+  if (!row) throw new HttpError(404, "作业单元不存在");
   return ok({
     id: row.id,
-    amount: String(row.amount),
-    claimAmount: String(row.claim_amount),
-    status: row.status,
-    note: row.note,
-    lineItems: row.line_items,
-    voucherUrls: row.voucher_urls,
-    tripSkipped: row.trip_skipped,
+    seq: row.seq,
+    deviceSerial: row.device_serial || deviceSerial,
+    serialPhotoUrl: row.serial_photo_url,
+    serialConfirmedAt: row.serial_confirmed_at || now,
   });
 }
 
+async function ocrCaseMileage(body: Record<string, unknown>) {
+  const imageUrl = String(body.imageUrl || body.url || "").trim();
+  if (!imageUrl) throw new HttpError(400, "请先上传里程表照片");
+  const kind = String(body.kind || "start");
+  const result = await ocrMileageFromImage(imageUrl, kind);
+  return ok(result);
+}
+
+async function ocrCaseSerial(body: Record<string, unknown>) {
+  const imageUrl = String(body.imageUrl || body.url || "").trim();
+  if (!imageUrl) throw new HttpError(400, "请先上传序列号照片");
+  const result = await ocrDeviceSerialFromImage(imageUrl);
+  return ok(result);
+}
+
+/** 旧版作业记录接口占位（行程费用已迁到 my-expense） */
+async function saveWorkRecord(body: Record<string, unknown>) {
+  return ok({
+    workload: body.workload || {},
+    mileage: String(body.mileage ?? ""),
+    expenses: String(body.expenses ?? ""),
+    expenseNote: body.expenseNote || "",
+    mileageScreenshotUrls: Array.isArray(body.mileageScreenshotUrls)
+      ? body.mileageScreenshotUrls
+      : [],
+    workNote: body.workNote || "",
+  });
+}
+
+async function saveExpense(user: AppUser, caseId: string, unitId: string | null, body: Record<string, unknown>) {
+  const lineItems = Array.isArray(body.lineItems) ? body.lineItems : [];
+  const voucherUrls = Array.isArray(body.voucherUrls) ? body.voucherUrls : [];
+  const fromLines = sumExpenseLineAmount(lineItems);
+  const amount = Number(body.amount ?? body.claimAmount ?? fromLines ?? 0);
+  const tripSkipped = !!body.tripSkipped;
+  const note = body.note != null ? String(body.note) : null;
+  const wantSubmit = body.submit === true || body.submit === "true";
+  const workUnitId = unitId || (body.workUnitId ? String(body.workUnitId) : null);
+
+  const existing = await adminGql<{
+    case_expense_claims: Array<{ id: string; status: string }>;
+  }>(
+    `query ($cid: uuid!, $uid: uuid!) {
+      case_expense_claims(
+        where: { service_case_id: { _eq: $cid }, inspector_id: { _eq: $uid } }
+        order_by: { created_at: desc }
+        limit: 5
+      ) { id status }
+    }`,
+    { cid: caseId, uid: user.id },
+  );
+  const open = existing.case_expense_claims.find((c) =>
+    ["draft", "rejected"].includes(String(c.status)),
+  );
+  const locked = existing.case_expense_claims.find((c) =>
+    ["submitted", "approved"].includes(String(c.status)),
+  );
+  if (locked && !open) {
+    throw new HttpError(400, "费用已提交或已通过，暂不可修改；驳回后可再改");
+  }
+
+  const nextStatus = wantSubmit ? "submitted" : "draft";
+  const set = {
+    work_unit_id: workUnitId,
+    amount,
+    claim_amount: amount,
+    line_items: lineItems,
+    voucher_urls: voucherUrls,
+    trip_skipped: tripSkipped,
+    note,
+    status: nextStatus,
+    month: new Date().toISOString().slice(0, 7),
+    ...(wantSubmit
+      ? {}
+      : { review_by_id: null, review_at: null, review_note: null }),
+  };
+
+  const fields = `
+    id service_case_id work_unit_id inspector_id amount claim_amount
+    line_items voucher_urls trip_skipped note status review_note month created_at
+  `;
+
+  let row: Record<string, unknown>;
+  if (open) {
+    const upd = await adminGql<{ update_case_expense_claims_by_pk: Record<string, unknown> | null }>(
+      `mutation ($id: uuid!, $set: case_expense_claims_set_input!) {
+        update_case_expense_claims_by_pk(pk_columns: { id: $id }, _set: $set) { ${fields} }
+      }`,
+      { id: open.id, set },
+    );
+    if (!upd.update_case_expense_claims_by_pk) throw new HttpError(404, "费用单不存在");
+    row = upd.update_case_expense_claims_by_pk;
+  } else {
+    const ins = await adminGql<{ insert_case_expense_claims_one: Record<string, unknown> }>(
+      `mutation ($obj: case_expense_claims_insert_input!) {
+        insert_case_expense_claims_one(object: $obj) { ${fields} }
+      }`,
+      {
+        obj: {
+          service_case_id: caseId,
+          inspector_id: user.id,
+          ...set,
+        },
+      },
+    );
+    row = ins.insert_case_expense_claims_one;
+  }
+
+  return ok(mapExpenseClaim(row));
+}
+
 async function pendingExpenses(query: URLSearchParams) {
-  const where: Record<string, unknown> = {};
-  if (query.get("status") && query.get("status") !== "all") where.status = { _eq: query.get("status") };
-  else where.status = { _eq: "submitted" };
-  const d = await adminGql<{ case_expense_claims: Record<string, unknown>[] }>(
+  const statusParam = String(query.get("status") || "pending").trim();
+  // 前端「待审核」传 pending；库内提交态为 submitted
+  const statusWhere =
+    statusParam === "all"
+      ? { _neq: "draft" }
+      : statusParam === "pending"
+        ? { _eq: "submitted" }
+        : { _eq: statusParam };
+
+  const and: Record<string, unknown>[] = [{ status: statusWhere }];
+  const keyword = String(query.get("keyword") || "").trim();
+  if (keyword) {
+    and.push({
+      _or: [
+        { note: { _ilike: `%${keyword}%` } },
+        { service_case: { gsp_case_no: { _ilike: `%${keyword}%` } } },
+        { service_case: { project_name: { _ilike: `%${keyword}%` } } },
+        { inspector: { real_name: { _ilike: `%${keyword}%` } } },
+      ],
+    });
+  }
+  const month = String(query.get("month") || "").trim();
+  if (month) and.push({ month: { _eq: month.slice(0, 7) } });
+
+  const d = await adminGql<{
+    case_expense_claims: Array<Record<string, unknown>>;
+  }>(
     `query ($where: case_expense_claims_bool_exp!) {
-      case_expense_claims(where: $where, order_by: { created_at: desc }) {
-        id service_case_id inspector_id amount note voucher_urls status month review_note review_at created_at
-        inspector { real_name }
-        service_case { gsp_case_no project_name }
+      case_expense_claims(where: $where, order_by: { created_at: desc }, limit: 500) {
+        id service_case_id work_unit_id inspector_id amount claim_amount
+        line_items voucher_urls trip_skipped note status month review_note review_at created_at
+        inspector { id real_name }
+        service_case {
+          id gsp_case_no project_name unit_label completed_units
+          case_work_units { id status inspector_id }
+          case_expense_claims { id claim_amount amount status }
+        }
       }
     }`,
-    { where },
+    { where: { _and: and } },
   );
+
   return ok(
-    d.case_expense_claims.map((r) => ({
-      id: r.id,
-      serviceCaseId: r.service_case_id,
-      gspCaseNo: (r.service_case as { gsp_case_no?: string })?.gsp_case_no,
-      projectName: (r.service_case as { project_name?: string })?.project_name,
-      inspectorId: r.inspector_id,
-      inspectorName: (r.inspector as { real_name?: string })?.real_name,
-      amount: String(r.amount),
-      note: r.note,
-      voucherUrls: r.voucher_urls,
-      status: r.status,
-      month: r.month,
-      reviewNote: r.review_note,
-      reviewAt: r.review_at,
-      createdAt: r.created_at,
-    })),
+    d.case_expense_claims.map((r) => {
+      const sc = (r.service_case || {}) as {
+        id?: string;
+        gsp_case_no?: string;
+        project_name?: string;
+        unit_label?: string;
+        completed_units?: number;
+        case_work_units?: Array<{ status?: string; inspector_id?: string }>;
+        case_expense_claims?: Array<{
+          claim_amount?: unknown;
+          amount?: unknown;
+          status?: string;
+        }>;
+      };
+      const inspectorId = String(r.inspector_id || "");
+      const units = sc.case_work_units || [];
+      const completedUnits = units.filter(
+        (u) =>
+          u.inspector_id === inspectorId &&
+          (u.status === "completed" || u.status === "submitted"),
+      ).length;
+      const caseExpenseTotal = (sc.case_expense_claims || [])
+        .filter((e) => ["submitted", "approved", "rejected"].includes(String(e.status)))
+        .reduce((s, e) => s + Number(e.claim_amount ?? e.amount ?? 0), 0);
+      const lineItems = Array.isArray(r.line_items) ? r.line_items : [];
+      const mapped = mapExpenseClaim(r);
+      return {
+        ...mapped,
+        serviceCaseId: String(r.service_case_id),
+        gspCaseNo: sc.gsp_case_no,
+        projectName: sc.project_name,
+        unitLabel: sc.unit_label || "台",
+        completedUnits,
+        inspectorName: (r.inspector as { real_name?: string } | null)?.real_name,
+        caseExpenseTotal: money(caseExpenseTotal),
+        month: (r.month as string) || null,
+        reviewAt: (r.review_at as string) || null,
+        createdAt: (r.created_at as string) || null,
+        lineItems,
+      };
+    }),
   );
 }
 
@@ -1898,7 +2747,10 @@ const TASK_FIELDS = `
   site { id name code province city district }
   device { id serial_number device_type model }
   inspector { id real_name phone }
-  service_case { task_type service_type task_template { name } }
+  service_case {
+    id gsp_case_no project_name task_type service_type product_line task_template_id
+    task_template { id name }
+  }
   inspection_records(order_by: { created_at: desc }, limit: 1) {
     id status entries reject_reason
   }
@@ -1937,7 +2789,126 @@ async function getTask(id: string) {
     { id },
   );
   if (!d.inspection_tasks_by_pk) throw new HttpError(404, "任务不存在");
-  return ok(mapTask(d.inspection_tasks_by_pk));
+  let healed = await healServiceTaskSnapshot(id, d.inspection_tasks_by_pk);
+  healed = await healTaskWorkUnitLink(healed);
+  return ok(mapTask(healed));
+}
+
+/**
+ * 单人一台旧任务缺 work_unit_id 时补挂作业台。
+ * 否则 H5 判定不需要「识别序列号」步骤，工程师会误以为系统没做序列号识别。
+ */
+async function healTaskWorkUnitLink(task: Record<string, unknown>) {
+  if (task.work_unit_id) return task;
+  const caseId = task.service_case_id as string | null;
+  const inspectorId = task.inspector_id as string | null;
+  const taskId = String(task.id || "");
+  if (!caseId || !inspectorId || !taskId) return task;
+
+  const d = await adminGql<{
+    service_cases_by_pk: { assign_mode: string; planned_units: number } | null;
+    case_work_units: Array<{
+      id: string;
+      status: string;
+      inspection_task_id: string | null;
+      inspector_id: string | null;
+    }>;
+  }>(
+    `query ($cid: uuid!) {
+      service_cases_by_pk(id: $cid) { assign_mode planned_units }
+      case_work_units(where: { service_case_id: { _eq: $cid } }, order_by: { seq: asc }) {
+        id status inspection_task_id inspector_id
+      }
+    }`,
+    { cid: caseId },
+  );
+  const sc = d.service_cases_by_pk;
+  if (!sc) return task;
+  const planned = Math.max(1, Number(sc.planned_units) || 1);
+  if (String(sc.assign_mode || "single") === "multi" || planned > 1) return task;
+
+  const unit = d.case_work_units[0];
+  if (!unit) return task;
+  if (unit.inspection_task_id && unit.inspection_task_id !== taskId) return task;
+
+  const now = new Date().toISOString();
+  await adminGql(
+    `mutation ($tid: uuid!, $uid: uuid!, $unitId: uuid!, $now: timestamptz!) {
+      update_inspection_tasks_by_pk(pk_columns: { id: $tid }, _set: { work_unit_id: $unitId }) { id }
+      update_case_work_units_by_pk(pk_columns: { id: $unitId }, _set: {
+        status: "claimed"
+        inspector_id: $uid
+        inspection_task_id: $tid
+        claimed_at: $now
+      }) { id }
+    }`,
+    { tid: taskId, uid: inspectorId, unitId: unit.id, now },
+  );
+  return { ...task, work_unit_id: unit.id };
+}
+
+/** 服务作业：纠正「把所有产品线检查项拼在一起」的错误快照（仅草稿且未拍照时） */
+async function healServiceTaskSnapshot(id: string, task: Record<string, unknown>) {
+  const sc = task.service_case as Record<string, unknown> | null;
+  if (!sc) return task;
+  const tplId =
+    (sc.task_template_id as string) ||
+    ((sc.task_template as { id?: string } | null)?.id ?? null);
+  if (!tplId) return task;
+
+  const rebuilt = (await loadTemplateSnapshot(
+    tplId,
+    sc.product_line as string | null,
+  )) as Array<{ id?: string; name?: string }>;
+  if (!rebuilt.length) return task;
+
+  const current = (task.template_snapshot as Array<{ id?: string; name?: string }>) || [];
+  const names = current.map((e) => String(e.name || "").trim()).filter(Boolean);
+  const hasDupNames = names.length > 0 && new Set(names).size < names.length;
+  const tooMany = current.length > rebuilt.length;
+  if (!hasDupNames && !tooMany && current.length === rebuilt.length) return task;
+
+  const recs = (task.inspection_records as Array<Record<string, unknown>>) || [];
+  const rec = recs[0];
+  if (rec) {
+    const status = String(rec.status || "");
+    if (status !== "draft") return task;
+    const entries = (rec.entries as Array<{ photos?: unknown[] }>) || [];
+    const hasPhotos = entries.some((e) => Array.isArray(e.photos) && e.photos.length > 0);
+    if (hasPhotos) return task;
+  }
+
+  await adminGql(
+    `mutation ($id: uuid!, $snap: jsonb!) {
+      update_inspection_tasks_by_pk(pk_columns: { id: $id }, _set: { template_snapshot: $snap }) { id }
+    }`,
+    { id, snap: rebuilt },
+  );
+
+  if (rec?.id) {
+    await adminGql(
+      `mutation ($id: uuid!, $entries: jsonb!) {
+        update_inspection_records_by_pk(pk_columns: { id: $id }, _set: { entries: $entries }) { id }
+      }`,
+      {
+        id: rec.id,
+        entries: rebuilt.map((e) => ({
+          templateEntryId: e.id,
+          photos: [],
+          aiResult: { status: "pending", confidence: 0, reason: "" },
+          manualResult: "pending",
+          finalResult: null,
+          remark: "",
+        })),
+      },
+    );
+  }
+
+  const again = await adminGql<{ inspection_tasks_by_pk: Record<string, unknown> | null }>(
+    `query ($id: uuid!) { inspection_tasks_by_pk(id: $id) { ${TASK_FIELDS} } }`,
+    { id },
+  );
+  return again.inspection_tasks_by_pk || { ...task, template_snapshot: rebuilt };
 }
 
 async function startTask(user: AppUser, id: string) {
@@ -1951,7 +2922,8 @@ async function startTask(user: AppUser, id: string) {
     `query ($id: uuid!) { inspection_tasks_by_pk(id: $id) { ${TASK_FIELDS} } }`,
     { id },
   );
-  const task = t.inspection_tasks_by_pk!;
+  let task = t.inspection_tasks_by_pk!;
+  task = await healServiceTaskSnapshot(id, task);
   const recs = (task.inspection_records as unknown[]) || [];
   if (!recs.length) {
     const snap = (task.template_snapshot as Array<{ id: string }>) || [];
@@ -2439,14 +3411,22 @@ async function uploadPhoto(form: FormData | null, user: AppUser) {
   const file = form?.get("file");
   if (!(file instanceof File)) throw new HttpError(400, "请选择照片");
   const contentType = file.type || "image/jpeg";
-  const token = createUploadToken(file.name || "photo.jpg", user.id, { contentType });
-  try {
-    const buf = Buffer.from(await file.arrayBuffer());
-    await uploadBufferWithToken(token, buf);
-  } catch (e) {
-    throw new HttpError(500, e instanceof Error ? e.message : "图片上传失败");
+  const buf = Buffer.from(await file.arrayBuffer());
+  let lastErr: unknown;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const token = createUploadToken(file.name || "photo.jpg", user.id, { contentType });
+    try {
+      await uploadBufferWithToken(token, buf);
+      return ok({ url: token.publicUrl, original: true });
+    } catch (e) {
+      lastErr = e;
+      if (attempt === 0) await new Promise((r) => setTimeout(r, 700));
+    }
   }
-  return ok({ url: token.publicUrl, original: true });
+  throw new HttpError(
+    500,
+    lastErr instanceof Error ? lastErr.message : "图片上传失败",
+  );
 }
 
 function money(n: number) {
@@ -2686,34 +3666,259 @@ async function reviewApprove(user: AppUser, caseId: string, body: Record<string,
   return ok({ success: true, comment: body.comment || body.reason });
 }
 
-async function listAssessments(query: URLSearchParams) {
+async function listAssessments(user: AppUser, query: URLSearchParams) {
   const month = query.get("month") || new Date().toISOString().slice(0, 7);
-  const d = await adminGql<{ assessments: Record<string, unknown>[] }>(
-    `query ($m: String!) {
-      assessments(where: { month: { _eq: $m } }) {
-        id user_id month total_score rank_result reward_amount event_penalty tool_subsidy other_subsidy subsidy_remark
-        user { real_name role }
+  const keyword = (query.get("keyword") || "").trim().toLowerCase();
+  const roleFilter = (query.get("role") || "").trim();
+  const siteIdQ = (query.get("siteId") || "").trim();
+
+  /** 网格长考核范围：仅正管站 + 副长任职站，不含本人只当工程师的站 */
+  let siteIds: string[] | undefined;
+  if (user.role === "site_manager") {
+    const scope = await adminGql<{
+      sites: { id: string }[];
+      site_members: { site_id: string }[];
+    }>(
+      `query ($uid: uuid!) {
+        sites(
+          where: {
+            manager_id: { _eq: $uid }
+            deleted_at: { _is_null: true }
+            status: { _eq: "active" }
+          }
+        ) { id }
+        site_members(
+          where: {
+            user_id: { _eq: $uid }
+            status: { _eq: "active" }
+            member_role: { _eq: "deputy_manager" }
+            site: { deleted_at: { _is_null: true }, status: { _eq: "active" } }
+          }
+        ) { site_id }
+      }`,
+      { uid: user.id },
+    );
+    siteIds = [
+      ...new Set([
+        ...scope.sites.map((s) => s.id),
+        ...scope.site_members.map((m) => m.site_id),
+      ]),
+    ];
+    if (siteIdQ) {
+      siteIds = siteIds.includes(siteIdQ) ? [siteIdQ] : [];
+    }
+    if (!siteIds.length) return ok([]);
+  } else if (siteIdQ) {
+    siteIds = [siteIdQ];
+  }
+
+  type MemberRow = {
+    user_id: string;
+    site_id: string;
+    site: { id: string; name: string } | null;
+    user: {
+      id: string;
+      username: string;
+      real_name: string;
+      role: string;
+      roles: string[] | null;
+      status: string;
+    } | null;
+  };
+
+  const wantInspectors = !roleFilter || roleFilter === "inspector";
+  const wantManagers = user.role === "super_admin" && (!roleFilter || roleFilter === "site_manager");
+
+  const roster = new Map<
+    string,
+    {
+      userId: string;
+      realName: string;
+      username: string;
+      userRole: string;
+      sites: Array<{ id: string; name: string }>;
+    }
+  >();
+
+  const pushSite = (
+    row: {
+      userId: string;
+      realName: string;
+      username: string;
+      userRole: string;
+      sites: Array<{ id: string; name: string }>;
+    },
+    siteId: string,
+    siteName: string,
+  ) => {
+    if (!siteId) return;
+    if (row.sites.some((s) => s.id === siteId)) return;
+    row.sites.push({ id: siteId, name: siteName || "未命名网格" });
+  };
+
+  if (wantInspectors) {
+    const d = await adminGql<{ site_members: MemberRow[] }>(
+      `query ($where: site_members_bool_exp!) {
+        site_members(where: $where, order_by: [{ site: { name: asc } }, { joined_at: asc }]) {
+          user_id site_id
+          site { id name }
+          user { id username real_name role roles status }
+        }
+      }`,
+      {
+        where: {
+          status: { _eq: "active" },
+          member_role: { _eq: "inspector" },
+          ...(siteIds ? { site_id: { _in: siteIds } } : {}),
+          user: { status: { _eq: "active" } },
+        },
+      },
+    );
+    for (const m of d.site_members) {
+      if (!m.user) continue;
+      const roles = m.user.roles || [];
+      const isMgr = roles.includes("site_manager") || m.user.role === "site_manager";
+      let row = roster.get(m.user_id);
+      if (!row) {
+        row = {
+          userId: m.user_id,
+          realName: m.user.real_name,
+          username: m.user.username,
+          userRole: isMgr ? "dual" : "inspector",
+          sites: [],
+        };
+        roster.set(m.user_id, row);
+      } else if (isMgr) {
+        row.userRole = "dual";
       }
-    }`,
-    { m: month },
+      pushSite(row, m.site_id, m.site?.name || "");
+    }
+  }
+
+  if (wantManagers) {
+    const d = await adminGql<{
+      sites: Array<{
+        id: string;
+        name: string;
+        manager: {
+          id: string;
+          username: string;
+          real_name: string;
+          role: string;
+          roles: string[] | null;
+          status: string;
+        } | null;
+      }>;
+    }>(
+      `query ($where: sites_bool_exp!) {
+        sites(where: $where, order_by: { name: asc }) {
+          id name
+          manager { id username real_name role roles status }
+        }
+      }`,
+      {
+        where: {
+          deleted_at: { _is_null: true },
+          status: { _eq: "active" },
+          manager_id: { _is_null: false },
+          ...(siteIds ? { id: { _in: siteIds } } : {}),
+        },
+      },
+    );
+    for (const s of d.sites) {
+      const mgr = s.manager;
+      if (!mgr || mgr.status !== "active") continue;
+      let row = roster.get(mgr.id);
+      if (!row) {
+        row = {
+          userId: mgr.id,
+          realName: mgr.real_name,
+          username: mgr.username,
+          userRole: "site_manager",
+          sites: [],
+        };
+        roster.set(mgr.id, row);
+      } else {
+        row.userRole = "dual";
+      }
+      pushSite(row, s.id, s.name);
+    }
+  }
+
+  const userIds = [...roster.keys()];
+  if (!userIds.length) return ok([]);
+
+  const [assessments, events] = await Promise.all([
+    adminGql<{ assessments: Record<string, unknown>[] }>(
+      `query ($m: String!, $ids: [uuid!]!) {
+        assessments(where: { month: { _eq: $m }, user_id: { _in: $ids } }) {
+          id user_id month internal_score total_score rank_result site_rank_result
+          reward_amount event_penalty tool_subsidy other_subsidy subsidy_remark score_detail
+        }
+      }`,
+      { m: month, ids: userIds },
+    ),
+    adminGql<{ assessment_events: Array<{ user_id: string; amount: number | string }> }>(
+      `query ($m: String!, $ids: [uuid!]!) {
+        assessment_events(where: { month: { _eq: $m }, user_id: { _in: $ids } }) {
+          user_id amount
+        }
+      }`,
+      { m: month, ids: userIds },
+    ),
+  ]);
+
+  const byAssessment = new Map(
+    assessments.assessments.map((r) => [String(r.user_id), r] as const),
   );
-  return ok(
-    d.assessments.map((r) => ({
-      id: r.id,
-      userId: r.user_id,
-      month: r.month,
-      realName: (r.user as { real_name?: string })?.real_name || "",
-      username: "",
-      userRole: (r.user as { role?: string })?.role || "inspector",
-      totalScore: r.total_score == null ? undefined : String(r.total_score),
-      rankResult: r.rank_result == null ? undefined : String(r.rank_result),
-      rewardAmount: r.reward_amount == null ? undefined : String(r.reward_amount),
-      eventPenalty: r.event_penalty == null ? undefined : String(r.event_penalty),
-      toolSubsidy: r.tool_subsidy == null ? undefined : String(r.tool_subsidy),
-      otherSubsidy: r.other_subsidy == null ? undefined : String(r.other_subsidy),
-      subsidyRemark: r.subsidy_remark == null ? undefined : String(r.subsidy_remark),
-    })),
-  );
+  const eventPenaltyByUser = new Map<string, number>();
+  for (const ev of events.assessment_events) {
+    const uid = String(ev.user_id);
+    eventPenaltyByUser.set(uid, (eventPenaltyByUser.get(uid) || 0) + Number(ev.amount || 0));
+  }
+
+  let list = [...roster.values()].map((person) => {
+    const a = byAssessment.get(person.userId);
+    const detail = a?.score_detail as { items?: unknown[]; total?: number } | null | undefined;
+    const scored = Boolean(detail && Array.isArray(detail.items) && detail.items.length);
+    const eventPenalty =
+      a?.event_penalty != null
+        ? Number(a.event_penalty)
+        : eventPenaltyByUser.get(person.userId) || 0;
+    const siteNames = person.sites.map((s) => s.name).filter(Boolean);
+    return {
+      id: a?.id ? String(a.id) : undefined,
+      month,
+      userId: person.userId,
+      realName: person.realName,
+      username: person.username,
+      userRole: person.userRole,
+      siteId: person.sites[0]?.id || null,
+      siteName: siteNames.length ? siteNames.join("、") : null,
+      internalScore: a?.internal_score == null ? undefined : String(a.internal_score),
+      totalScore: a?.total_score == null ? undefined : String(a.total_score),
+      siteRankResult: a?.site_rank_result == null ? undefined : String(a.site_rank_result),
+      rankResult: a?.rank_result == null ? undefined : String(a.rank_result),
+      rewardAmount: a?.reward_amount == null ? undefined : String(a.reward_amount),
+      eventPenalty: String(eventPenalty),
+      toolSubsidy: a?.tool_subsidy == null ? undefined : String(a.tool_subsidy),
+      otherSubsidy: a?.other_subsidy == null ? undefined : String(a.other_subsidy),
+      subsidyRemark: a?.subsidy_remark == null ? undefined : String(a.subsidy_remark),
+      scored,
+      scoreDetail: detail || null,
+    };
+  });
+
+  if (keyword) {
+    list = list.filter(
+      (row) =>
+        row.realName.toLowerCase().includes(keyword) ||
+        row.username.toLowerCase().includes(keyword),
+    );
+  }
+
+  list.sort((a, b) => a.realName.localeCompare(b.realName, "zh-CN"));
+  return ok(list);
 }
 
 async function saveAssessment(body: Record<string, unknown>) {
@@ -2896,9 +4101,9 @@ async function createEvent(user: AppUser, body: Record<string, unknown>) {
   return ok({ id: d.insert_assessment_events_one.id });
 }
 
-async function rankAssessments(month: string, body: Record<string, unknown>) {
+async function rankAssessments(user: AppUser, month: string, body: Record<string, unknown>) {
   void body;
-  return listAssessments(new URLSearchParams({ month }));
+  return listAssessments(user, new URLSearchParams({ month }));
 }
 
 async function listMonthly(query: URLSearchParams) {
@@ -2991,20 +4196,276 @@ async function correctMonthly(month: string, body: Record<string, unknown>) {
 
 async function myIncome(user: AppUser, query: URLSearchParams) {
   const month = query.get("month") || new Date().toISOString().slice(0, 7);
-  const d = await adminGql<{ monthly_settlements: Array<{ final_amount: number; perf_total: number; expense_total: number }> }>(
-    `query ($m: String!, $uid: uuid!) {
-      monthly_settlements(where: { month: { _eq: $m }, user_id: { _eq: $uid } }) {
-        final_amount perf_total expense_total
+  const uid = user.id;
+
+  type PerfRow = {
+    id: string;
+    gsp_case_no: string;
+    perf_base: number;
+    deduction: number;
+    deduction_reason: string | null;
+    perf_final: number;
+    case_revenue: number;
+    review_status: string;
+    review_comment: string | null;
+    month: string | null;
+    service_case: {
+      id: string;
+      gsp_case_no: string;
+      project_name: string;
+      status: string;
+      finish_time: string | null;
+      planned_units: number | null;
+      assign_mode: string | null;
+      case_perf_shares: Array<{
+        inspector_id: string;
+        completed_units: number;
+        share_ratio: number;
+        perf_amount: number;
+      }>;
+      case_expense_claims: Array<{
+        id: string;
+        service_case_id: string;
+        work_unit_id: string | null;
+        inspector_id: string | null;
+        amount: number;
+        claim_amount: number | null;
+        note: string | null;
+        status: string;
+        review_note: string | null;
+        trip_skipped: boolean | null;
+        work_unit?: { seq: number | null } | null;
+      }>;
+      assessment_events: Array<{
+        id: string;
+        category: string;
+        content: string;
+        amount: number;
+        remark: string | null;
+        user_id: string;
+      }>;
+      po_orders: Array<{
+        po_items: Array<{
+          item_name: string | null;
+          item_code: string | null;
+          qty: number;
+          perf_price: number | null;
+          item_perf: number | null;
+          price_status: string | null;
+        }>;
+      }>;
+    } | null;
+  };
+
+  const monthStart = `${month}-01`;
+  const [yy, mm] = month.split("-").map(Number);
+  const next = mm === 12 ? `${yy + 1}-01-01` : `${yy}-${String(mm + 1).padStart(2, "0")}-01`;
+
+  const d = await adminGql<{
+    case_performances: PerfRow[];
+    monthly_settlements: Array<{
+      perf_total: number;
+      expense_total: number;
+      reward_total: number;
+      event_penalty: number;
+      subsidy_total: number;
+      correction_total: number;
+      final_amount: number;
+      status: string;
+    }>;
+    assessments: Array<{
+      total_score: number;
+      rank_result: string | null;
+      reward_amount: number;
+      event_penalty: number | null;
+      tool_subsidy: number;
+      other_subsidy: number;
+      subsidy_remark: string | null;
+      correction_amount: number | null;
+      correction_reason: string | null;
+    }>;
+    assessment_events: Array<{
+      id: string;
+      category: string;
+      content: string;
+      amount: number;
+      remark: string | null;
+      service_case_id: string | null;
+      created_at: string;
+    }>;
+  }>(
+    `query ($m: String!, $uid: uuid!, $from: timestamptz!, $to: timestamptz!) {
+      case_performances(
+        where: {
+          month: { _eq: $m }
+          _or: [
+            { inspector_id: { _eq: $uid } }
+            { service_case: { case_perf_shares: { inspector_id: { _eq: $uid } } } }
+          ]
+        }
+        order_by: { updated_at: desc }
+      ) {
+        id gsp_case_no perf_base deduction deduction_reason perf_final case_revenue
+        review_status review_comment month
+        service_case {
+          id gsp_case_no project_name status finish_time planned_units assign_mode
+          case_perf_shares(where: { inspector_id: { _eq: $uid } }) {
+            inspector_id completed_units share_ratio perf_amount
+          }
+          case_expense_claims(where: { inspector_id: { _eq: $uid } }) {
+            id service_case_id work_unit_id inspector_id amount claim_amount note status
+            review_note trip_skipped
+            work_unit { seq }
+          }
+          assessment_events(where: { user_id: { _eq: $uid } }) {
+            id category content amount remark user_id
+          }
+          po_orders {
+            po_items {
+              item_name item_code qty perf_price item_perf price_status
+            }
+          }
+        }
+      }
+      monthly_settlements(where: { month: { _eq: $m }, user_id: { _eq: $uid } }, limit: 1) {
+        perf_total expense_total reward_total event_penalty subsidy_total correction_total
+        final_amount status
+      }
+      assessments(where: { month: { _eq: $m }, user_id: { _eq: $uid } }, limit: 1) {
+        total_score rank_result reward_amount event_penalty tool_subsidy other_subsidy
+        subsidy_remark correction_amount correction_reason
+      }
+      assessment_events(
+        where: {
+          user_id: { _eq: $uid }
+          service_case_id: { _is_null: true }
+          created_at: { _gte: $from, _lt: $to }
+        }
+        order_by: { created_at: desc }
+      ) {
+        id category content amount remark service_case_id created_at
       }
     }`,
-    { m: month, uid: user.id },
+    { m: month, uid, from: monthStart, to: next },
   );
-  const row = d.monthly_settlements[0];
+
+  const settlement = d.monthly_settlements[0] || null;
+  const assessment = d.assessments[0] || null;
+
+  const list = d.case_performances.map((row) => {
+    const sc = row.service_case;
+    const share = sc?.case_perf_shares?.[0];
+    const shared = !!share;
+    const myPerf = shared ? Number(share.perf_amount || 0) : Number(row.perf_final || 0);
+    const events = sc?.assessment_events || [];
+    const eventPenaltyTotal = events.reduce((sum, e) => sum + Number(e.amount || 0), 0);
+    const expenses = (sc?.case_expense_claims || []).map((e) => ({
+      id: e.id,
+      serviceCaseId: e.service_case_id,
+      workUnitId: e.work_unit_id,
+      unitSeq: e.work_unit?.seq ?? null,
+      amount: String(e.amount ?? 0),
+      claimAmount: e.claim_amount == null ? null : String(e.claim_amount),
+      note: e.note,
+      status: e.status,
+      reviewNote: e.review_note,
+      tripSkipped: !!e.trip_skipped,
+    }));
+    const items = (sc?.po_orders || [])
+      .flatMap((po) => po.po_items || [])
+      .filter((it) => it.price_status !== "ignored")
+      .map((it) => ({
+        itemName: String(it.item_name || it.item_code || ""),
+        qty: String(it.qty ?? 0),
+        perfPrice: it.perf_price == null ? "0" : String(it.perf_price),
+        itemPerf: String(it.item_perf ?? 0),
+        caseItemPerf: String(it.item_perf ?? 0),
+      }));
+
+    return {
+      id: row.id,
+      gspCaseNo: row.gsp_case_no,
+      perfBase: String(row.perf_base ?? 0),
+      deduction: String(row.deduction ?? 0),
+      deductionReason: row.deduction_reason,
+      perfFinal: myPerf.toFixed(2),
+      casePerfFinal: String(row.perf_final ?? 0),
+      caseRevenue: String(row.case_revenue ?? 0),
+      myShareRatio: share ? String(share.share_ratio ?? 0) : undefined,
+      myCompletedUnits: share?.completed_units ?? null,
+      plannedUnits: sc?.planned_units ?? null,
+      assignMode: (sc?.assign_mode as "single" | "multi") || "single",
+      isShared: shared,
+      reviewStatus: row.review_status as "pending" | "approved" | "rejected",
+      reviewComment: row.review_comment,
+      serviceCase: sc
+        ? {
+            id: sc.id,
+            gspCaseNo: sc.gsp_case_no,
+            projectName: sc.project_name,
+            status: sc.status,
+            finishTime: sc.finish_time,
+          }
+        : undefined,
+      items,
+      eventPenalties: events.map((e) => ({
+        id: e.id,
+        category: e.category,
+        content: e.content,
+        amount: String(e.amount ?? 0),
+        remark: e.remark,
+      })),
+      eventPenaltyTotal: eventPenaltyTotal.toFixed(2),
+      expenses,
+    };
+  });
+
+  const approvedAmount = list
+    .filter((x) => x.reviewStatus === "approved")
+    .reduce((sum, x) => sum + Number(x.perfFinal || 0), 0);
+  const pendingAmount = list
+    .filter((x) => x.reviewStatus === "pending")
+    .reduce((sum, x) => sum + Number(x.perfFinal || 0), 0);
+
   return ok({
     month,
-    payable: row?.final_amount ?? 0,
-    performance: row?.perf_total ?? 0,
-    expense: row?.expense_total ?? 0,
+    approvedAmount: String(settlement?.perf_total ?? approvedAmount),
+    pendingAmount: pendingAmount.toFixed(2),
+    totalAmount: String(settlement?.final_amount ?? approvedAmount + pendingAmount),
+    caseCount: list.length,
+    list,
+    assessment: assessment
+      ? {
+          totalScore: String(assessment.total_score ?? 0),
+          rankResult: assessment.rank_result || undefined,
+          rewardAmount: String(assessment.reward_amount ?? 0),
+          eventPenalty: String(assessment.event_penalty ?? 0),
+          toolSubsidy: String(assessment.tool_subsidy ?? 0),
+          otherSubsidy: String(assessment.other_subsidy ?? 0),
+          subsidyRemark: assessment.subsidy_remark || undefined,
+          correctionAmount: String(assessment.correction_amount ?? 0),
+          correctionReason: assessment.correction_reason,
+        }
+      : null,
+    monthlySettlement: settlement
+      ? {
+          perfTotal: String(settlement.perf_total ?? 0),
+          expenseTotal: String(settlement.expense_total ?? 0),
+          rewardTotal: String(settlement.reward_total ?? 0),
+          eventPenalty: String(settlement.event_penalty ?? 0),
+          subsidyTotal: String(settlement.subsidy_total ?? 0),
+          correctionTotal: String(settlement.correction_total ?? 0),
+          finalAmount: String(settlement.final_amount ?? 0),
+          status: settlement.status,
+        }
+      : null,
+    otherEventPenalties: d.assessment_events.map((e) => ({
+      id: e.id,
+      category: e.category,
+      content: e.content,
+      amount: String(e.amount ?? 0),
+      remark: e.remark,
+    })),
   });
 }
 

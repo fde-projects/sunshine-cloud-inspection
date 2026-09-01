@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Empty, Loading, Popup } from 'react-vant';
+import { Empty, Loading, Popup } from '@/m/lib/react-vant';
 import {
   fetchMyIncome,
   type IncomeEventPenalty,
@@ -234,18 +234,18 @@ function CaseSheet({
         </p>
       )}
 
-      {item.items.length > 0 && (
+      {(item.items || []).length > 0 && (
         <div className="inc-bill-sheet-block">
           <button
             type="button"
             className="inc-bill-link"
             onClick={() => setShowItems((v) => !v)}
           >
-            {showItems ? '收起条目' : `条目明细 · ${item.items.length}`}
+            {showItems ? '收起条目' : `条目明细 · ${(item.items || []).length}`}
           </button>
           {showItems && (
             <ul className="inc-bill-items">
-              {item.items.map((line, i) => (
+              {(item.items || []).map((line, i) => (
                 <li key={`${line.itemName}-${i}`}>
                   <span>
                     {line.itemName} × {line.qty}
@@ -463,7 +463,7 @@ export default function MyIncomePage() {
             )}
 
             <section className="inc-bill-panel">
-              {!data.list.length ? (
+              {!(data.list || []).length ? (
                 <Empty description="该月暂无案例收入" />
               ) : dayFilter !== 'all' && !visibleGroups.length ? (
                 <div className="inc-bill-empty">

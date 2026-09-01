@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { NavBar, Cell, Empty, Tag, Image, PullRefresh, Button, Toast, Dialog } from 'react-vant';
+import { NavBar, Cell, Empty, Tag, Image, PullRefresh, Button, Toast, Dialog } from '@/m/lib/react-vant';
 import {
   fetchRecord,
   setRecordManualResult,

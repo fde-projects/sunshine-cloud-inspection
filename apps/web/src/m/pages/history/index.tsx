@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { NavBar, Cell, Empty, Tag } from 'react-vant';
+import { NavBar, Cell, Empty, Tag } from '@/m/lib/react-vant';
 import { fetchInspectorSummary, type InspectorSummary } from '../../api/stats';
 import { useAuthStore } from '../../stores/auth';
 

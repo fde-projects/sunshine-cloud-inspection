@@ -42,7 +42,6 @@ import { displayPhotoUrl } from '../../utils/photo-url';
 import { formatDateTime } from '../../utils/displayLabels';
 import EntryReviewCard from '../../components/EntryReviewCard';
 import FillTable, { listTablePagination } from '../../components/FillTable';
-import { LAYOUT_DEMO_COUNT, padLayoutDemo } from '../../utils/layoutDemo';
 
 const STATUS_MAP: Record<string, { color: string; text: string }> = {
   submitted: { color: 'processing', text: '待审核' },
@@ -228,26 +227,8 @@ export default function RecordsPage() {
         page,
         limit: pageSize,
       });
-      setGroups(
-        padLayoutDemo(res.list, LAYOUT_DEMO_COUNT, (n) => ({
-          groupKey: `layout-demo-hist-${n}`,
-          serviceCaseId: null,
-          gspCaseNo: `LAYOUT-HIS-${String(n).padStart(3, '0')}`,
-          projectName: `【排版预览】历史案例 ${n}`,
-          unitLabel: '台',
-          assignMode: 'single',
-          siteId: null,
-          plannedUnits: 3,
-          completedUnits: 2,
-          caseStatus: 'finished',
-          recordCount: 3,
-          pendingCount: 0,
-          approvedCount: 2,
-          rejectedCount: 1,
-          latestSubmittedAt: new Date().toISOString(),
-        })),
-      );
-      setTotal(Math.max(res.total, LAYOUT_DEMO_COUNT));
+      setGroups(res.list);
+      setTotal(res.total);
     } finally {
       setLoading(false);
       setListReady(true);

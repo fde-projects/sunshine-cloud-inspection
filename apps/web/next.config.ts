@@ -13,7 +13,8 @@ function loadRootEnv() {
       if (i < 0) continue;
       const key = line.slice(0, i).trim();
       const value = line.slice(i + 1).trim();
-      if (key && process.env[key] === undefined) process.env[key] = value;
+      // 始终以仓库根 .env 为准，避免旧进程环境残留七牛等配置
+      if (key) process.env[key] = value;
     }
   } catch {
     // docker-compose 已注入环境变量
@@ -21,6 +22,8 @@ function loadRootEnv() {
 }
 
 loadRootEnv();
+
+const reactVantRender = resolve(__dirname, "src/m/lib/react-vant-render.ts");
 
 const nextConfig: NextConfig = {
   output: "standalone",
@@ -34,6 +37,26 @@ const nextConfig: NextConfig = {
     "*.r16.cpolar.cn",
     "*.r16.vip.cpolar.cn",
   ],
+  // react-vant Toast/Dialog 在 React 19 下 createRoot 取不到，替换其 render 工具
+  turbopack: {
+    resolveAlias: {
+      "react-vant/es/utils/dom/render.js": reactVantRender,
+      "react-vant/es/utils/dom/render": reactVantRender,
+      "react-vant/lib/utils/dom/render.js": reactVantRender,
+      "react-vant/lib/utils/dom/render": reactVantRender,
+    },
+  },
+  webpack: (config) => {
+    config.resolve = config.resolve || {};
+    config.resolve.alias = {
+      ...config.resolve.alias,
+      "react-vant/es/utils/dom/render.js": reactVantRender,
+      "react-vant/es/utils/dom/render": reactVantRender,
+      "react-vant/lib/utils/dom/render.js": reactVantRender,
+      "react-vant/lib/utils/dom/render": reactVantRender,
+    };
+    return config;
+  },
 };
 
 export default nextConfig;

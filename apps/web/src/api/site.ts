@@ -1,4 +1,5 @@
 import { gql } from "@/lib/gql";
+import { getStoredUser } from "@/lib/session";
 import type { Paginated, SiteItem } from "@/types";
 
 export interface SiteQuery {
@@ -248,6 +249,29 @@ export async function addSiteMember(siteId: string, userId: string, memberRole: 
   return data.insert_site_members_one;
 }
 
+/** 正网格长兼工程师：写入本站工程师编制（已是副网格长则跳过，避免 UNIQUE 冲突） */
+export async function ensureSiteInspector(
+  siteId: string,
+  userId: string,
+): Promise<"created" | "exists" | "skipped_deputy"> {
+  const members = await fetchSiteMembers(siteId);
+  const mine = members.filter((m) => m.userId === userId && m.status === "active");
+  if (mine.some((m) => m.memberRole === "inspector")) return "exists";
+  if (mine.some((m) => m.memberRole === "deputy_manager")) return "skipped_deputy";
+  await addSiteMember(siteId, userId, "inspector");
+  return "created";
+}
+
+/** 任命/开通工程师后：把正网格长同步进该站工程师编制 */
+export async function syncPrimaryManagerInspector(
+  siteId: string,
+  managerUserId: string,
+  hasInspectorRole: boolean,
+) {
+  if (!hasInspectorRole) return "skipped" as const;
+  return ensureSiteInspector(siteId, managerUserId);
+}
+
 export async function removeSiteMember(siteId: string, userId: string) {
   await gql(
     `mutation ($siteId: uuid!, $userId: uuid!) {
@@ -258,10 +282,32 @@ export async function removeSiteMember(siteId: string, userId: string) {
   return { success: true };
 }
 
-export async function appointDeputy(id: string, userId: string) {
-  return addSiteMember(id, userId, "deputy_manager");
+export async function appointDeputy(siteId: string, userId: string) {
+  const me = getStoredUser();
+  if (!me) throw new Error("未登录");
+  if (me.role !== "super_admin") {
+    const data = await gql<{ sites_by_pk: { manager_id: string | null } | null }>(
+      `query ($id: uuid!) { sites_by_pk(id: $id) { manager_id } }`,
+      { id: siteId },
+    );
+    if (data.sites_by_pk?.manager_id !== me.id) {
+      throw new Error("仅正网格长或管理员可设置副网格长");
+    }
+  }
+  return addSiteMember(siteId, userId, "deputy_manager");
 }
 
-export async function removeDeputy(id: string, userId: string) {
-  return removeSiteMember(id, userId);
+export async function removeDeputy(siteId: string, userId: string) {
+  const me = getStoredUser();
+  if (!me) throw new Error("未登录");
+  if (me.role !== "super_admin") {
+    const data = await gql<{ sites_by_pk: { manager_id: string | null } | null }>(
+      `query ($id: uuid!) { sites_by_pk(id: $id) { manager_id } }`,
+      { id: siteId },
+    );
+    if (data.sites_by_pk?.manager_id !== me.id) {
+      throw new Error("仅正网格长或管理员可移除副网格长");
+    }
+  }
+  return removeSiteMember(siteId, userId);
 }

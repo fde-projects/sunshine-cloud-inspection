@@ -107,11 +107,22 @@ export async function uploadImage(
   form.append('file', compressed);
   if (meta?.siteName) form.append('siteName', meta.siteName);
   if (meta?.serialNumber) form.append('serialNumber', meta.serialNumber);
-  const { data } = await request.post<
-    ApiResponse<{ url: string; objectName: string }>
-  >('/upload/photo', form, {
-    headers: { 'Content-Type': 'multipart/form-data' },
-    timeout: 60000,
-  });
-  return data.data;
+  try {
+    const { data } = await request.post<
+      ApiResponse<{ url: string; objectName: string }>
+    >('/upload/photo', form, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+      timeout: 120000,
+    });
+    if (!data?.data?.url) throw new Error(data?.message || '上传未返回地址');
+    return data.data;
+  } catch (error) {
+    const msg =
+      error instanceof Error
+        ? error.message
+        : typeof error === 'object' && error && 'message' in error
+          ? String((error as { message?: string }).message)
+          : '图片上传失败';
+    throw new Error(msg);
+  }
 }

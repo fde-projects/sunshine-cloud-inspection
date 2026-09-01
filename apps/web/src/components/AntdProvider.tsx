@@ -6,6 +6,7 @@ import zhCN from "antd/locale/zh_CN";
 import { useEffect } from "react";
 import { useAuthStore } from "@/stores/auth";
 import { useBrandingStore } from "@/stores/branding";
+import BrandingDocumentSync from "@/components/BrandingDocumentSync";
 
 const theme = {
   token: {
@@ -50,7 +51,10 @@ export default function AntdProvider({ children }: { children: React.ReactNode }
 
   return (
     <ConfigProvider locale={zhCN} theme={theme}>
-      <AntApp>{children}</AntApp>
+      <AntApp>
+        <BrandingDocumentSync />
+        {children}
+      </AntApp>
     </ConfigProvider>
   );
 }

@@ -34,7 +34,6 @@ import {
 import { formatDateTime } from '../../utils/displayLabels';
 import EntryReviewCard from '../../components/EntryReviewCard';
 import FillTable, { listTablePagination } from '../../components/FillTable';
-import { LAYOUT_DEMO_COUNT, padLayoutDemo } from '../../utils/layoutDemo';
 
 const STATUS_MAP: Record<string, { color: string; text: string }> = {
   submitted: { color: 'processing', text: '待审核' },
@@ -100,26 +99,8 @@ export default function AuditPage() {
         tab === 'pending'
           ? await fetchRecordCaseGroups({ page, limit: pageSize, scope: 'audit' })
           : await fetchRecordCaseGroups({ page, limit: pageSize, status: 'rejected' });
-      setGroups(
-        padLayoutDemo(res.list, LAYOUT_DEMO_COUNT, (n) => ({
-          groupKey: `layout-demo-audit-${n}`,
-          serviceCaseId: null,
-          gspCaseNo: `LAYOUT-AUD-${String(n).padStart(3, '0')}`,
-          projectName: `【排版预览】验图案例 ${n}`,
-          unitLabel: '台',
-          assignMode: 'single',
-          siteId: null,
-          plannedUnits: 2,
-          completedUnits: 1,
-          caseStatus: 'working',
-          recordCount: 2,
-          pendingCount: tab === 'pending' ? 2 : 0,
-          approvedCount: 0,
-          rejectedCount: tab === 'rejected' ? 2 : 0,
-          latestSubmittedAt: new Date().toISOString(),
-        })),
-      );
-      setTotal(Math.max(res.total, LAYOUT_DEMO_COUNT));
+      setGroups(res.list);
+      setTotal(res.total);
     } finally {
       setLoading(false);
     }

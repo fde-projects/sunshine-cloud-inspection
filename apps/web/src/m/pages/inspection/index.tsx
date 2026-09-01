@@ -13,7 +13,7 @@ import {
   Input,
   Tag,
   ActionSheet,
-} from 'react-vant';
+} from '@/m/lib/react-vant';
 import { fetchTask, startTask, type TaskItem } from '../../api/task';
 import {
   fetchMyFinanceCase,
@@ -509,7 +509,12 @@ export default function InspectionPage() {
                 u.inspectorId === me &&
                 ['claimed', 'submitted', 'completed'].includes(u.status),
             )?.id ||
-            '';
+            // 单人一台兜底：即使台仍是 open，也挂上以便出现「识别序列号」
+            (c.assignMode !== 'multi' &&
+            Math.max(1, Number(c.plannedUnits) || 1) === 1 &&
+            (c.units || []).length === 1
+              ? c.units![0].id
+              : '');
           setTripUnitId(resolvedUnit);
           const planned = Math.max(1, Number(c.plannedUnits) || 1);
           setCaseUnitFlow(c.assignMode === 'multi' || planned > 1);
@@ -1152,11 +1157,13 @@ export default function InspectionPage() {
             className="inspection-task-summary"
             title={task.taskName}
             label={`${
-              task.serviceCaseId || String(task.device?.serialNumber || '').startsWith('CASE-')
-                ? `案例号：${String(task.device?.serialNumber || '')
-                    .replace(/^CASE-/, '')
-                    .replace(/-\d+$/, '') || '-'}`
-                : `序列号：${task.device?.serialNumber || '-'}`
+              task.serviceCaseId
+                ? `案例号：${task.gspCaseNo || '-'}`
+                : String(task.device?.serialNumber || '').startsWith('CASE-')
+                  ? `案例号：${String(task.device?.serialNumber || '')
+                      .replace(/^CASE-/, '')
+                      .replace(/-\d+$/, '') || '-'}`
+                  : `序列号：${task.device?.serialNumber || '-'}`
             } · 现场定位将写入报告`}
           />
 

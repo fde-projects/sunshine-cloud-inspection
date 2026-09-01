@@ -2,7 +2,7 @@
 
 import { useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Empty, PullRefresh, Toast } from 'react-vant';
+import { Empty, PullRefresh, Toast } from '@/m/lib/react-vant';
 import { useAuthStore } from '../../stores/auth';
 import { fetchTasks, type TaskItem } from '../../api/task';
 import { fetchMyFinanceCases, type MobileFinanceCase } from '../../api/finance';

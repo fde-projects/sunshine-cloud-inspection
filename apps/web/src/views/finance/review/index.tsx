@@ -38,7 +38,6 @@ import SettlementAmountDrawer from '../components/SettlementAmountDrawer';
 import ExpenseReviewPanel from '../expenses/ExpenseReviewPanel';
 import DayDatePicker from '../../../components/DayDatePicker';
 import FillTable from '../../../components/FillTable';
-import { LAYOUT_DEMO_COUNT, padLayoutDemo } from '../../../utils/layoutDemo';
 import { formatDateTime } from '../../../utils/displayLabels';
 
 type Action = 'approve' | 'reject';
@@ -159,28 +158,7 @@ export default function FinanceReviewPage() {
         reviewStatus: tab,
       });
       if (seq !== loadSeq.current) return;
-      setRows(
-        padLayoutDemo(next, LAYOUT_DEMO_COUNT, (n) => ({
-          id: `layout-demo-review-${n}`,
-          gspCaseNo: `LAYOUT-RVW-${String(n).padStart(3, '0')}`,
-          projectName: `【排版预览】结算案例 ${n}`,
-          region: '广东 · 深圳',
-          inspectorName: `预览工程师${n}`,
-          finishTime: new Date().toISOString(),
-          overdue: false,
-          perfBase: '1200.00',
-          deduction: '0',
-          eventPenalty: 0,
-          perfFinal: '1200.00',
-          caseRevenue: '3000.00',
-          reviewStatus: tab === 'approved' ? 'approved' : tab === 'rejected' ? 'rejected' : 'pending',
-          deductionStatus: 'none',
-          missingPerf: 0,
-          missingSettle: 0,
-          pendingExpenseCount: 0,
-          approvalReady: true,
-        })),
-      );
+      setRows(next);
     } catch {
       if (seq !== loadSeq.current) return;
       setRows([]);

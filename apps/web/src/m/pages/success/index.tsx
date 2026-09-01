@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { Toast } from 'react-vant';
+import { Toast } from '@/m/lib/react-vant';
 import { completeFinanceUnit, finishFinanceCase } from '../../api/finance';
 import { resolveWorkTypeLabel, workActionLabel } from '../../utils/workTypeLabels';
 import './success.css';

@@ -15,7 +15,6 @@ import type { FinanceMonthlySettlement } from '../../../types/finance';
 import type { SiteItem } from '../../../types';
 import { useAuthStore } from '../../../stores/auth';
 import FillTable from '../../../components/FillTable';
-import { LAYOUT_DEMO_COUNT, padLayoutDemo } from '../../../utils/layoutDemo';
 
 export default function FinanceMonthlyPage() {
   const isAdmin = useAuthStore((state) => state.user?.role === 'super_admin');
@@ -43,29 +42,12 @@ export default function FinanceMonthlyPage() {
     setLoading(true);
     try {
       setRows(
-        padLayoutDemo(
-          await fetchMonthlySettlements({
-            month,
-            keyword: keyword || undefined,
-            siteId: isAdmin ? siteId : undefined,
-            role: isAdmin ? role : undefined,
-          }),
-          LAYOUT_DEMO_COUNT,
-          (n) => ({
-            id: `layout-demo-monthly-${n}`,
-            month,
-            userId: `layout-demo-user-${n}`,
-            perfTotal: String(2000 + n * 37),
-            expenseTotal: String(120 + n * 3),
-            rewardTotal: n <= 3 ? '500' : '0',
-            eventPenalty: n % 6 === 0 ? '80' : '0',
-            subsidyTotal: '50',
-            correctionTotal: '0',
-            finalAmount: String(2100 + n * 40),
-            status: 'draft' as const,
-            user: { realName: `预览人员${n}`, username: `demo${n}` },
-          }),
-        ),
+        await fetchMonthlySettlements({
+          month,
+          keyword: keyword || undefined,
+          siteId: isAdmin ? siteId : undefined,
+          role: isAdmin ? role : undefined,
+        }),
       );
     } finally {
       setLoading(false);

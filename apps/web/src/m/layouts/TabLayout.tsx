@@ -1,7 +1,7 @@
 "use client";
 
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
-import { Tabbar } from 'react-vant';
+import { Tabbar } from '@/m/lib/react-vant';
 import { HomeO, OrdersO, UserO } from '@react-vant/icons';
 import { useEffect, useLayoutEffect, useMemo, type ComponentType, type ReactNode } from 'react';
 import { useAuthStore } from '../stores/auth';
@@ -68,10 +68,11 @@ export default function TabLayout({ children }: { children?: ReactNode }) {
     location.pathname.includes('/photo') ||
     location.pathname.includes('/success') ||
     location.pathname.includes('/login') ||
+    location.pathname.includes('/finance-cases/') ||
     /\/m\/tasks\/[^/]+$/.test(location.pathname);
 
   return (
-    <div className="tab-layout">
+    <div className={`tab-layout${hideTab ? ' tab-layout--no-tab' : ''}`}>
       <div className="tab-layout__content">
         {children ?? <Outlet />}
       </div>

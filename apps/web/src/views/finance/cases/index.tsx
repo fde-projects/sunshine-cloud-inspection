@@ -224,6 +224,7 @@ export default function FinanceCasesPage() {
   const [siteBind, setSiteBind] = useState<'unassigned' | 'assigned_site'>();
   const [filterSiteId, setFilterSiteId] = useState<string>();
   const [filterTaskType, setFilterTaskType] = useState<string>();
+  const [filterProductLine, setFilterProductLine] = useState<string>();
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
   const [exporting, setExporting] = useState(false);
@@ -300,6 +301,17 @@ export default function FinanceCasesPage() {
       return true;
     });
   }, [sites, province, city]);
+
+  const productLineOptions = useMemo(() => {
+    const tpl = taskTypes.find((t) => t.id === filterTaskType);
+    const lines = (tpl?.productLines || [])
+      .map((p) => String(p.name || '').trim())
+      .filter(Boolean);
+    return [
+      { value: '__empty__', label: '未选产品线' },
+      ...lines.map((name) => ({ value: name, label: name })),
+    ];
+  }, [taskTypes, filterTaskType]);
 
   const openCaseReports = useCallback(
     async (caseRow: {
@@ -441,6 +453,7 @@ export default function FinanceCasesPage() {
         siteBind,
         siteId: filterSiteId,
         taskType: filterTaskType,
+        productLine: filterProductLine,
         dateFrom: dateFrom || undefined,
         dateTo: dateTo || undefined,
       });
@@ -449,7 +462,20 @@ export default function FinanceCasesPage() {
     } finally {
       setLoading(false);
     }
-  }, [page, pageSize, keyword, status, province, city, siteBind, filterSiteId, filterTaskType, dateFrom, dateTo]);
+  }, [
+    page,
+    pageSize,
+    keyword,
+    status,
+    province,
+    city,
+    siteBind,
+    filterSiteId,
+    filterTaskType,
+    filterProductLine,
+    dateFrom,
+    dateTo,
+  ]);
 
   useEffect(() => {
     void load();
@@ -514,7 +540,7 @@ export default function FinanceCasesPage() {
   };
 
   return (
-    <Card className="finance-card admin-fill-page">
+    <Card className="finance-card finance-cases-page admin-fill-page">
       <Alert
         type="info"
         showIcon
@@ -535,11 +561,11 @@ export default function FinanceCasesPage() {
           </Tooltip>
         }
       />
-      <div className="finance-toolbar">
+      <div className="finance-toolbar finance-cases-toolbar">
           <Input.Search
             allowClear
             placeholder="案例号或项目名称"
-            style={{ width: 240 }}
+            style={{ width: 220 }}
             onSearch={(v) => {
               setPage(1);
               setKeyword(v);
@@ -550,6 +576,7 @@ export default function FinanceCasesPage() {
             showSearch
             optionFilterProp="label"
             placeholder="省份"
+            style={{ width: 110 }}
             value={province}
             onChange={(v) => {
               setPage(1);
@@ -565,6 +592,7 @@ export default function FinanceCasesPage() {
             showSearch
             optionFilterProp="label"
             placeholder="城市"
+            style={{ width: 110 }}
             value={city}
             disabled={!province}
             onChange={(v) => {
@@ -579,6 +607,7 @@ export default function FinanceCasesPage() {
             <Select
               allowClear
               placeholder="网格归属"
+              style={{ width: 120 }}
               value={siteBind}
               onChange={(v) => {
                 setPage(1);
@@ -594,6 +623,7 @@ export default function FinanceCasesPage() {
           <Select
             allowClear
             placeholder="派单状态"
+            style={{ width: 120 }}
             value={status}
             onChange={(v) => {
               setPage(1);
@@ -610,6 +640,7 @@ export default function FinanceCasesPage() {
             showSearch
             optionFilterProp="label"
             placeholder="筛选网格"
+            style={{ width: 160 }}
             value={filterSiteId}
             onChange={(v) => {
               setPage(1);
@@ -626,36 +657,52 @@ export default function FinanceCasesPage() {
             showSearch
             optionFilterProp="label"
             placeholder="服务类型"
-            style={{ width: 160 }}
+            style={{ width: 140 }}
             value={filterTaskType}
             onChange={(v) => {
               setPage(1);
               setFilterTaskType(v);
+              setFilterProductLine(undefined);
               setSelectedRowKeys([]);
             }}
             options={taskTypes.map((t) => ({ value: t.id, label: t.name }))}
           />
-          <Input
-            type="date"
-            value={dateFrom}
-            onChange={(e) => {
+          <Select
+            allowClear
+            showSearch
+            optionFilterProp="label"
+            placeholder="产品线"
+            style={{ width: 140 }}
+            value={filterProductLine}
+            disabled={!filterTaskType}
+            onChange={(v) => {
               setPage(1);
-              setDateFrom(e.target.value);
+              setFilterProductLine(v);
+              setSelectedRowKeys([]);
             }}
-            title="起始日期（完工/创建）"
-            style={{ width: 150 }}
+            options={productLineOptions}
           />
-          <span style={{ color: '#888' }}>至</span>
-          <Input
-            type="date"
-            value={dateTo}
-            onChange={(e) => {
-              setPage(1);
-              setDateTo(e.target.value);
-            }}
-            title="结束日期（完工/创建）"
-            style={{ width: 150 }}
-          />
+          <div className="finance-date-range" title="按完工日筛选；未完工则按创建日">
+            <Input
+              type="date"
+              value={dateFrom}
+              onChange={(e) => {
+                setPage(1);
+                setDateFrom(e.target.value);
+              }}
+              aria-label="起始日期"
+            />
+            <span>至</span>
+            <Input
+              type="date"
+              value={dateTo}
+              onChange={(e) => {
+                setPage(1);
+                setDateTo(e.target.value);
+              }}
+              aria-label="结束日期"
+            />
+          </div>
           <Button
             icon={<DownloadOutlined />}
             loading={exporting}
@@ -675,6 +722,7 @@ export default function FinanceCasesPage() {
                           siteBind,
                           siteId: filterSiteId,
                           taskType: filterTaskType,
+                          productLine: filterProductLine,
                           dateFrom: dateFrom || undefined,
                           dateTo: dateTo || undefined,
                         },

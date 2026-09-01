@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { NavBar, Cell, Empty, Toast, Button, Tag } from 'react-vant';
+import { NavBar, Cell, Empty, Toast, Button, Tag } from '@/m/lib/react-vant';
 import { useAuthStore } from '../../stores/auth';
 import { fetchMyFinanceCases } from '../../api/finance';
 

@@ -149,11 +149,14 @@ export function createUploadToken(
   userId: string,
   opts?: { contentType?: string },
 ): UploadToken {
-  const provider = (process.env.STORAGE_PROVIDER || "qiniu").toLowerCase();
-  if (provider === "tianyi") {
-    return createTianyiUploadToken(filename, userId, opts?.contentType || "image/jpeg");
+  const provider = (process.env.STORAGE_PROVIDER || "tianyi").toLowerCase();
+  if (provider === "qiniu") {
+    return createQiniuUploadToken(filename, userId);
   }
-  return createQiniuUploadToken(filename, userId);
+  if (provider !== "tianyi") {
+    throw new Error(`未知的 STORAGE_PROVIDER: ${provider}`);
+  }
+  return createTianyiUploadToken(filename, userId, opts?.contentType || "image/jpeg");
 }
 
 /** 服务端代传：按 provider 走七牛 Form POST 或天翼预签名 PUT。 */

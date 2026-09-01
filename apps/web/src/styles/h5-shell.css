@@ -87,14 +87,16 @@
   animation: h5-page-in 0.38s var(--h5-ease) both;
 }
 
+.tab-layout--no-tab .tab-layout__content {
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
 @keyframes h5-page-in {
   from {
     opacity: 0.55;
-    transform: translateY(6px);
   }
   to {
     opacity: 1;
-    transform: none;
   }
 }
 
@@ -375,4 +377,96 @@
   .tab-layout__content {
     padding-bottom: calc(84px + env(safe-area-inset-bottom));
   }
+}
+
+/* React 19 兼容 Toast / Dialog（替代 react-vant 命令式渲染） */
+.m-app-toast {
+  position: fixed;
+  left: 50%;
+  top: 46%;
+  z-index: 10000;
+  transform: translate(-50%, -50%);
+  max-width: min(78vw, 280px);
+  padding: 12px 16px;
+  border-radius: 10px;
+  background: rgba(20, 36, 30, 0.88);
+  color: #fff;
+  font-size: 14px;
+  line-height: 1.45;
+  text-align: center;
+  word-break: break-word;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.22);
+  pointer-events: none;
+}
+.m-app-toast--success {
+  background: rgba(15, 122, 88, 0.94);
+}
+.m-app-toast--fail {
+  background: rgba(181, 74, 63, 0.94);
+}
+.m-app-toast--loading {
+  background: rgba(20, 36, 30, 0.88);
+}
+
+.m-app-dialog {
+  position: fixed;
+  inset: 0;
+  z-index: 10001;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  opacity: 0;
+  transition: opacity 0.18s ease;
+}
+.m-app-dialog.is-open {
+  opacity: 1;
+}
+.m-app-dialog__mask {
+  position: absolute;
+  inset: 0;
+  background: rgba(12, 28, 22, 0.45);
+}
+.m-app-dialog__panel {
+  position: relative;
+  width: min(100%, 320px);
+  border-radius: 14px;
+  background: #fff;
+  overflow: hidden;
+  box-shadow: 0 18px 48px rgba(12, 48, 36, 0.18);
+}
+.m-app-dialog__title {
+  padding: 20px 20px 8px;
+  font-size: 17px;
+  font-weight: 650;
+  color: #132820;
+  text-align: center;
+}
+.m-app-dialog__message {
+  padding: 8px 20px 20px;
+  font-size: 14px;
+  line-height: 1.55;
+  color: #445a50;
+  text-align: center;
+}
+.m-app-dialog__actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  border-top: 1px solid rgba(18, 70, 52, 0.1);
+}
+.m-app-dialog__btn {
+  appearance: none;
+  border: 0;
+  background: #fff;
+  padding: 14px 10px;
+  font-size: 15px;
+  color: #445a50;
+  cursor: pointer;
+}
+.m-app-dialog__btn + .m-app-dialog__btn {
+  border-left: 1px solid rgba(18, 70, 52, 0.1);
+}
+.m-app-dialog__btn--primary {
+  color: #0f7a58;
+  font-weight: 650;
 }

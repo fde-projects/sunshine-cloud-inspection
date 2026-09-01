@@ -19,7 +19,6 @@ import AssessmentEventDrawer from '../components/AssessmentEventDrawer';
 import AssessmentScoreRuleDrawer from '../components/AssessmentScoreRuleDrawer';
 import AssessmentScoreDrawer from '../components/AssessmentScoreDrawer';
 import FillTable from '../../../components/FillTable';
-import { LAYOUT_DEMO_COUNT, padLayoutDemo } from '../../../utils/layoutDemo';
 
 const colTip = (title: string, tip: string) => (
   <span>
@@ -57,31 +56,12 @@ export default function FinanceAssessmentPage() {
     setLoading(true);
     try {
       setRows(
-        padLayoutDemo(
-          await fetchFinanceAssessments({
-            month,
-            keyword: keyword || undefined,
-            siteId: isAdmin ? siteId : undefined,
-            role: isAdmin ? role : undefined,
-          }),
-          LAYOUT_DEMO_COUNT,
-          (n) => ({
-            id: `layout-demo-assess-${n}`,
-            month,
-            userId: `layout-demo-user-${n}`,
-            realName: `预览人员${n}`,
-            username: `demo${n}`,
-            userRole: n % 3 === 0 ? 'site_manager' : 'inspector',
-            siteName: `预览网格${(n % 5) + 1}`,
-            totalScore: String(80 + (n % 20)),
-            siteRankResult: String((n % 8) + 1),
-            rankResult: String(n),
-            rewardAmount: n <= 3 ? '500' : '0',
-            eventPenalty: n % 7 === 0 ? '100' : '0',
-            toolSubsidy: '50',
-            otherSubsidy: '0',
-          }),
-        ),
+        await fetchFinanceAssessments({
+          month,
+          keyword: keyword || undefined,
+          siteId: isAdmin ? siteId : undefined,
+          role: isAdmin ? role : undefined,
+        }),
       );
     } finally {
       setLoading(false);
@@ -273,7 +253,7 @@ export default function FinanceAssessmentPage() {
         scroll={{ x: 1680 }}
         locale={{
           emptyText: isManager
-            ? '本网格暂无已聘工程师。请到用户管理「聘用到网格」，兼工程师的网格长也需聘到本网格后才会出现。'
+            ? '本网格暂无已聘工程师。请到「网格管理 → 人员」聘用或「新建并加入」；正网格长若已开通工程师，打开人员页会自动写入编制。'
             : '暂无考核人员',
         }}
         columns={[

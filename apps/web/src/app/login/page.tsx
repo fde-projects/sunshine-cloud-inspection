@@ -54,7 +54,12 @@ export default function LoginPage() {
       message.success(`登录成功（${loggedUser.realName}）`);
       router.replace(nextPathAfterAuth(loggedUser));
     } catch (e) {
-      message.error(e instanceof Error ? e.message : "登录失败");
+      const msg = e instanceof Error ? e.message : "登录失败";
+      if (msg.includes("手机作业端") || msg.includes("管理端身份")) {
+        message.error(`${msg}。请打开 /m/login（首页 → 手机作业端）`);
+      } else {
+        message.error(msg);
+      }
     }
   };
 
@@ -184,6 +189,13 @@ export default function LoginPage() {
                 进入管理端
               </Button>
             </Form>
+            <div style={{ marginTop: 16, textAlign: "center", color: "#657a72", fontSize: 13 }}>
+              工程师账号请使用{" "}
+              <a href="/m/login" style={{ color: "#16835f" }}>
+                手机作业端
+              </a>{" "}
+              登录
+            </div>
             <div
               className={`pc-login-support${backendStatus === "fail" ? " is-fail" : ""}${
                 backendStatus === "ok" ? " is-ok" : ""

@@ -119,9 +119,7 @@ export default function DevicesPage() {
     }
     const payload = {
       ...values,
-      installDate: values.installDate
-        ? dayjs(values.installDate).format('YYYY-MM-DD')
-        : undefined,
+      installDate: values.installDate?.format('YYYY-MM-DD'),
     };
     if (editing) {
       await updateDevice(editing.id, payload);

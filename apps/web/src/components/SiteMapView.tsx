@@ -17,7 +17,12 @@ interface SiteMapViewProps {
   height?: number;
 }
 
-type LeafletDefault = typeof import('leaflet').default;
+type LeafletNS = typeof import('leaflet');
+
+function leafletApi(mod: unknown): LeafletNS {
+  const ns = mod as { default?: LeafletNS } & LeafletNS;
+  return ns.default ?? ns;
+}
 
 function escapeHtml(value: string) {
   return value.replace(/[&<>"']/g, (char) => {
@@ -36,7 +41,7 @@ function escapeHtml(value: string) {
 export default function SiteMapView({ markers, height = 360 }: SiteMapViewProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<LeafletMap | null>(null);
-  const leafletRef = useRef<LeafletDefault | null>(null);
+  const leafletRef = useRef<LeafletNS | null>(null);
   const [mapReady, setMapReady] = useState(false);
   const hasMarkers = markers.length > 0;
 
@@ -50,7 +55,7 @@ export default function SiteMapView({ markers, height = 360 }: SiteMapViewProps)
       const { createGaodeTileLayer } = await import('../utils/gaodeTileLayer');
       if (cancelled || !containerRef.current) return;
 
-      const L = leaflet.default;
+      const L = leafletApi(leaflet);
       const map = L.map(containerRef.current).setView([39.9042, 116.4074], 5);
       createGaodeTileLayer().addTo(map);
       leafletRef.current = L;

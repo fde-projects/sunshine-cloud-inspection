@@ -217,10 +217,16 @@ async function dispatch(ctx: {
   }
 
   if (path === "templates" && method === "GET") return listTemplates(query);
-  if (path === "templates" && method === "POST") return saveTemplate(null, body, needFinanceMgr(user));
+  if (path === "templates" && method === "POST") {
+    needFinanceMgr(user);
+    return saveTemplate(null, body);
+  }
   {
     const m = match(path, "templates/:id");
-    if (m && method === "PUT") return saveTemplate(m.id, body, needFinanceMgr(user));
+    if (m && method === "PUT") {
+      needFinanceMgr(user);
+      return saveTemplate(m.id, body);
+    }
     if (m && method === "DELETE") {
       needFinanceMgr(user);
       const used = await adminGql<{ service_cases_aggregate: { aggregate: { count: number } } }>(
@@ -244,7 +250,10 @@ async function dispatch(ctx: {
   }
   {
     const m = match(path, "templates/:id/clone");
-    if (m && method === "POST") return cloneTemplate(m.id, body, needFinanceMgr(user));
+    if (m && method === "POST") {
+      needFinanceMgr(user);
+      return cloneTemplate(m.id, body);
+    }
   }
 
   if (path === "ai-hard-rules" && method === "GET") {

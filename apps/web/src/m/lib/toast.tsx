@@ -62,6 +62,7 @@ type ConfirmOpts = {
   message?: string;
   confirmButtonText?: string;
   cancelButtonText?: string;
+  confirmButtonColor?: string;
 };
 
 let dialogHost: HTMLDivElement | null = null;
@@ -101,6 +102,9 @@ function ConfirmDialog(props: {
           {
             type: "button",
             className: "m-app-dialog__btn m-app-dialog__btn--primary",
+            style: props.opts.confirmButtonColor
+              ? { color: props.opts.confirmButtonColor }
+              : undefined,
             onClick: props.onConfirm,
           },
           props.opts.confirmButtonText || "确认",

@@ -1,7 +1,7 @@
 "use client";
 
 import "@/m/lib/patch-react-dom";
-import { useEffect, useState } from "react";
+import { useEffect, useState, Suspense } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import TabLayout from "@/m/layouts/TabLayout";
 import { nextPathAfterAuth, useAuthStore } from "@/stores/auth";
@@ -47,7 +47,11 @@ export default function MobileLayout({ children }: { children: React.ReactNode }
 
   return (
     <div className="h5-app">
-      <div className="h5-shell">{inner}</div>
+      <div className="h5-shell">
+        <Suspense fallback={<div style={{ padding: 48, textAlign: "center" }}>加载中…</div>}>
+          {inner}
+        </Suspense>
+      </div>
     </div>
   );
 }

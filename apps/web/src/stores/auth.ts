@@ -97,7 +97,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     }
     set({ token: null, user: null, currentSite: null, rolePicked: false, hydrated: true });
   },
-  login: async (username, password, remember, portal) => {
+  login: async (username, password, _remember, portal) => {
     set({ loading: true, token: null, user: null, currentSite: null, rolePicked: false });
     clearSession();
     localStorage.removeItem(SITE_KEY);
@@ -112,8 +112,6 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       const user = toUser(data.user);
       persist(data.token, user);
       setRolePicked(true);
-      if (remember) localStorage.setItem("rememberedUsername", username);
-      else localStorage.removeItem("rememberedUsername");
       set({ token: data.token, user, loading: false, rolePicked: true });
       return user;
     } catch (e) {

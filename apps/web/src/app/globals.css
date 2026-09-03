@@ -78,7 +78,8 @@ textarea {
     overflow-x: hidden;
   }
 
-  .ant-drawer .ant-drawer-content-wrapper {
+  /* 内容抽屉手机上铺满；侧栏菜单除外，只占左侧 */
+  .ant-drawer:not(.mobile-drawer) .ant-drawer-content-wrapper {
     width: 100vw !important;
     max-width: 100vw;
   }

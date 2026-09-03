@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button, Checkbox, Form, Input, message } from "antd";
 import {
@@ -12,6 +12,14 @@ import {
 } from "@ant-design/icons";
 import { nextPathAfterAuth, useAuthStore } from "@/stores/auth";
 import { brandMarkText, useBrandingStore } from "@/stores/branding";
+import {
+  listSavedAccounts,
+  loadRememberedLogin,
+  rememberAccountAfterLogin,
+  removeSavedAccount,
+  type SavedAccount,
+} from "@/lib/remember-login";
+import { LoginAccountMenu, LoginIconBtn, IconClear, IconChevron, IconEye } from "@/components/login-account-menu";
 import "@/styles/pc-login.css";
 
 type BackendStatus = "checking" | "ok" | "fail";
@@ -22,16 +30,38 @@ export default function LoginPage() {
   const branding = useBrandingStore((s) => s.branding);
   const [form] = Form.useForm();
   const [remember, setRemember] = useState(false);
+  const [accounts, setAccounts] = useState<SavedAccount[]>([]);
+  const [accountOpen, setAccountOpen] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
+  const accountBoxRef = useRef<HTMLDivElement>(null);
+  const usernameValue = Form.useWatch("username", form) || "";
+  const passwordValue = Form.useWatch("password", form) || "";
   const [backendStatus, setBackendStatus] = useState<BackendStatus>("checking");
 
   useEffect(() => {
     hydrate();
-    const remembered = localStorage.getItem("rememberedUsername");
+    const saved = listSavedAccounts("pc");
+    setAccounts(saved);
+    const remembered = loadRememberedLogin("pc");
     if (remembered) {
-      form.setFieldsValue({ username: remembered });
-      setRemember(true);
+      form.setFieldsValue({
+        username: remembered.username,
+        password: remembered.password,
+      });
+      setRemember(Boolean(remembered.password));
     }
   }, [form, hydrate]);
+
+  useEffect(() => {
+    if (!accountOpen) return;
+    const onPointerDown = (event: PointerEvent) => {
+      if (!accountBoxRef.current?.contains(event.target as Node)) {
+        setAccountOpen(false);
+      }
+    };
+    document.addEventListener("pointerdown", onPointerDown);
+    return () => document.removeEventListener("pointerdown", onPointerDown);
+  }, [accountOpen]);
 
   useEffect(() => {
     let cancelled = false;
@@ -51,6 +81,12 @@ export default function LoginPage() {
   const onFinish = async (values: { username: string; password: string }) => {
     try {
       const loggedUser = await login(values.username, values.password, remember, "pc");
+      rememberAccountAfterLogin("pc", {
+        username: values.username,
+        password: values.password,
+        realName: loggedUser.realName,
+        rememberPassword: remember,
+      });
       message.success(`登录成功（${loggedUser.realName}）`);
       router.replace(nextPathAfterAuth(loggedUser));
     } catch (e) {
@@ -88,6 +124,19 @@ export default function LoginPage() {
                 )}
               </span>
               <span>{branding.systemName}</span>
+            </div>
+            <div className="pc-login-visual__mobile-brand">
+              <div className="pc-login-visual__mobile-logo" aria-hidden>
+                {branding.logoUrl ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={branding.logoUrl} alt="" />
+                ) : (
+                  brandMarkText(branding.systemName)
+                )}
+              </div>
+              <div className="pc-login-visual__eyebrow">管理工作台</div>
+              <h1>{branding.systemName}</h1>
+              <p>网格、任务与报告，统一管理</p>
             </div>
             <div className="pc-login-visual__main">
               <div className="pc-login-visual__eyebrow">智能能源运营管理</div>
@@ -127,7 +176,7 @@ export default function LoginPage() {
 
         <section className="pc-login-panel">
           <div className="pc-login-card">
-            <a className="login-back" href="/" onClick={(e) => { e.preventDefault(); router.push("/"); }}>
+            <a className="login-back" href="/">
               <span className="login-back__arrow" aria-hidden>
                 ←
               </span>
@@ -148,6 +197,11 @@ export default function LoginPage() {
                 <h2>欢迎回来</h2>
                 <p>请使用网格长或管理员账号登录</p>
               </div>
+            </div>
+
+            <div className="pc-login-card__head">
+              <h2>管理端登录</h2>
+              <span>请使用网格长或管理员账号</span>
             </div>
 
             <Form
@@ -173,36 +227,107 @@ export default function LoginPage() {
                   ，也可 <a onClick={() => router.replace(continuePath)}>继续进入</a>
                 </div>
               ) : null}
-              <Form.Item name="username" label="用户名" rules={[{ required: true, message: "请输入用户名" }]}>
-                <Input prefix={<UserOutlined />} placeholder="请输入用户名" autoComplete="username" />
-              </Form.Item>
+              <div className="login-account-field" ref={accountBoxRef}>
+                <Form.Item name="username" label="用户名" rules={[{ required: true, message: "请输入用户名" }]}>
+                  <Input
+                    prefix={<UserOutlined />}
+                    placeholder="请输入用户名"
+                    autoComplete="username"
+                    suffix={
+                      <span className="login-field-actions">
+                        {String(usernameValue).trim() ? (
+                          <LoginIconBtn
+                            label="清空用户名"
+                            onClick={() => form.setFieldsValue({ username: "" })}
+                          >
+                            <IconClear />
+                          </LoginIconBtn>
+                        ) : null}
+                        <LoginIconBtn
+                          label="选择已登录账号"
+                          extraClass={accountOpen ? "is-open" : ""}
+                          onClick={() => setAccountOpen((open) => !open)}
+                        >
+                          <IconChevron open={accountOpen} />
+                        </LoginIconBtn>
+                      </span>
+                    }
+                  />
+                </Form.Item>
+                {accountOpen ? (
+                  accounts.length ? (
+                    <LoginAccountMenu
+                      accounts={accounts}
+                      onSelect={(account) => {
+                        form.setFieldsValue({
+                          username: account.username,
+                          password: account.password,
+                        });
+                        setRemember(Boolean(account.password));
+                        setAccountOpen(false);
+                      }}
+                      onRemove={(username) => {
+                        removeSavedAccount("pc", username);
+                        const next = listSavedAccounts("pc");
+                        setAccounts(next);
+                        if (form.getFieldValue("username") === username) {
+                          form.setFieldsValue({ username: "", password: "" });
+                          setRemember(false);
+                        }
+                      }}
+                    />
+                  ) : (
+                    <div className="login-account-menu login-account-menu--empty">登录成功后，账号会出现在这里</div>
+                  )
+                ) : null}
+              </div>
               <Form.Item name="password" label="密码" rules={[{ required: true, message: "请输入密码" }]}>
-                <Input.Password prefix={<LockOutlined />} placeholder="请输入密码" autoComplete="current-password" />
+                <Input
+                  prefix={<LockOutlined />}
+                  placeholder="请输入密码"
+                  autoComplete="current-password"
+                  type={showPassword ? "text" : "password"}
+                  suffix={
+                    <span className="login-field-actions">
+                      {String(passwordValue) ? (
+                        <LoginIconBtn
+                          label="清空密码"
+                          onClick={() => form.setFieldsValue({ password: "" })}
+                        >
+                          <IconClear />
+                        </LoginIconBtn>
+                      ) : null}
+                      <LoginIconBtn
+                        label={showPassword ? "隐藏密码" : "显示密码"}
+                        onClick={() => setShowPassword((open) => !open)}
+                      >
+                        <IconEye hidden={!showPassword} />
+                      </LoginIconBtn>
+                    </span>
+                  }
+                />
               </Form.Item>
               <div className="pc-login-options">
                 <Checkbox checked={remember} onChange={(e) => setRemember(e.target.checked)}>
-                  记住用户名
+                  记住密码
                 </Checkbox>
-                <span>安全加密登录</span>
               </div>
               <Button type="primary" htmlType="submit" block loading={loading} className="pc-login-btn">
                 进入管理端
               </Button>
             </Form>
-            <div style={{ marginTop: 16, textAlign: "center", color: "#657a72", fontSize: 13 }}>
+            <p className="pc-login-alt">
               工程师账号请使用{" "}
-              <a href="/m/login" style={{ color: "#16835f" }}>
-                手机作业端
-              </a>{" "}
-              登录
-            </div>
-            <div
-              className={`pc-login-support${backendStatus === "fail" ? " is-fail" : ""}${
-                backendStatus === "ok" ? " is-ok" : ""
-              }`}
-            >
-              <span /> {statusText}
-            </div>
+              <a href="/m/login">手机作业端</a>
+              {" "}登录
+            </p>
+          </div>
+          <div
+            className={`pc-login-support${backendStatus === "fail" ? " is-fail" : ""}${
+              backendStatus === "ok" ? " is-ok" : ""
+            }`}
+          >
+            <span /> {statusText}
           </div>
         </section>
       </div>

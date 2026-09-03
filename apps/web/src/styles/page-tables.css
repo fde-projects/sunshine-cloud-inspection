@@ -367,3 +367,287 @@ body:has(.app-shell) {
 .hard-rule-sample-card .ant-input {
   min-width: 0;
 }
+
+.hard-rule-pipeline-list {
+  margin: 0 0 8px;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.hard-rule-pipeline-list li {
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: #f6f8f7;
+  border: 1px solid #e6eeea;
+}
+.hard-rule-pipeline-list li.is-off {
+  opacity: 0.45;
+}
+.hard-rule-pipeline-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.hard-rule-pipeline-head b {
+  font-size: 13px;
+  font-weight: 650;
+  color: #16352d;
+}
+.hard-rule-pipeline-list p {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: #5a6b64;
+  line-height: 1.45;
+}
+
+.hard-rule-pipeline-summary {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+}
+.hard-rule-pipeline-summary b {
+  font-size: 13px;
+  font-weight: 650;
+  color: #16352d;
+}
+
+/* 长表单编辑弹窗：锁在视口内滚，底栏固定操作 */
+.hard-rule-editor-modal,
+.template-editor-modal {
+  overflow: hidden !important;
+}
+.hard-rule-editor-modal .ant-modal,
+.template-editor-modal .ant-modal {
+  top: 0;
+  padding-bottom: 0;
+}
+.hard-rule-editor-modal .ant-modal {
+  max-width: min(1080px, calc(100vw - 32px));
+}
+.template-editor-modal .ant-modal {
+  max-width: min(880px, calc(100vw - 32px));
+}
+.hard-rule-editor-modal .ant-modal,
+.hard-rule-editor-modal .ant-modal-container,
+.hard-rule-editor-modal .ant-modal-content,
+.template-editor-modal .ant-modal,
+.template-editor-modal .ant-modal-container,
+.template-editor-modal .ant-modal-content {
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100dvh - 32px);
+  overflow: hidden;
+}
+.hard-rule-editor-modal .ant-modal-content,
+.template-editor-modal .ant-modal-content {
+  padding: 0;
+}
+.hard-rule-editor-modal .ant-modal-header,
+.template-editor-modal .ant-modal-header {
+  flex: 0 0 auto;
+  margin: 0;
+  padding: 16px 20px 12px;
+  border-bottom: 1px solid rgba(23, 72, 54, 0.08);
+}
+.hard-rule-editor-modal .ant-modal-close,
+.template-editor-modal .ant-modal-close {
+  top: 14px;
+  inset-inline-end: 16px;
+}
+.hard-rule-editor-modal .ant-modal-body,
+.template-editor-modal .ant-modal-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  padding: 16px 20px 8px;
+}
+.template-editor-modal .ant-modal-body {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 0;
+}
+.hard-rule-editor-modal .ant-modal-footer,
+.template-editor-modal .ant-modal-footer {
+  flex: 0 0 auto;
+  margin: 0;
+  padding: 0;
+  text-align: start;
+  border-top: 1px solid rgba(23, 72, 54, 0.08);
+  background: #fff;
+}
+.hard-rule-editor-modal .ant-modal-footer .ant-btn + .ant-btn,
+.template-editor-modal .ant-modal-footer .ant-btn + .ant-btn {
+  margin-inline-start: 0;
+}
+.hard-rule-editor-form {
+  margin-bottom: 0;
+}
+.hard-rule-editor-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 16px;
+}
+.hard-rule-editor-col {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.hard-rule-editor-col .ant-form-item:last-child {
+  margin-bottom: 0;
+}
+.hard-rule-editor-chrome {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 10px 20px 14px;
+}
+.hard-rule-editor-dock {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+.hard-rule-editor-dock-result {
+  text-align: start;
+  max-height: 88px;
+  overflow: auto;
+}
+.hard-rule-editor-dock-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.hard-rule-editor-dock-hint {
+  font-size: 12px;
+  line-height: 1.4;
+  flex: 1 1 180px;
+}
+.hard-rule-editor-dock .hard-rule-sample-grid {
+  grid-template-columns: repeat(auto-fill, minmax(76px, 1fr));
+}
+.hard-rule-editor-dock .hard-rule-sample-card {
+  max-width: 92px;
+}
+.hard-rule-editor-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding-top: 2px;
+}
+@media (min-width: 900px) {
+  .hard-rule-editor-grid {
+    grid-template-columns: minmax(280px, 0.92fr) minmax(320px, 1.08fr);
+    align-items: start;
+  }
+}
+@media (max-width: 767px) {
+  .hard-rule-editor-modal .ant-modal,
+  .template-editor-modal .ant-modal {
+    max-width: calc(100vw - 16px);
+  }
+  .hard-rule-editor-modal .ant-modal,
+  .hard-rule-editor-modal .ant-modal-container,
+  .hard-rule-editor-modal .ant-modal-content,
+  .template-editor-modal .ant-modal,
+  .template-editor-modal .ant-modal-container,
+  .template-editor-modal .ant-modal-content {
+    max-height: calc(100dvh - 16px);
+  }
+  .hard-rule-editor-actions,
+  .template-editor-actions {
+    justify-content: stretch;
+  }
+  .hard-rule-editor-actions .ant-btn,
+  .template-editor-actions .ant-btn {
+    flex: 1;
+  }
+}
+
+.template-editor-form.ant-form {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
+  margin-bottom: 0;
+}
+.template-editor-meta {
+  flex: 0 0 auto;
+  padding: 16px 20px 12px;
+  border-bottom: 1px solid rgba(23, 72, 54, 0.08);
+  background: #fff;
+}
+.template-editor-meta .ant-form-item {
+  margin-bottom: 12px;
+}
+.template-editor-entries {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  padding: 12px 20px 16px;
+}
+.template-entry-card {
+  scroll-margin-top: 8px;
+}
+.template-editor-chrome {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 10px 20px 14px;
+}
+.template-editor-dock {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.template-editor-dock-hint {
+  font-size: 12px;
+  color: #5a6b64;
+}
+.template-editor-jump {
+  display: flex;
+  flex: 1 1 180px;
+  min-width: 0;
+  overflow-x: auto;
+  gap: 6px;
+  padding-bottom: 2px;
+}
+.template-editor-jump-btn {
+  flex: 0 0 auto;
+  max-width: 132px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid #d9e2de;
+  border-radius: 999px;
+  background: #f6f8f7;
+  color: #16352d;
+  font-size: 12px;
+  cursor: pointer;
+}
+.template-editor-jump-btn:hover {
+  border-color: #16835f;
+  color: #146857;
+}
+.template-editor-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding-top: 2px;
+}

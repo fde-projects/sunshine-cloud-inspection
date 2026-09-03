@@ -1,0 +1,168 @@
+.login-account-field {
+  position: relative;
+  z-index: 6;
+}
+
+.login-icon-btn {
+  flex: 0 0 28px;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  border: 0;
+  background: transparent;
+  color: #8b9892;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.login-icon-btn.is-open,
+.login-icon-btn:active {
+  color: #16835f;
+}
+
+.login-field-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 0;
+}
+
+.login-account-toggle {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #8da097;
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.login-account-toggle.is-open {
+  color: #16835f;
+}
+
+.login-account-menu {
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  top: calc(100% - 2px);
+  z-index: 40;
+  margin: 0;
+  padding: 6px 0;
+  overflow: auto;
+  max-height: 220px;
+  list-style: none;
+  border: 1px solid rgba(18, 70, 52, 0.1);
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: 0 16px 36px rgba(12, 48, 34, 0.16);
+}
+
+.login-account-menu__item {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.login-account-menu__pick {
+  flex: 1;
+  min-width: 0;
+  padding: 8px 12px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.login-account-menu__pick:hover,
+.login-account-menu__pick:active {
+  background: #f3f8f5;
+}
+
+.login-account-menu__avatar {
+  flex: 0 0 28px;
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  color: #fff;
+  background: linear-gradient(145deg, #27b47f, #137151);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.login-account-menu__meta {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.login-account-menu__meta strong {
+  overflow: hidden;
+  color: #1d4034;
+  font-size: 14px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.login-account-menu__meta small {
+  color: #82948c;
+  font-size: 11px;
+}
+
+.login-account-menu__remove {
+  flex: 0 0 36px;
+  height: 36px;
+  margin-right: 4px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: #9aa8a2;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.login-account-menu__remove:hover,
+.login-account-menu__remove:active {
+  color: #c45c52;
+  background: #f8eeee;
+}
+
+.login-account-menu--empty {
+  padding: 14px 16px;
+  color: #8a9b94;
+  font-size: 13px;
+  text-align: center;
+}
+
+.h5-login-card .rv-field__body {
+  align-items: center;
+}
+
+.h5-login-card .rv-field__suffix {
+  flex: 0 0 auto;
+  margin-left: 2px;
+  display: flex;
+  align-items: center;
+}
+
+.h5-login-card .login-icon-btn {
+  color: #8b9892;
+}
+
+.h5-login-card input:-webkit-autofill,
+.h5-login-card input:-webkit-autofill:hover,
+.h5-login-card input:-webkit-autofill:focus {
+  -webkit-text-fill-color: #1d4034;
+  caret-color: #1d4034;
+  box-shadow: 0 0 0 32px #fff inset;
+  transition: background-color 99999s ease-out;
+}

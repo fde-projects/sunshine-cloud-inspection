@@ -258,6 +258,19 @@ export default function TemplatesPage() {
     });
   }, []);
 
+  const scrollToEntry = useCallback((id: string) => {
+    document.getElementById(`tpl-entry-${id}`)?.scrollIntoView({
+      behavior: 'smooth',
+      block: 'start',
+    });
+  }, []);
+
+  const addEntry = useCallback(() => {
+    const next = emptyEntry(entries.length);
+    setEntries((prev) => [...prev, next].map((e, i) => ({ ...e, order: i })));
+    window.setTimeout(() => scrollToEntry(next.id), 50);
+  }, [entries.length, scrollToEntry]);
+
   const submit = async () => {
     if (!canManage) {
       setModalOpen(false);
@@ -476,8 +489,10 @@ export default function TemplatesPage() {
           const isPhoto = entry.checkType !== 'text';
           return (
             <Card
+              id={`tpl-entry-${entry.id}`}
               key={entry.id}
               size="small"
+              className="template-entry-card"
               style={{ marginBottom: 8 }}
               title={`条目 ${index + 1}`}
               extra={
@@ -514,7 +529,7 @@ export default function TemplatesPage() {
                 />
                 <Input.TextArea
                   placeholder="要求说明"
-                  rows={2}
+                  autoSize={{ minRows: 2, maxRows: 6 }}
                   value={entry.description}
                   onChange={(e) => {
                     const next = [...entries];
@@ -728,16 +743,6 @@ export default function TemplatesPage() {
             </Card>
           );
         })}
-        <Button
-          block
-          type="dashed"
-          icon={<PlusOutlined />}
-          onClick={() =>
-            setEntries([...entries, emptyEntry(entries.length)].map((e, i) => ({ ...e, order: i })))
-          }
-        >
-          添加条目
-        </Button>
       </div>
     ),
     [entries, moveEntry, uploadingEntry],
@@ -789,15 +794,54 @@ export default function TemplatesPage() {
               : `查看服务类型（v${editing.version}）`
             : '新建服务类型'
         }
+        className="template-editor-dialog"
+        wrapClassName="template-editor-modal"
         open={modalOpen}
-        onCancel={() => setModalOpen(false)}
-        onOk={() => submit()}
-        okButtonProps={{ style: canManage ? undefined : { display: 'none' } }}
-        cancelText={canManage ? '取消' : '关闭'}
-        width={720}
+        centered
+        width={880}
         forceRender
+        onCancel={() => setModalOpen(false)}
+        footer={
+          <div className="template-editor-chrome">
+            {activeLineId ? (
+              <div className="template-editor-dock">
+                {canManage ? (
+                  <Button icon={<PlusOutlined />} onClick={addEntry}>
+                    添加条目
+                  </Button>
+                ) : null}
+                {entries.length ? (
+                  <div className="template-editor-jump">
+                    {entries.map((entry, index) => (
+                      <button
+                        key={entry.id}
+                        type="button"
+                        className="template-editor-jump-btn"
+                        title={entry.name || `条目 ${index + 1}`}
+                        onClick={() => scrollToEntry(entry.id)}
+                      >
+                        {index + 1}. {entry.name?.trim() || '未命名'}
+                      </button>
+                    ))}
+                  </div>
+                ) : (
+                  <span className="template-editor-dock-hint">当前产品线还没有条目</span>
+                )}
+              </div>
+            ) : null}
+            <div className="template-editor-actions">
+              <Button onClick={() => setModalOpen(false)}>{canManage ? '取消' : '关闭'}</Button>
+              {canManage ? (
+                <Button type="primary" onClick={() => void submit()}>
+                  保存
+                </Button>
+              ) : null}
+            </div>
+          </div>
+        }
       >
-        <Form form={form} layout="vertical" disabled={!canManage}>
+        <Form form={form} layout="vertical" disabled={!canManage} className="template-editor-form">
+          <div className="template-editor-meta">
           <Form.Item
             name="name"
             label="服务类型名称"
@@ -806,7 +850,7 @@ export default function TemplatesPage() {
           >
             <Input placeholder="例如：巡检、故障恢复、整改、维护、交付" />
           </Form.Item>
-          <div style={{ marginBottom: 12 }}>
+          <div>
             <div style={{ fontWeight: 600, marginBottom: 8 }}>产品线</div>
             <p style={{ color: '#666', marginBottom: 8, fontSize: 12 }}>
               产品线对应 PO「产品线」；改检查项只影响之后新建的任务。
@@ -844,7 +888,7 @@ export default function TemplatesPage() {
               ) : null}
             </Space>
             {activeLineId ? (
-              <Space style={{ marginBottom: 12, width: '100%' }} align="start">
+              <Space style={{ width: '100%' }} align="start">
                 <Input
                   style={{ flex: 1, minWidth: 200 }}
                   disabled={!canManage}
@@ -878,8 +922,12 @@ export default function TemplatesPage() {
               </Space>
             ) : null}
           </div>
+          </div>
           {activeLineId ? (
-            <Form.Item label="当前产品线条目">{entryEditor}</Form.Item>
+            <div className="template-editor-entries">
+              <div style={{ fontWeight: 600, marginBottom: 4 }}>当前产品线条目</div>
+              {entryEditor}
+            </div>
           ) : null}
         </Form>
       </Modal>

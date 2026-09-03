@@ -63,6 +63,11 @@ import {
   hydrateCriteriaFromPrompt,
   looksLikeLegacyMountCriteria,
 } from '../../lib/hard-rule-prompt';
+import {
+  describeHardRulePipeline,
+  pipelineSummary,
+  type PipelineStep,
+} from '../../lib/hard-rule-pipeline';
 import { displayPhotoUrl } from '../../utils/photo-url';
 import { isAntValidateError } from '../../utils/ant-form';
 import FillTable, { listTablePagination } from '../../components/FillTable';
@@ -281,7 +286,78 @@ function PassSampleCards({
   );
 }
 
-/** 超管：AI 硬规则。选检查项 + 白话合格/不合格，保存前可试跑。 */
+function PipelineLayerTag({ layer }: { layer: PipelineStep['layer'] }) {
+  const label =
+    layer === 'engine' || layer === 'post' ? '代码' : layer === 'model' ? '模型' : '配置';
+  return <Tag>{label}</Tag>;
+}
+
+function HardRulePipelineCard({
+  steps,
+  prompt,
+}: {
+  steps: PipelineStep[];
+  prompt: string;
+}) {
+  const summary = pipelineSummary(steps);
+  return (
+    <Collapse
+      size="small"
+      className="hard-rule-pipeline"
+      items={[
+        {
+          key: 'pipe',
+          label: (
+            <span className="hard-rule-pipeline-summary">
+              <b>判定链路</b>
+              <Typography.Text type="secondary">{summary}</Typography.Text>
+            </span>
+          ),
+          children: (
+            <>
+              <Typography.Paragraph type="secondary" style={{ marginTop: 0, marginBottom: 10, fontSize: 12 }}>
+                上线后能改的是绑定、样张、合格/不合格。标了「代码」的闸门要改程序才动。试跑会标明卡在哪一层。
+              </Typography.Paragraph>
+              <ol className="hard-rule-pipeline-list">
+                {steps.map((step) => (
+                  <li key={step.id} className={step.active ? 'is-on' : 'is-off'}>
+                    <div className="hard-rule-pipeline-head">
+                      <b>{step.title}</b>
+                      <PipelineLayerTag layer={step.layer} />
+                    </div>
+                    <p>{step.detail}</p>
+                  </li>
+                ))}
+              </ol>
+              <Collapse
+                ghost
+                size="small"
+                items={[
+                  {
+                    key: 'preview',
+                    label: '将发给 AI 的说明（自动生成）',
+                    children: (
+                      <Typography.Paragraph
+                        style={{
+                          whiteSpace: 'pre-wrap',
+                          fontFamily: 'ui-monospace, monospace',
+                          fontSize: 12,
+                          marginBottom: 0,
+                        }}
+                      >
+                        {prompt || '填写合格/不合格后在这里预览'}
+                      </Typography.Paragraph>
+                    ),
+                  },
+                ]}
+              />
+            </>
+          ),
+        },
+      ]}
+    />
+  );
+}
 export default function HardRulesPage() {
   const [loading, setLoading] = useState(false);
   const [list, setList] = useState<HardRuleItem[]>([]);
@@ -313,6 +389,7 @@ export default function HardRulesPage() {
   const failWatch = Form.useWatch('failCriteria', form);
   const notesWatch = Form.useWatch('judgeNotes', form);
   const enforceWatch = Form.useWatch('enforceMode', form);
+  const enabledWatch = Form.useWatch('enabled', form);
   const entryKeyWatch = Form.useWatch('entryKey', form) as string | undefined;
 
   const generatedPrompt = useMemo(
@@ -326,6 +403,29 @@ export default function HardRulesPage() {
       }),
     [entryKeyWatch, catalog, passWatch, failWatch, notesWatch, enforceWatch],
   );
+
+  const pipelineSteps = useMemo(() => {
+    const selected = catalog.find((item) => item.key === entryKeyWatch);
+    return describeHardRulePipeline({
+      enabled: enabledWatch !== false,
+      enforceMode: String(enforceWatch || 'strict'),
+      boundLabel: selected ? catalogLabel(selected) : '',
+      keywordFallback: selected ? '' : editing?.matchPattern || '',
+      passViews: passSamples,
+      failCount: failSampleUrls.length,
+      title: selected?.entryName || editing?.name || '',
+      promptText: generatedPrompt,
+    });
+  }, [
+    catalog,
+    entryKeyWatch,
+    enabledWatch,
+    enforceWatch,
+    editing,
+    passSamples,
+    failSampleUrls.length,
+    generatedPrompt,
+  ]);
 
   const filteredList = useMemo(() => {
     const q = keyword.trim().toLowerCase();
@@ -770,13 +870,17 @@ export default function HardRulesPage() {
         });
         if (!items.length) {
           return (
-            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-              {row.matchPattern || '未绑定'}
-            </Typography.Text>
+            <Space size={[4, 4]} wrap>
+              {row.hasDefault ? <Tag color="blue">内置策略</Tag> : null}
+              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                {row.matchPattern || '未绑定'}
+              </Typography.Text>
+            </Space>
           );
         }
         return (
           <Space size={[4, 4]} wrap>
+            {row.hasDefault ? <Tag color="blue">内置策略</Tag> : null}
             {items.slice(0, 4).map((item) => (
               <Tag key={item.key}>{catalogLabel(item)}</Tag>
             ))}
@@ -795,6 +899,29 @@ export default function HardRulesPage() {
           return <Typography.Text type="secondary">无</Typography.Text>;
         }
         return `合格 ${pass} · 不合格 ${fail}`;
+      },
+    },
+    {
+      title: '判定链路',
+      width: 220,
+      render: (_, row) => {
+        const keys = keysForRule(row, catalog);
+        const bound = catalog.find((item) => keys.includes(item.key));
+        const steps = describeHardRulePipeline({
+          enabled: row.enabled,
+          enforceMode: String(row.enforceMode || 'strict'),
+          boundLabel: bound ? catalogLabel(bound) : '',
+          keywordFallback: bound ? '' : row.matchPattern,
+          passViews: row.samples?.pass || [],
+          failCount: row.samples?.fail?.length || 0,
+          title: bound?.entryName || row.name,
+          promptText: row.promptText,
+        });
+        return (
+          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+            {pipelineSummary(steps)}
+          </Typography.Text>
+        );
       },
     },
     {
@@ -902,8 +1029,8 @@ export default function HardRulesPage() {
         }
       >
         <Typography.Paragraph type="secondary" style={{ marginTop: 0, marginBottom: 10 }}>
-          一项一条规则。合格样用服务类型示范图。改规则只影响<strong>新发起的分析</strong>。
-          日常调参：改合格/不合格/判定补充 → 试跑 → 保存，不必改代码。
+          一项一条规则。6 条内置策略可在后台改绑定、样张、合格/不合格；张数/视角/页签闸门写在代码里，编辑时看「判定链路」。
+          改规则只影响<strong>新发起的分析</strong>。日常：改标准 → 试跑看卡在哪一层 → 保存。
         </Typography.Paragraph>
         <Space className="finance-toolbar" wrap style={{ marginBottom: 10 }}>
           <Input.Search
@@ -940,7 +1067,7 @@ export default function HardRulesPage() {
           loading={loading}
           columns={columns}
           dataSource={pageRows}
-          scroll={{ x: 1180 }}
+          scroll={{ x: 1320 }}
           pagination={listTablePagination({
             current: page,
             total: filteredList.length,
@@ -960,19 +1087,118 @@ export default function HardRulesPage() {
             ? '新增 AI 规则'
             : `编辑 · ${ruleTitleFromKeys(keysForRule(editing, catalog), catalog) || editing?.name || '规则'}`
         }
+        className="hard-rule-editor-dialog"
+        wrapClassName="hard-rule-editor-modal"
         open={editorOpen}
+        centered
+        width={1080}
+        destroyOnHidden
         onCancel={() => {
           setEditorOpen(false);
           setEditing(null);
           setEditorMode('create');
         }}
-        onOk={() => void handleSave()}
-        confirmLoading={saving}
-        width={760}
-        okText="保存"
-        destroyOnHidden
+        footer={
+          <div className="hard-rule-editor-chrome">
+            <div className="hard-rule-editor-dock">
+              {trialResult ? (
+                <Alert
+                  className="hard-rule-editor-dock-result"
+                  type={
+                    trialResult.status === 'pass'
+                      ? 'success'
+                      : trialResult.status === 'error'
+                        ? 'error'
+                        : 'warning'
+                  }
+                  showIcon
+                  closable
+                  onClose={() => setTrialResult(null)}
+                  message={
+                    [
+                      trialResult.status === 'pass'
+                        ? `合格 · 置信度 ${Math.round((trialResult.confidence || 0) * 100)}%`
+                        : trialResult.status === 'error'
+                          ? '试跑失败'
+                          : `不合格 · 置信度 ${Math.round((trialResult.confidence || 0) * 100)}%`,
+                      trialResult.gateLabel || '',
+                    ]
+                      .filter(Boolean)
+                      .join(' · ')
+                  }
+                  description={trialResult.reason}
+                />
+              ) : null}
+              <div className="hard-rule-editor-dock-row">
+                <Upload
+                  accept="image/*"
+                  multiple
+                  showUploadList={false}
+                  disabled={trialUploading || trialUrls.length >= HARD_RULE_TRIAL_PHOTO_LIMIT}
+                  beforeUpload={(file, fileList) => {
+                    if (file !== fileList[fileList.length - 1]) return false;
+                    const files = fileList.filter(
+                      (f) => f instanceof File && (f.type?.startsWith('image/') || !f.type),
+                    ) as File[];
+                    void handleTrialUpload(files);
+                    return false;
+                  }}
+                >
+                  <Button
+                    icon={<PlusOutlined />}
+                    loading={trialUploading}
+                    disabled={trialUrls.length >= HARD_RULE_TRIAL_PHOTO_LIMIT}
+                  >
+                    试跑图（最多 {HARD_RULE_TRIAL_PHOTO_LIMIT} 张）
+                  </Button>
+                </Upload>
+                <Button disabled={!passSamples.length} onClick={handleUseSamplesAsTrial}>
+                  用合格样试跑
+                </Button>
+                <Button
+                  type="primary"
+                  ghost
+                  icon={<ExperimentOutlined />}
+                  loading={trialing}
+                  onClick={() => void handleTrial()}
+                >
+                  开始试跑
+                </Button>
+                <Typography.Text type="secondary" className="hard-rule-editor-dock-hint">
+                  {selectedEntry
+                    ? `按「${catalogLabel(selectedEntry)}」试跑，不必先保存`
+                    : '请先选择检查项再试跑'}
+                </Typography.Text>
+              </div>
+              <SampleThumbs
+                urls={trialUrls}
+                labelsByUrl={Object.fromEntries(
+                  passSamples.filter((item) => item.url).map((item) => [item.url, item.label || '合格样']),
+                )}
+                onClear={() => {
+                  resetTrial();
+                }}
+                onRemove={removeTrialUrl}
+              />
+            </div>
+            <div className="hard-rule-editor-actions">
+              <Button
+                onClick={() => {
+                  setEditorOpen(false);
+                  setEditing(null);
+                  setEditorMode('create');
+                }}
+              >
+                取消
+              </Button>
+              <Button type="primary" loading={saving} onClick={() => void handleSave()}>
+                保存
+              </Button>
+            </div>
+          </div>
+        }
       >
-        <Form form={form} layout="vertical">
+        <Form form={form} layout="vertical" className="hard-rule-editor-form">
           {legacyMultiBound ? (
             <Alert
               type="info"
@@ -998,10 +1224,11 @@ export default function HardRulesPage() {
               }))}
             />
           </Form.Item>
+          <div className="hard-rule-editor-grid">
+            <div className="hard-rule-editor-col">
           <Card
             size="small"
             title="对照样张"
-            style={{ marginBottom: 16 }}
             extra={
               <Typography.Text type="secondary" style={{ fontSize: 12 }}>
                 合格样跟检查条目；不合格样可另挂
@@ -1133,203 +1360,97 @@ export default function HardRulesPage() {
               ) : null}
             </Space>
           </Card>
+              <HardRulePipelineCard steps={pipelineSteps} prompt={generatedPrompt} />
+            </div>
 
-          {draftFromAi ? (
-            <Alert
-              type="warning"
-              showIcon
-              style={{ marginBottom: 16 }}
-              message="下面是 AI 生成的草稿，请改完再保存。"
-            />
-          ) : null}
-
-          <Form.Item
-            name="passCriteria"
-            label="合格标准"
-            rules={[
-              ({ getFieldValue }) => ({
-                validator() {
-                  if (
-                    String(getFieldValue('passCriteria') || '').trim() ||
-                    String(getFieldValue('failCriteria') || '').trim()
-                  ) {
-                    return Promise.resolve();
-                  }
-                  return Promise.reject(new Error('请至少填写合格或不合格标准'));
-                },
-              }),
-            ]}
-            extra="用白话写：什么情况算合格"
-          >
-            <Input.TextArea rows={4} placeholder="例如：铭牌文字清晰可读，序列号完整无遮挡" />
-          </Form.Item>
-          <Form.Item
-            name="failCriteria"
-            label="不合格标准"
-            extra="用白话写：什么情况必须判不合格。页签类检查请写清：只交一张、或一张图里只看见页签标题，都不算拍齐。"
-          >
-            <Input.TextArea
-              rows={4}
-              placeholder="例如：只交一张；两张都是同一页签；一张图里能看见两个页签标题但只点开了一页"
-            />
-          </Form.Item>
-          <Form.Item
-            name="judgeNotes"
-            label="判定补充（易误判，自己改）"
-            extra="不会自动生成。试跑发现误判时自己写纠正，改完可直接试跑；保存后才对现场新分析生效。"
-          >
-            <Input.TextArea
-              rows={3}
-              placeholder="选填。例如：拧紧后螺杆外露丝牙不算松动；线缆图只看接线，不要因看不见抱箍判不合格。"
-            />
-          </Form.Item>
-          {editing?.promptText && hydrateCriteriaFromPrompt(editing.promptText).source === 'legacy' ? (
-            <Alert
-              type="info"
-              showIcon
-              style={{ marginBottom: 16 }}
-              message="已尽量从旧版正文拆进上面两栏。可再点一次重拆，或用样张重新生成。"
-              action={
-                <Button size="small" onClick={handleSplitLegacy}>
-                  从旧正文再拆一次
-                </Button>
-              }
-            />
-          ) : null}
-
-          <Space size="large" wrap>
-            <Form.Item name="enabled" label="启用" valuePropName="checked">
-              <Switch checkedChildren="开" unCheckedChildren="关" />
-            </Form.Item>
-            <Form.Item name="enforceMode" label="校验强度" rules={[{ required: true }]}>
-              <Select
-                style={{ width: 240 }}
-                options={[
-                  { value: 'strict', label: '严格（拿不准判不合格）' },
-                  { value: 'normal', label: '标准' },
-                  { value: 'off', label: '关闭（不套用）' },
-                ]}
-              />
-            </Form.Item>
-          </Space>
-
-          <Form.Item name="changeNote" label="变更说明（选填）">
-            <Input placeholder="例如：补充铭牌反光不合格" maxLength={500} />
-          </Form.Item>
-
-          <Collapse
-            ghost
-            items={[
-              {
-                key: 'preview',
-                label: '将发给 AI 的说明（自动生成）',
-                children: (
-                  <Typography.Paragraph
-                    style={{
-                      whiteSpace: 'pre-wrap',
-                      fontFamily: 'ui-monospace, monospace',
-                      fontSize: 12,
-                      marginBottom: 0,
-                    }}
-                  >
-                    {generatedPrompt || '填写合格/不合格后在这里预览'}
-                  </Typography.Paragraph>
-                ),
-              },
-            ]}
-          />
-
-          <Card
-            size="small"
-            title="试跑"
-            style={{ marginTop: 8 }}
-            extra={
-              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                用上面正在编辑的内容试跑，不必先保存
-              </Typography.Text>
-            }
-          >
-            <Typography.Paragraph type="secondary" style={{ marginBottom: 12 }}>
-              {selectedEntry
-                ? `按「${catalogLabel(selectedEntry)}」试跑`
-                : '请先在上方选择检查项'}
-              {passSamples.length >= 2
-                ? `。上面挂了 ${passSamples.length} 种合格样，试跑也请拍齐 ${passSamples.length} 种不同的图；同一种拍两张会不合格。上传顺序不限，按内容对号即可。`
-                : ''}
-              {' '}
-              改合格/不合格/判定补充后直接点「开始试跑」即可。点右下角「保存」后，才对工程师现场新分析生效。
-            </Typography.Paragraph>
-            <Space direction="vertical" style={{ width: '100%' }} size={12}>
-              <Upload
-                accept="image/*"
-                multiple
-                showUploadList={false}
-                disabled={trialUploading || trialUrls.length >= HARD_RULE_TRIAL_PHOTO_LIMIT}
-                beforeUpload={(file, fileList) => {
-                  if (file !== fileList[fileList.length - 1]) return false;
-                  const files = fileList.filter(
-                    (f) => f instanceof File && (f.type?.startsWith('image/') || !f.type),
-                  ) as File[];
-                  void handleTrialUpload(files);
-                  return false;
-                }}
-              >
-                <Button icon={<PlusOutlined />} loading={trialUploading} disabled={trialUrls.length >= HARD_RULE_TRIAL_PHOTO_LIMIT}>
-                  上传照片（最多 {HARD_RULE_TRIAL_PHOTO_LIMIT} 张）
-                </Button>
-              </Upload>
-              <SampleThumbs
-                urls={trialUrls}
-                labelsByUrl={Object.fromEntries(
-                  passSamples.filter((item) => item.url).map((item) => [item.url, item.label || '合格样']),
-                )}
-                onClear={() => {
-                  resetTrial();
-                }}
-                onRemove={removeTrialUrl}
-              />
-              <Space wrap>
-                <Button
-                  disabled={!passSamples.length}
-                  onClick={handleUseSamplesAsTrial}
-                >
-                  用合格样试跑
-                </Button>
-                <Button
-                  type="primary"
-                  ghost
-                  icon={<ExperimentOutlined />}
-                  loading={trialing}
-                  onClick={() => void handleTrial()}
-                >
-                  开始试跑
-                </Button>
-              </Space>
-              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                试跑读的是本弹窗正在填的标准，不用先保存。保存后才给现场新分析用。测不合格请上传「差于合格样」的现场图，不要把不合格样原图和合格样混在一起当待判定。
-              </Typography.Text>
-              {trialResult ? (
+            <div className="hard-rule-editor-col">
+              {draftFromAi ? (
                 <Alert
-                  type={
-                    trialResult.status === 'pass'
-                      ? 'success'
-                      : trialResult.status === 'error'
-                        ? 'error'
-                        : 'warning'
-                  }
+                  type="warning"
                   showIcon
-                  message={
-                    trialResult.status === 'pass'
-                      ? `合格 · 置信度 ${Math.round((trialResult.confidence || 0) * 100)}%`
-                      : trialResult.status === 'error'
-                        ? '试跑失败'
-                        : `不合格 · 置信度 ${Math.round((trialResult.confidence || 0) * 100)}%`
-                  }
-                  description={trialResult.reason}
+                  style={{ marginBottom: 16 }}
+                  message="下面是 AI 生成的草稿，请改完再保存。"
                 />
               ) : null}
-            </Space>
-          </Card>
+
+              <Form.Item
+                name="passCriteria"
+                label="合格标准"
+                rules={[
+                  ({ getFieldValue }) => ({
+                    validator() {
+                      if (
+                        String(getFieldValue('passCriteria') || '').trim() ||
+                        String(getFieldValue('failCriteria') || '').trim()
+                      ) {
+                        return Promise.resolve();
+                      }
+                      return Promise.reject(new Error('请至少填写合格或不合格标准'));
+                    },
+                  }),
+                ]}
+                extra="用白话写：什么情况算合格"
+              >
+                <Input.TextArea
+                  autoSize={{ minRows: 3, maxRows: 8 }}
+                  placeholder="例如：铭牌文字清晰可读，序列号完整无遮挡"
+                />
+              </Form.Item>
+              <Form.Item
+                name="failCriteria"
+                label="不合格标准"
+                extra="用白话写：什么情况必须判不合格。页签类检查请写清：只交一张、或一张图里只看见页签标题，都不算拍齐。"
+              >
+                <Input.TextArea
+                  autoSize={{ minRows: 3, maxRows: 8 }}
+                  placeholder="例如：只交一张；两张都是同一页签；一张图里能看见两个页签标题但只点开了一页"
+                />
+              </Form.Item>
+              <Form.Item
+                name="judgeNotes"
+                label="判定补充（易误判，自己改）"
+                extra="不会自动生成。试跑发现误判时自己写纠正，改完可直接试跑；保存后才对现场新分析生效。"
+              >
+                <Input.TextArea
+                  autoSize={{ minRows: 2, maxRows: 6 }}
+                  placeholder="选填。例如：拧紧后螺杆外露丝牙不算松动；线缆图只看接线，不要因看不见抱箍判不合格。"
+                />
+              </Form.Item>
+              {editing?.promptText && hydrateCriteriaFromPrompt(editing.promptText).source === 'legacy' ? (
+                <Alert
+                  type="info"
+                  showIcon
+                  style={{ marginBottom: 16 }}
+                  message="已尽量从旧版正文拆进上面两栏。可再点一次重拆，或用样张重新生成。"
+                  action={
+                    <Button size="small" onClick={handleSplitLegacy}>
+                      从旧正文再拆一次
+                    </Button>
+                  }
+                />
+              ) : null}
+
+              <Space size="large" wrap>
+                <Form.Item name="enabled" label="启用" valuePropName="checked">
+                  <Switch checkedChildren="开" unCheckedChildren="关" />
+                </Form.Item>
+                <Form.Item name="enforceMode" label="校验强度" rules={[{ required: true }]}>
+                  <Select
+                    style={{ width: 240 }}
+                    options={[
+                      { value: 'strict', label: '严格（拿不准判不合格）' },
+                      { value: 'normal', label: '标准' },
+                      { value: 'off', label: '关闭（不套用）' },
+                    ]}
+                  />
+                </Form.Item>
+              </Space>
+
+              <Form.Item name="changeNote" label="变更说明（选填）" style={{ marginBottom: 0 }}>
+                <Input placeholder="例如：补充铭牌反光不合格" maxLength={500} />
+              </Form.Item>
+            </div>
+          </div>
         </Form>
       </Modal>
     </div>

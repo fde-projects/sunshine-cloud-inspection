@@ -99,14 +99,21 @@ function PenaltyList({ items }: { items: IncomeEventPenalty[] }) {
   );
 }
 
-/** 单案到手：绩效 + 已核报销 − 事件扣罚（与明细卡片一致） */
-function caseTakeHome(item: IncomeLedger) {
-  const earned = Number(item.perfFinal || 0);
-  const penaltyTotal = Number(item.eventPenaltyTotal || 0);
-  const approvedExpense = (item.expenses || [])
+function approvedExpenseTotal(item: IncomeLedger) {
+  return (item.expenses || [])
     .filter((e) => e.status === 'approved')
     .reduce((sum, e) => sum + Number(e.amount || 0), 0);
-  return earned + approvedExpense - penaltyTotal;
+}
+
+/** 单案账单额：计件 + 已核报销 − 扣罚（列表展示用，含待审/已驳） */
+function caseTakeHome(item: IncomeLedger) {
+  return Number(item.perfFinal || 0) + approvedExpenseTotal(item) - Number(item.eventPenaltyTotal || 0);
+}
+
+/** 计入「到手」：仅已审计件 + 已核报销 − 扣罚。待审/已驳的计件不算。 */
+function caseConfirmedTakeHome(item: IncomeLedger) {
+  const earned = item.reviewStatus === 'approved' ? Number(item.perfFinal || 0) : 0;
+  return earned + approvedExpenseTotal(item) - Number(item.eventPenaltyTotal || 0);
 }
 
 const monthStatusLabel: Record<string, string> = {
@@ -307,7 +314,7 @@ export default function MyIncomePage() {
             ? ''
             : weekdayShort[new Date(`${key}T12:00:00`).getDay()],
         items,
-        sum: items.reduce((n, it) => n + caseTakeHome(it), 0),
+        sum: items.reduce((n, it) => n + caseConfirmedTakeHome(it), 0),
       }));
   }, [data?.list]);
 
@@ -324,15 +331,18 @@ export default function MyIncomePage() {
 
   const breakdown = useMemo(() => {
     if (!data) return null;
-    /** 顶栏以案例明细即时汇总为准，避免月结表未刷新时报销/绩效显示为 0 */
+    /** 顶栏以案例明细即时汇总；计件只加已审，和月结口径一致。 */
     let perf = 0;
+    let pendingPerf = 0;
+    let rejectedPerf = 0;
     let expense = 0;
     let eventPenalty = 0;
     for (const item of data.list || []) {
-      perf += Number(item.perfFinal || 0);
-      expense += (item.expenses || [])
-        .filter((e) => e.status === 'approved')
-        .reduce((n, e) => n + Number(e.amount || 0), 0);
+      const piece = Number(item.perfFinal || 0);
+      if (item.reviewStatus === 'approved') perf += piece;
+      else if (item.reviewStatus === 'rejected') rejectedPerf += piece;
+      else pendingPerf += piece;
+      expense += approvedExpenseTotal(item);
       eventPenalty += Number(item.eventPenaltyTotal || 0);
     }
     for (const p of otherPenalties) {
@@ -345,7 +355,17 @@ export default function MyIncomePage() {
     );
     const correction = Number(settlement?.correctionTotal ?? assessment?.correctionAmount ?? 0);
     const final = perf + expense + reward + subsidy + correction - eventPenalty;
-    return { perf, expense, reward, eventPenalty, subsidy, correction, final };
+    return {
+      perf,
+      pendingPerf,
+      rejectedPerf,
+      expense,
+      reward,
+      eventPenalty,
+      subsidy,
+      correction,
+      final,
+    };
   }, [data, settlement, assessment, otherPenalties]);
 
   const calCells = useMemo(() => buildMonthCells(month), [month]);
@@ -398,11 +418,12 @@ export default function MyIncomePage() {
             <strong className={breakdown.final < 0 ? 'is-neg' : ''}>
               {money(breakdown.final)}
             </strong>
-            {settlement?.status ? (
-              <p className="inc-bill-month-status">
-                月结状态 · {monthStatusLabel[settlement.status] || settlement.status}
-              </p>
-            ) : null}
+            <p className="inc-bill-month-status">
+              只计已审通过
+              {settlement?.status
+                ? ` · 月结${monthStatusLabel[settlement.status] || settlement.status}`
+                : ''}
+            </p>
             <div className="inc-bill-stats">
               <div>
                 <span>计件</span>
@@ -424,12 +445,12 @@ export default function MyIncomePage() {
             {(breakdown.reward !== 0 ||
               breakdown.subsidy !== 0 ||
               breakdown.correction !== 0 ||
-              Number(data.pendingAmount) > 0) && (
+              breakdown.pendingPerf > 0 ||
+              breakdown.rejectedPerf > 0) && (
               <p className="inc-bill-extra">
                 {[
-                  Number(data.pendingAmount) > 0
-                    ? `待审 ${money(data.pendingAmount)}`
-                    : '',
+                  breakdown.pendingPerf > 0 ? `待审 ${money(breakdown.pendingPerf)}` : '',
+                  breakdown.rejectedPerf > 0 ? `已驳 ${money(breakdown.rejectedPerf)}` : '',
                   breakdown.reward !== 0
                     ? `排名 ${money(breakdown.reward)}${assessment?.rankResult ? `·${assessment.rankResult}` : ''}`
                     : '',
@@ -491,7 +512,7 @@ export default function MyIncomePage() {
                           <span>{group.weekday ? `周${group.weekday}` : ''}</span>
                         </div>
                         <em>
-                          {group.items.length} 单 · {money(group.sum)}
+                          {group.items.length} 单 · 已确认 {money(group.sum)}
                         </em>
                       </div>
                     )}
@@ -511,7 +532,9 @@ export default function MyIncomePage() {
                           <li key={item.id}>
                             <button
                               type="button"
-                              className="inc-bill-row"
+                              className={`inc-bill-row${
+                                item.reviewStatus === 'approved' ? '' : ' is-excluded'
+                              }`}
                               onClick={() => setActive(item)}
                             >
                               <div className="inc-bill-row-main">

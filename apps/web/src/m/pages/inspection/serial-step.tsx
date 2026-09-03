@@ -100,10 +100,9 @@ export const SerialStepPanel = forwardRef<SerialStepHandle, Props>(function Seri
           error && typeof error === 'object' && 'response' in error
             ? (error as { response?: { data?: { message?: string } } }).response?.data
             : undefined;
-        const msg = data?.message?.trim();
-        if (msg && !/status code/i.test(msg)) {
-          Toast.fail(msg);
-        }
+        const fallback = error instanceof Error ? error.message : '';
+        const msg = String(data?.message || fallback).trim();
+        Toast.fail(msg && !/status code/i.test(msg) ? msg : '序列号保存失败');
         return null;
       }
     },

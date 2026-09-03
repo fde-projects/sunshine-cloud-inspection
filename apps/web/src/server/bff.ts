@@ -36,7 +36,7 @@ import {
   matchHardRuleCodes,
   stampHardRuleReview,
 } from "@/lib/hard-rule-stats";
-import { ensureOriginalCatalog } from "./catalog-seed";
+import { ensureOriginalCatalog, healBuiltinHardRuleBindings } from "./catalog-seed";
 import { rematchCasesForTemplate, syncBoundCaseNames } from "./finance/demand-type-match";
 import { decideRecordAuditRoute, recordNeedsHumanAudit } from "./record-audit-route";
 import {
@@ -257,6 +257,7 @@ async function dispatch(ctx: {
   }
 
   if (path === "ai-hard-rules" && method === "GET") {
+    await healBuiltinHardRuleBindings().catch(() => null);
     const d = await adminGql<{ ai_hard_rules: Record<string, unknown>[] }>(
       `query { ai_hard_rules(order_by: { created_at: asc }) { id code name match_mode match_pattern prompt_text json_schema_hint enabled enforce_mode version change_note updated_by_id created_at updated_at } }`,
     );
@@ -409,7 +410,7 @@ async function dispatch(ctx: {
     const uex = match(path, "cases/:id/units/:unitId/expense");
     if (uex && method === "POST") return saveExpense(need(user), uex.id, uex.unitId, body);
     const ser = match(path, "cases/:id/units/:unitId/serial");
-    if (ser && method === "POST") return saveSerial(need(user), ser.unitId, body);
+    if (ser && method === "POST") return saveSerial(need(user), ser.id, ser.unitId, body);
     const expenses = match(path, "cases/:id/expenses");
     if (expenses && method === "POST") {
       const workUnitId = body.workUnitId ? String(body.workUnitId) : null;
@@ -1460,18 +1461,131 @@ async function defectStats() {
   });
 }
 
+function shanghaiMonthKey(date = new Date()) {
+  return date.toLocaleString("sv-SE", { timeZone: "Asia/Shanghai" }).slice(0, 7);
+}
+
+function shanghaiMonthBounds(month: string) {
+  const [yy, mm] = month.split("-").map(Number);
+  const from = `${month}-01T00:00:00+08:00`;
+  const to =
+    mm === 12
+      ? `${yy + 1}-01-01T00:00:00+08:00`
+      : `${yy}-${String(mm + 1).padStart(2, "0")}-01T00:00:00+08:00`;
+  return { from, to };
+}
+
+function inspectorItemBucket(status: string) {
+  if (status === "completed" || status === "approved" || status === "archived") return "completed";
+  if (status === "submitted") return "submitted";
+  if (status === "claimed" || status === "in_progress" || status === "draft") return "inProgress";
+  if (status === "pending" || status === "open") return "pending";
+  return "pending";
+}
+
 async function inspectorSummary(user: AppUser, query: URLSearchParams) {
+  const month = /^\d{4}-\d{2}$/.test(query.get("month") || "")
+    ? (query.get("month") as string)
+    : shanghaiMonthKey();
+  const { from, to } = shanghaiMonthBounds(month);
+
   const d = await adminGql<{
-    inspection_tasks_aggregate: { aggregate: { count: number } };
-    case_assignments_aggregate: { aggregate: { count: number } };
-  }>(`query ($uid: uuid!) {
-    inspection_tasks_aggregate(where: { inspector_id: { _eq: $uid } }) { aggregate { count } }
-    case_assignments_aggregate(where: { inspector_id: { _eq: $uid }, status: { _neq: "withdrawn" } }) { aggregate { count } }
-  }`, { uid: user.id });
+    case_work_units: Array<{
+      id: string;
+      status: string;
+      inspection_task_id: string | null;
+    }>;
+    inspection_tasks: Array<{
+      id: string;
+      status: string;
+      work_unit_id: string | null;
+    }>;
+    recent_tasks: Array<{
+      id: string;
+      task_name: string | null;
+      status: string;
+      completed_at: string | null;
+      created_at: string;
+      planned_date: string | null;
+      site: { name: string } | null;
+      device: { serial_number: string } | null;
+    }>;
+  }>(
+    `query ($uid: uuid!, $from: timestamptz!, $to: timestamptz!) {
+      case_work_units(where: {
+        inspector_id: { _eq: $uid }
+        _or: [
+          { claimed_at: { _gte: $from, _lt: $to } }
+          { submitted_at: { _gte: $from, _lt: $to } }
+          { completed_at: { _gte: $from, _lt: $to } }
+          { status: { _in: ["claimed", "submitted"] } }
+        ]
+      }) {
+        id status inspection_task_id
+      }
+      inspection_tasks(
+        where: {
+          inspector_id: { _eq: $uid }
+          _or: [
+            { created_at: { _gte: $from, _lt: $to } }
+            { started_at: { _gte: $from, _lt: $to } }
+            { completed_at: { _gte: $from, _lt: $to } }
+          ]
+        }
+      ) {
+        id status work_unit_id
+      }
+      recent_tasks: inspection_tasks(
+        where: { inspector_id: { _eq: $uid } }
+        order_by: { created_at: desc }
+        limit: 30
+      ) {
+        id task_name status completed_at created_at planned_date
+        site { name }
+        device { serial_number }
+      }
+    }`,
+    { uid: user.id, from, to },
+  );
+
+  const units = d.case_work_units || [];
+  const linkedTaskIds = new Set(units.map((u) => u.inspection_task_id).filter(Boolean) as string[]);
+  const standaloneTasks = (d.inspection_tasks || []).filter(
+    (t) => !t.work_unit_id && !linkedTaskIds.has(t.id),
+  );
+
+  let completed = 0;
+  let inProgress = 0;
+  let pending = 0;
+  let submitted = 0;
+  for (const item of [...units, ...standaloneTasks]) {
+    const bucket = inspectorItemBucket(item.status);
+    if (bucket === "completed") completed += 1;
+    else if (bucket === "submitted") submitted += 1;
+    else if (bucket === "inProgress") inProgress += 1;
+    else pending += 1;
+  }
+  const total = completed + inProgress + pending + submitted;
+
   return ok({
-    month: query.get("month") || new Date().toISOString().slice(0, 7),
-    taskCount: d.inspection_tasks_aggregate.aggregate.count,
-    caseCount: d.case_assignments_aggregate.aggregate.count,
+    month: {
+      total,
+      completed,
+      inProgress,
+      pending,
+      submitted,
+      completionRate: total ? Math.round((completed / total) * 100) : 0,
+    },
+    recentTasks: (d.recent_tasks || []).map((t) => ({
+      id: t.id,
+      taskName: t.task_name || "巡检作业",
+      status: t.status,
+      siteName: t.site?.name || "",
+      deviceSerial: t.device?.serial_number || "",
+      plannedDate: t.planned_date || undefined,
+      completedAt: t.completed_at || undefined,
+      createdAt: t.created_at,
+    })),
   });
 }
 
@@ -2567,11 +2681,50 @@ async function completeUnit(user: AppUser, caseId: string, unitId: string) {
   return myCase(user, caseId);
 }
 
-async function saveSerial(user: AppUser, unitId: string, body: Record<string, unknown>) {
-  const deviceSerial = String(body.deviceSerial || body.serial || "")
+function normalizeDeviceSerial(raw: string) {
+  return String(raw || "")
     .trim()
     .replace(/\s+/g, "")
     .toUpperCase();
+}
+
+async function saveSerial(user: AppUser, caseId: string, unitId: string, body: Record<string, unknown>) {
+  const deviceSerial = normalizeDeviceSerial(String(body.deviceSerial || body.serial || ""));
+  if (deviceSerial.length < 4) throw new HttpError(400, "请填写至少 4 位的设备序列号");
+  const unitRow = await adminGql<{
+    case_work_units_by_pk: {
+      id: string;
+      seq: number;
+      inspector_id: string | null;
+      service_case_id: string;
+      status: string;
+    } | null;
+    case_work_units: Array<{ id: string; seq: number; device_serial: string | null; status: string }>;
+  }>(
+    `query ($id: uuid!, $cid: uuid!) {
+      case_work_units_by_pk(id: $id) { id seq inspector_id service_case_id status }
+      case_work_units(
+        where: {
+          service_case_id: { _eq: $cid }
+          id: { _neq: $id }
+          status: { _neq: "cancelled" }
+          device_serial: { _is_null: false }
+        }
+      ) { id seq device_serial status }
+    }`,
+    { id: unitId, cid: caseId },
+  );
+  const unit = unitRow.case_work_units_by_pk;
+  if (!unit || unit.service_case_id !== caseId) throw new HttpError(404, "作业单元不存在");
+  if (unit.inspector_id && unit.inspector_id !== user.id && user.role === "inspector") {
+    throw new HttpError(403, "只能填写本人认领台的序列号");
+  }
+  const dup = unitRow.case_work_units.find(
+    (row) => normalizeDeviceSerial(row.device_serial || "") === deviceSerial,
+  );
+  if (dup) {
+    throw new HttpError(400, `序列号 ${deviceSerial} 已用于本案例台 #${dup.seq}，同一案例不能录两台相同设备`);
+  }
   const serialPhotoUrl = (body.serialPhotoUrl || body.photoUrl || null) as string | null;
   const now = new Date().toISOString();
   const d = await adminGql<{
@@ -5291,7 +5444,11 @@ async function myIncome(user: AppUser, query: URLSearchParams) {
   const assessment = d.assessments[0] || null;
   const orphanEventPenalty = d.assessment_events.reduce((sum, e) => sum + Number(e.amount || 0), 0);
 
-  const list = d.case_performances.map((row) => {
+  const INCOME_CASE_STATUS = new Set(["finished", "settle_review", "settled", "month_locked"]);
+
+  const list = d.case_performances
+    .filter((row) => row.service_case && INCOME_CASE_STATUS.has(row.service_case.status))
+    .map((row) => {
     const sc = row.service_case;
     const share = sc?.case_perf_shares?.[0];
     const shared = !!share;
@@ -5365,12 +5522,16 @@ async function myIncome(user: AppUser, query: URLSearchParams) {
   const pendingAmount = list
     .filter((x) => x.reviewStatus === "pending")
     .reduce((sum, x) => sum + Number(x.perfFinal || 0), 0);
+  const rejectedAmount = list
+    .filter((x) => x.reviewStatus === "rejected")
+    .reduce((sum, x) => sum + Number(x.perfFinal || 0), 0);
 
   return ok({
     month,
     approvedAmount: String(settlement?.perf_total ?? approvedAmount),
     pendingAmount: pendingAmount.toFixed(2),
-    totalAmount: String(settlement?.final_amount ?? approvedAmount + pendingAmount),
+    rejectedAmount: rejectedAmount.toFixed(2),
+    totalAmount: String(settlement?.final_amount ?? approvedAmount),
     caseCount: list.length,
     list,
     assessment: assessment

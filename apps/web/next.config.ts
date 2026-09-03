@@ -29,11 +29,16 @@ const nextConfig: NextConfig = {
   output: "standalone",
   devIndicators: false,
   transpilePackages: ["antd", "@ant-design/icons", "react-vant", "leaflet"],
-  // 开发态穿透（cpolar）会从公网域名拉 /_next/*，默认会被拦导致卡在「正在进入」
+  // 局域网 IP / 穿透域名拉 /_next/* 时，不配会被拦，页面能看见但按钮点不动
   allowedDevOrigins: [
+    "192.168.1.28",
+    "192.168.0.0/16",
+    "10.0.0.0/8",
     "*.cpolar.cn",
     "*.cpolar.io",
     "*.vip.cpolar.cn",
+    "*.r9.cpolar.cn",
+    "*.r9.vip.cpolar.cn",
     "*.r16.cpolar.cn",
     "*.r16.vip.cpolar.cn",
   ],

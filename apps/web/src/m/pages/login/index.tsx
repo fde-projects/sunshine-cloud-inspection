@@ -1,10 +1,18 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Button, Form, Field, Toast } from "@/m/lib/react-vant";
 import { nextPathAfterAuth, useAuthStore } from "@/stores/auth";
 import { brandMarkText, useBrandingStore } from "@/stores/branding";
+import {
+  listSavedAccounts,
+  loadRememberedLogin,
+  rememberAccountAfterLogin,
+  removeSavedAccount,
+  type SavedAccount,
+} from "@/lib/remember-login";
+import { LoginAccountMenu, LoginIconBtn, IconClear, IconChevron, IconEye } from "@/components/login-account-menu";
 import "./login.css";
 
 export default function LoginPage() {
@@ -13,10 +21,34 @@ export default function LoginPage() {
   const branding = useBrandingStore((s) => s.branding);
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
+  const [remember, setRemember] = useState(false);
+  const [accounts, setAccounts] = useState<SavedAccount[]>([]);
+  const [accountOpen, setAccountOpen] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
+  const accountBoxRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     hydrate();
+    const saved = listSavedAccounts("h5");
+    setAccounts(saved);
+    const remembered = loadRememberedLogin("h5");
+    if (remembered) {
+      setUsername(remembered.username);
+      setPassword(remembered.password);
+      setRemember(Boolean(remembered.password));
+    }
   }, [hydrate]);
+
+  useEffect(() => {
+    if (!accountOpen) return;
+    const onPointerDown = (event: PointerEvent) => {
+      if (!accountBoxRef.current?.contains(event.target as Node)) {
+        setAccountOpen(false);
+      }
+    };
+    document.addEventListener("pointerdown", onPointerDown);
+    return () => document.removeEventListener("pointerdown", onPointerDown);
+  }, [accountOpen]);
 
   const redirectAfterLogin = (loggedUser: NonNullable<typeof user>) => {
     if (loggedUser.role !== "inspector") {
@@ -46,7 +78,13 @@ export default function LoginPage() {
       return;
     }
     try {
-      const loggedUser = await login(username.trim(), password, false, "h5");
+      const loggedUser = await login(username.trim(), password, remember, "h5");
+      rememberAccountAfterLogin("h5", {
+        username: username.trim(),
+        password,
+        realName: loggedUser.realName,
+        rememberPassword: remember,
+      });
       try {
         await useAuthStore.getState().fetchMe();
       } catch {
@@ -62,12 +100,12 @@ export default function LoginPage() {
 
   return (
     <div className="h5-login-page">
-      <button type="button" className="login-back" onClick={() => (window.location.href = "/")}>
+      <a className="login-back" href="/">
         <span className="login-back__arrow" aria-hidden>
           ←
         </span>
         返回入口
-      </button>
+      </a>
 
       <div className="h5-login-page__inner">
         <div className="h5-login-brand">
@@ -95,13 +133,78 @@ export default function LoginPage() {
                 当前：{user.realName}。输入其他账号可切换，或先退出再登。
               </div>
             ) : null}
-            <Field label="用户名" placeholder="请输入用户名" value={username} onChange={setUsername} />
+            <div className="login-account-field" ref={accountBoxRef}>
+              <Field
+                label="用户名"
+                placeholder="请输入用户名"
+                value={username}
+                onChange={(value) => {
+                  setUsername(value);
+                }}
+                suffix={
+                  <span className="login-field-actions">
+                    {username ? (
+                      <LoginIconBtn label="清空用户名" onClick={() => setUsername("")}>
+                        <IconClear />
+                      </LoginIconBtn>
+                    ) : null}
+                    <LoginIconBtn
+                      label="选择已登录账号"
+                      extraClass={accountOpen ? "is-open" : ""}
+                      onClick={() => setAccountOpen((open) => !open)}
+                    >
+                      <IconChevron open={accountOpen} />
+                    </LoginIconBtn>
+                  </span>
+                }
+              />
+              {accountOpen ? (
+                accounts.length ? (
+                  <LoginAccountMenu
+                    accounts={accounts}
+                    onSelect={(account) => {
+                      setUsername(account.username);
+                      setPassword(account.password);
+                      setRemember(Boolean(account.password));
+                      setAccountOpen(false);
+                    }}
+                    onRemove={(name) => {
+                      removeSavedAccount("h5", name);
+                      const next = listSavedAccounts("h5");
+                      setAccounts(next);
+                      if (username === name) {
+                        setUsername("");
+                        setPassword("");
+                        setRemember(false);
+                      }
+                    }}
+                  />
+                ) : (
+                  <div className="login-account-menu login-account-menu--empty">登录成功后，账号会出现在这里</div>
+                )
+              ) : null}
+            </div>
             <Field
-              type="password"
+              type={showPassword ? "text" : "password"}
               label="密码"
               placeholder="请输入密码"
               value={password}
               onChange={setPassword}
+              suffix={
+                <span className="login-field-actions">
+                  {password ? (
+                    <LoginIconBtn label="清空密码" onClick={() => setPassword("")}>
+                      <IconClear />
+                    </LoginIconBtn>
+                  ) : null}
+                  <LoginIconBtn
+                    label={showPassword ? "隐藏密码" : "显示密码"}
+                    onClick={() => setShowPassword((open) => !open)}
+                  >
+                    <IconEye hidden={!showPassword} />
+                  </LoginIconBtn>
+                </span>
+              }
               onKeyPress={(e) => {
                 if (e.key === "Enter") {
                   e.preventDefault();
@@ -110,6 +213,14 @@ export default function LoginPage() {
               }}
             />
           </Form>
+          <label className="h5-login-remember">
+            <input
+              type="checkbox"
+              checked={remember}
+              onChange={(e) => setRemember(e.target.checked)}
+            />
+            记住密码
+          </label>
           <div className="h5-login-actions">
             <Button
               type="primary"

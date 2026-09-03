@@ -36,7 +36,7 @@
 
 .login-back {
   position: relative;
-  z-index: 2;
+  z-index: 20;
   min-height: 44px;
   margin: max(8px, env(safe-area-inset-top)) 14px 0;
   padding: 8px 6px;
@@ -48,6 +48,9 @@
   color: rgba(238, 255, 248, 0.85);
   font-size: 13px;
   font-family: inherit;
+  text-decoration: none;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
 }
 
 .h5-login-page__inner {
@@ -118,7 +121,7 @@
 
 .h5-login-card {
   margin-top: 22px;
-  overflow: hidden;
+  overflow: visible;
   border: 1px solid rgba(18, 70, 52, 0.08);
   border-radius: var(--h5-radius-xl);
   background: rgba(255, 255, 255, 0.98);
@@ -152,7 +155,8 @@
 /* 收紧账号/密码行间距，避免卡片被拉得过高 */
 .h5-login-card .rv-cell {
   padding: 10px 14px;
-  min-height: 44px;
+  min-height: 48px;
+  background: transparent;
 }
 
 .h5-login-card .rv-cell::after {
@@ -175,6 +179,12 @@
 
 .h5-login-card .rv-field__body {
   min-height: 28px;
+  overflow: visible;
+}
+
+.h5-login-card .rv-field__value,
+.h5-login-card .rv-field__control-wrapper {
+  overflow: visible;
 }
 
 .h5-login-switch-hint {
@@ -186,6 +196,24 @@
 
 .h5-login-switch-hint a {
   color: var(--h5-green-dark, #117452);
+}
+
+.h5-login-remember {
+  margin: 2px 18px 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #536b62;
+  font-size: 13px;
+  line-height: 1.4;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.h5-login-remember input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: #16835f;
 }
 
 .h5-login-alt {

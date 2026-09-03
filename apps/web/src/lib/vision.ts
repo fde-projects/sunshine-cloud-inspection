@@ -11,12 +11,32 @@ import {
   matchHardRule,
   parseCoverIndexes,
   parseHardRuleSamples,
+  ruleNeedsFaultTabs,
   sanitizePassViews,
   sanitizeSampleUrls,
   sanitizeViewLabel,
   takeLatestPhotos,
   type HardRulePassView,
 } from "./hard-rule-match";
+import { visionGateLabel, type VisionGate } from "./hard-rule-pipeline";
+
+export type VisionAnalyzeResult = {
+  status: "pass" | "fail" | "error";
+  confidence: number;
+  reason: string;
+  provider: string;
+  gate: VisionGate;
+  gateLabel: string;
+};
+
+function visionResult(
+  input: Omit<VisionAnalyzeResult, "gateLabel"> & { gateLabel?: string },
+): VisionAnalyzeResult {
+  return {
+    ...input,
+    gateLabel: input.gateLabel || visionGateLabel(input.gate),
+  };
+}
 
 type HardRule = {
   code: string;
@@ -148,13 +168,19 @@ export async function analyzePhotos(input: {
     sampleFailUrls?: string[];
     samplePassViews?: HardRulePassView[];
   };
-}): Promise<{ status: "pass" | "fail" | "error"; confidence: number; reason: string; provider: string }> {
+}): Promise<VisionAnalyzeResult> {
   const apiKey = (process.env.VISION_API_KEY || "").trim();
   const base = (process.env.VISION_BASE_URL || "https://api.siliconflow.cn/v1").replace(/\/$/, "");
   const model = process.env.VISION_MODEL || "Qwen/Qwen3-VL-8B-Instruct";
 
   if (!input.photoUrls.length) {
-    return { status: "fail", confidence: 0, reason: "未上传照片", provider: "siliconflow" };
+    return visionResult({
+      status: "fail",
+      confidence: 0,
+      reason: "未上传照片",
+      provider: "siliconflow",
+      gate: "no_photos",
+    });
   }
 
   let ruleBlock = "";
@@ -210,15 +236,22 @@ export async function analyzePhotos(input: {
   const passViews = labeledPassViews(samplePass);
   const shortReason = failReasonIfShortOfRequiredShots(fieldPhotos.length, passViews.length);
   if (shortReason) {
-    return { status: "fail", confidence: 1, reason: shortReason, provider: "rule" };
+    return visionResult({
+      status: "fail",
+      confidence: 1,
+      reason: shortReason,
+      provider: "rule",
+      gate: "short_of_shots",
+    });
   }
   if (!apiKey) {
-    return {
+    return visionResult({
       status: "pass",
       confidence: 0,
       reason: "未配置 VISION_API_KEY，开发环境返回模拟合格（未对照样张）",
       provider: "mock",
-    };
+      gate: "mock",
+    });
   }
 
   const hasRefs = passViews.length + sampleFail.length > 0;
@@ -231,9 +264,11 @@ export async function analyzePhotos(input: {
     ].join("");
     ruleBlock = ruleBlock ? `${priority}\n${ruleBlock}` : priority;
   }
-  const needFaultTabs =
-    /实时故障/.test(`${input.title}\n${ruleBlock}\n${passViews.map((v) => v.label).join("\n")}`) &&
-    /历史故障/.test(`${input.title}\n${ruleBlock}\n${passViews.map((v) => v.label).join("\n")}`);
+  const needFaultTabs = ruleNeedsFaultTabs(
+    input.title,
+    ruleBlock,
+    passViews.map((v) => v.label),
+  );
   const slotLine =
     passViews.length >= 2
       ? [
@@ -317,12 +352,13 @@ status 必须与 reason 最后一句一致：理由写不合格则 status 必须
   });
   if (!res.ok) {
     const t = await res.text();
-    return {
+    return visionResult({
       status: "error",
       confidence: 0,
       reason: `硅基流动调用失败：${res.status} ${t.slice(0, 200)}`,
       provider: "siliconflow",
-    };
+      gate: "vision_error",
+    });
   }
   const json = (await res.json()) as {
     choices?: { message?: { content?: string } }[];
@@ -353,7 +389,13 @@ status 必须与 reason 最后一句一致：理由写不合格则 status 必须
   const rawStatus = parsed.status === "fail" ? "fail" : parsed.status === "pass" ? "pass" : "fail";
   if (uncovered) {
     if (coverHits > 0 || rawStatus === "pass") {
-      return { status: "fail", confidence: 1, reason: uncovered, provider: "siliconflow" };
+      return visionResult({
+        status: "fail",
+        confidence: 1,
+        reason: uncovered,
+        provider: "siliconflow",
+        gate: "cover_uncovered",
+      });
     }
   }
   const faultTabs = failReasonIfFaultTabsNotDistinct(parsed, {
@@ -363,7 +405,13 @@ status 必须与 reason 最后一句一致：理由写不合格则 status 必须
     photoCount: fieldPhotos.length,
   });
   if (faultTabs) {
-    return { status: "fail", confidence: 1, reason: faultTabs, provider: "siliconflow" };
+    return visionResult({
+      status: "fail",
+      confidence: 1,
+      reason: faultTabs,
+      provider: "siliconflow",
+      gate: "fault_tabs",
+    });
   }
 
   const usedFailSample = fieldPhotos.some((url) => sampleFail.includes(url));
@@ -383,22 +431,24 @@ status 必须与 reason 最后一句一致：理由写不合格则 status 必须
           reason,
         );
       if (rawStatus === "fail" && !hardDefect && crossTypeNit) {
-        return {
+        return visionResult({
           status: "pass",
           confidence: typeof parsed.confidence === "number" ? parsed.confidence : 0.9,
           reason,
           provider: "siliconflow",
-        };
+          gate: "nit_override_pass",
+        });
       }
     }
   }
 
-  return {
+  return visionResult({
     status: reconcileStatusWithReason(rawStatus, reason),
     confidence: typeof parsed.confidence === "number" ? parsed.confidence : 0.5,
     reason,
     provider: "siliconflow",
-  };
+    gate: "model",
+  });
 }
 
 export async function draftRuleFromSamples(input: {

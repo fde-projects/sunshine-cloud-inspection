@@ -67,6 +67,8 @@ export interface HardRulePreviewResult {
   confidence: number;
   reason: string;
   provider: string;
+  gate?: string;
+  gateLabel?: string;
 }
 
 export type HardRuleWritePayload = {

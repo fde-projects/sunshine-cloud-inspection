@@ -82,9 +82,25 @@ interface LiveLocationProof {
   capturedAt: string;
 }
 
+function locationErrorMessage(error?: GeolocationPositionError | null) {
+  if (typeof window !== 'undefined' && !window.isSecureContext) {
+    return '当前是局域网 HTTP 地址，浏览器不允许网页取定位。作业可继续，报告会记位置异常';
+  }
+  if (error && error.code === error.PERMISSION_DENIED) {
+    return '浏览器未允许本页定位。系统设置里的位置开关开了还不够，要在浏览器里允许这个网站';
+  }
+  if (error && error.code === error.TIMEOUT) {
+    return '定位超时（可能无信号），仍可继续拍照上传';
+  }
+  return '现场定位失败（可能无信号），仍可继续拍照上传';
+}
+
 function getLiveLocation(onAccuracy?: (accuracy: number) => void): Promise<LiveLocationProof> {
   if (!('geolocation' in navigator)) {
     return Promise.reject(new Error('当前设备不支持定位'));
+  }
+  if (typeof window !== 'undefined' && !window.isSecureContext) {
+    return Promise.reject(new Error(locationErrorMessage()));
   }
   return new Promise((resolve, reject) => {
     let settled = false;
@@ -123,11 +139,7 @@ function getLiveLocation(onAccuracy?: (accuracy: number) => void): Promise<LiveL
           finish();
           return;
         }
-        const message =
-          error.code === error.PERMISSION_DENIED
-            ? '定位权限未开启，请在浏览器设置中允许定位'
-            : '现场定位失败（可能无信号），仍可继续拍照上传';
-        finish(new Error(message));
+        finish(new Error(locationErrorMessage(error)));
       },
       { enableHighAccuracy: true, timeout: 15_000, maximumAge: 0 },
     );
@@ -1305,7 +1317,9 @@ export default function InspectionPage() {
             )}
             <div style={{ marginTop: 10, color: '#7b8983', fontSize: 11, lineHeight: 1.5 }}>
               {locationStatus === 'failed' || locationStatus === 'skipped'
-                ? '偏远无信号时仍可拍照上传并提交；报告会标记「位置异常」，供审核抽查。'
+                ? typeof window !== 'undefined' && !window.isSecureContext
+                  ? '要用真实定位，需要 HTTPS 公网地址。现在用局域网 HTTP 测功能，点「无法定位，继续作业」即可。'
+                  : '偏远无信号时仍可拍照上传并提交；报告会标记「位置异常」，供审核抽查。'
                 : locationStatus === 'weak'
                   ? '定位精度较弱，已写入报告弱定位标记，不影响拍照与提交。'
                   : locationResult

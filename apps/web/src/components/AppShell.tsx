@@ -186,12 +186,15 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         </Sider>
       )}
       <Drawer
+        rootClassName="mobile-drawer"
         className="mobile-drawer"
         open={isMobile && mobileMenuOpen}
         onClose={() => setMobileMenuOpen(false)}
         placement="left"
         width={268}
         closable={false}
+        mask
+        maskClosable
       >
         {ready ? menuNode : null}
       </Drawer>

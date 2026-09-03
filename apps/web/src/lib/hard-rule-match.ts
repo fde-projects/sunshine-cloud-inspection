@@ -1,8 +1,8 @@
 export type HardRuleMatchInput = {
-  matchMode?: string;
-  match_mode?: string;
-  matchPattern?: string;
-  match_pattern?: string;
+  matchMode?: string | null;
+  match_mode?: string | null;
+  matchPattern?: string | null;
+  match_pattern?: string | null;
   jsonSchemaHint?: string | null;
   json_schema_hint?: string | null;
 };
@@ -124,13 +124,18 @@ function classifyFaultTab(raw: string): "realtime" | "historical" | "other" {
   return "other";
 }
 
+/** 检查项/规则/样张名称里同时出现实时与历史故障时，走页签闸门。 */
+export function ruleNeedsFaultTabs(title: string, ruleText: string, passLabels: string[] = []): boolean {
+  const blob = [title, ruleText, ...passLabels].join("\n");
+  return /实时故障/.test(blob) && /历史故障/.test(blob);
+}
+
 /** 故障记录类：两张必须分别是实时/历史；同页签拍两张不合格。 */
 export function failReasonIfFaultTabsNotDistinct(
   parsed: Record<string, unknown>,
   opts: { title: string; ruleText: string; passLabels: string[]; photoCount: number },
 ): string | null {
-  const blob = [opts.title, opts.ruleText, ...opts.passLabels].join("\n");
-  if (!/实时故障/.test(blob) || !/历史故障/.test(blob)) return null;
+  if (!ruleNeedsFaultTabs(opts.title, opts.ruleText, opts.passLabels)) return null;
   if (opts.photoCount < 2) return null;
 
   const evidence =

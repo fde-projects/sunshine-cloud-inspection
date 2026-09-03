@@ -241,9 +241,26 @@
   box-shadow: 0 12px 40px rgba(23, 72, 54, .055);
 }
 
+.mobile-drawer .ant-drawer-content-wrapper {
+  width: min(78vw, 280px) !important;
+  max-width: min(78vw, 280px) !important;
+}
+
+.mobile-drawer .ant-drawer-content {
+  overflow: hidden;
+  border-radius: 0 18px 18px 0;
+  box-shadow: 12px 0 32px rgba(8, 42, 32, 0.28);
+}
+
 .mobile-drawer .ant-drawer-body {
   padding: 0;
+  height: 100%;
   background: linear-gradient(180deg, #0c2e25, #123c30);
+}
+
+.mobile-drawer .ant-drawer-body .app-brand,
+.mobile-drawer .ant-drawer-body .app-menu {
+  width: 100%;
 }
 
 @media (max-width: 767px) {
@@ -305,6 +322,7 @@
   }
 
   .mobile-drawer .ant-drawer-content-wrapper {
-    width: min(82vw, 292px) !important;
+    width: min(78vw, 280px) !important;
+    max-width: min(78vw, 280px) !important;
   }
 }

@@ -2,6 +2,12 @@ import { randomUUID } from "crypto";
 import { adminGql } from "@/lib/hasura-admin";
 import { rematchUnboundCases } from "./finance/demand-type-match";
 import { HARD_RULE_DEFAULTS } from "./hard-rule-defaults";
+import {
+  parseHardRuleBindings,
+  parseHardRuleSamples,
+  serializeHardRuleHint,
+  splitHardRuleParts,
+} from "@/lib/hard-rule-match";
 
 type EntryDef = {
   name: string;
@@ -261,6 +267,157 @@ async function seedHardRules() {
     updated += 1;
   }
   return { inserted, updated };
+}
+
+function stringInverterEntryDefs(): EntryDef[] {
+  const tpl = DEVICE_TEMPLATES.find((item) => item.deviceType === "string_inverter");
+  return tpl?.entries || [];
+}
+
+type CatalogEntryHit = {
+  templateId: string;
+  templateName: string;
+  productLineName: string;
+  entryId: string;
+  entryName: string;
+};
+
+function flattenTemplateEntries(templates: TemplateRow[]): CatalogEntryHit[] {
+  const items: CatalogEntryHit[] = [];
+  for (const tpl of templates) {
+    const lines = Array.isArray(tpl.product_lines) ? tpl.product_lines : [];
+    if (lines.length) {
+      for (const line of lines) {
+        const lineName = String(line.name || "").trim();
+        for (const raw of Array.isArray(line.entries) ? line.entries : []) {
+          const row = (raw || {}) as { id?: string; name?: string };
+          const entryName = String(row.name || "").trim();
+          if (!entryName) continue;
+          items.push({
+            templateId: tpl.id,
+            templateName: tpl.name,
+            productLineName: lineName,
+            entryId: String(row.id || ""),
+            entryName,
+          });
+        }
+      }
+    } else {
+      for (const raw of Array.isArray(tpl.entries) ? tpl.entries : []) {
+        const row = (raw || {}) as { id?: string; name?: string };
+        const entryName = String(row.name || "").trim();
+        if (!entryName) continue;
+        items.push({
+          templateId: tpl.id,
+          templateName: tpl.name,
+          productLineName: "",
+          entryId: String(row.id || ""),
+          entryName,
+        });
+      }
+    }
+  }
+  return items;
+}
+
+/** 组串式产线补回直流侧/安装固定检查项，并把未绑定的内置规则绑到同名检查项。 */
+export async function healBuiltinHardRuleBindings(): Promise<{ entries: number; bindings: number }> {
+  const templates = await loadTemplates();
+  const needed = stringInverterEntryDefs().filter((item) =>
+    ["直流侧安装检查", "安装固定检查"].includes(item.name),
+  );
+  let entriesAdded = 0;
+  for (const tpl of templates) {
+    const lines = Array.isArray(tpl.product_lines) ? [...tpl.product_lines] : [];
+    let changed = false;
+    const nextLines = lines.map((line) => {
+      const lineName = String(line.name || "");
+      if (!lineName.includes("组串")) return line;
+      const list = Array.isArray(line.entries) ? [...line.entries] : [];
+      const names = new Set(
+        list.map((raw) => String((raw as { name?: string })?.name || "").trim()).filter(Boolean),
+      );
+      for (const def of needed) {
+        if (names.has(def.name)) continue;
+        list.push({
+          id: randomUUID(),
+          name: def.name,
+          description: def.description,
+          isRequired: true,
+          order: list.length,
+          samplePhotos: [],
+          checkType: "photo",
+          aiEnabled: true,
+        });
+        names.add(def.name);
+        changed = true;
+        entriesAdded += 1;
+      }
+      return { ...line, entries: list };
+    });
+    if (changed) {
+      await updateTemplate(tpl.id, {
+        product_lines: nextLines,
+        version: Number(tpl.version || 1) + 1,
+      });
+    }
+  }
+
+  const catalog = flattenTemplateEntries(await loadTemplates());
+  const rules = await adminGql<{
+    ai_hard_rules: Array<{
+      code: string;
+      name: string;
+      match_mode: string | null;
+      match_pattern: string | null;
+      json_schema_hint: string | null;
+      version: number | null;
+    }>;
+  }>(`query { ai_hard_rules { code name match_mode match_pattern json_schema_hint version } }`);
+
+  let bindings = 0;
+  for (const row of rules.ai_hard_rules || []) {
+    const existing = parseHardRuleBindings(row);
+    const live = existing.filter((b) => catalog.some((item) => item.entryId && item.entryId === b.entryId));
+    if (live.length) continue;
+    const def = HARD_RULE_DEFAULTS.find((item) => item.code === row.code);
+    const parts = splitHardRuleParts(def?.matchPattern || row.match_pattern || row.name);
+    const byName =
+      catalog.find((item) => item.entryName === row.name) ||
+      catalog.find((item) => item.entryName === def?.name) ||
+      catalog.find((item) => parts.some((p) => item.entryName.includes(p)));
+    if (!byName) continue;
+    const samples = parseHardRuleSamples({ jsonSchemaHint: row.json_schema_hint });
+    const hint = serializeHardRuleHint({
+      bindings: [
+        {
+          templateId: byName.templateId,
+          entryId: byName.entryId,
+          templateName: byName.templateName,
+          entryName: byName.entryName,
+          productLineName: byName.productLineName,
+        },
+      ],
+      samples,
+    });
+    await adminGql(
+      `mutation ($c: String!, $set: ai_hard_rules_set_input!) {
+        update_ai_hard_rules(where: { code: { _eq: $c } }, _set: $set) { affected_rows }
+      }`,
+      {
+        c: row.code,
+        set: {
+          match_mode: "title_exact",
+          match_pattern: byName.entryName,
+          json_schema_hint: hint,
+          version: Number(row.version || 1) + 1,
+          change_note: "系统：内置规则绑定同名检查项",
+        },
+      },
+    );
+    bindings += 1;
+  }
+  return { entries: entriesAdded, bindings };
 }
 
 /** 强制写入全部内置硬规则（清空后恢复用） */

@@ -367,6 +367,10 @@
   font-weight: 700;
   letter-spacing: -.02em;
 }
+.inc-bill-row.is-excluded > strong {
+  color: #8a9b95;
+  font-weight: 600;
+}
 .inc-bill-block {
   margin-bottom: 10px;
   padding: 12px 14px;
@@ -783,6 +787,9 @@
 .unit-serial.is-empty {
   color: #9aa8a2;
   font-weight: 500;
+}
+.unit-serial.is-dup {
+  color: #a04538;
 }
 .single-unit-serial-card {
   margin-top: 12px;

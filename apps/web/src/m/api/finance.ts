@@ -222,6 +222,7 @@ export interface MyIncome {
   month: string;
   approvedAmount: string;
   pendingAmount: string;
+  rejectedAmount?: string;
   totalAmount: string;
   caseCount: number;
   list: IncomeLedger[];

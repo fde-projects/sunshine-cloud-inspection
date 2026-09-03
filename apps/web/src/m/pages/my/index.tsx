@@ -38,7 +38,7 @@ export default function MyPage() {
     navigate('/m/login', { replace: true });
   };
 
-  const month = summary?.month;
+  const month = summary?.month && typeof summary.month === "object" ? summary.month : undefined;
 
   return (
     <div className="my-page">
@@ -79,15 +79,15 @@ export default function MyPage() {
           ) : month ? (
             <div className="my-stats-grid">
               <div>
-                <b>{month.total}</b>
+                <b>{month.total ?? 0}</b>
                 <span>作业数</span>
               </div>
               <div>
-                <b>{month.completed}</b>
+                <b>{month.completed ?? 0}</b>
                 <span>已完成</span>
               </div>
               <div>
-                <b>{month.completionRate}%</b>
+                <b>{month.completionRate ?? 0}%</b>
                 <span>完成率</span>
               </div>
             </div>

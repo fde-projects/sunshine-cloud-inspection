@@ -72,11 +72,16 @@ export default function PortalPage() {
           ) : null}
         </div>
 
-        <button
-          type="button"
+        <a
+          href="/login"
           className="portal-card"
-          disabled={entering !== null}
-          onClick={() => void enter("pc")}
+          aria-busy={entering === "pc"}
+          onClick={(e) => {
+            if (token && user) {
+              e.preventDefault();
+              void enter("pc");
+            }
+          }}
         >
           <span className="portal-card__icon" aria-hidden>
             <svg viewBox="0 0 24 24" width="26" height="26">
@@ -91,9 +96,19 @@ export default function PortalPage() {
             <span className="portal-card__desc">管理员 / 网格长入口</span>
           </span>
           <span className="portal-card__arrow">{entering === "pc" ? "…" : "›"}</span>
-        </button>
+        </a>
 
-        <button type="button" className="portal-card" disabled={entering !== null} onClick={() => void enter("h5")}>
+        <a
+          href="/m/login"
+          className="portal-card"
+          aria-busy={entering === "h5"}
+          onClick={(e) => {
+            if (token && user) {
+              e.preventDefault();
+              void enter("h5");
+            }
+          }}
+        >
           <span className="portal-card__icon" aria-hidden>
             <svg viewBox="0 0 24 24" width="26" height="26">
               <rect x="7" y="2" width="10" height="20" rx="2" fill="none" stroke="#fff" strokeWidth="2" />
@@ -105,7 +120,7 @@ export default function PortalPage() {
             <span className="portal-card__desc">工程师现场作业入口</span>
           </span>
           <span className="portal-card__arrow">{entering === "h5" ? "…" : "›"}</span>
-        </button>
+        </a>
         <div className="portal-note">
           <span /> 系统服务正常　·　请根据工作场景选择入口
         </div>

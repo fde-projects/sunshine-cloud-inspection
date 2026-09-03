@@ -179,6 +179,20 @@ export default function FinanceCaseDetailPage() {
     return false;
   };
 
+  const serialKey = (raw?: string | null) =>
+    String(raw || '').trim().replace(/\s+/g, '').toUpperCase();
+
+  const duplicateSerials = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const u of units) {
+      if (u.status === 'cancelled') continue;
+      const sn = serialKey(u.deviceSerial);
+      if (sn.length < 4) continue;
+      counts.set(sn, (counts.get(sn) || 0) + 1);
+    }
+    return new Set([...counts.entries()].filter(([, n]) => n > 1).map(([sn]) => sn));
+  }, [units]);
+
   const claimedUnits = useMemo(
     () => units.filter((u) => u.status === 'claimed' || u.status === 'submitted'),
     [units],
@@ -825,9 +839,12 @@ export default function FinanceCaseDetailPage() {
                           {isFocus ? ' · 当前' : ''}
                         </span>
                         <span
-                          className={`unit-serial ${u.deviceSerial ? '' : 'is-empty'}`}
+                          className={`unit-serial ${u.deviceSerial ? '' : 'is-empty'}${
+                            duplicateSerials.has(serialKey(u.deviceSerial)) ? ' is-dup' : ''
+                          }`}
                         >
                           序列号：{u.deviceSerial?.trim() || '未识别'}
+                          {duplicateSerials.has(serialKey(u.deviceSerial)) ? ' · 重复' : ''}
                         </span>
                       </span>
                       <span className="unit-mine-actions">
@@ -938,9 +955,12 @@ export default function FinanceCaseDetailPage() {
                               {mine ? ' · 我的' : ''}
                             </span>
                             <span
-                              className={`unit-serial ${u.deviceSerial ? '' : 'is-empty'}`}
+                              className={`unit-serial ${u.deviceSerial ? '' : 'is-empty'}${
+                                duplicateSerials.has(serialKey(u.deviceSerial)) ? ' is-dup' : ''
+                              }`}
                             >
                               序列号：{u.deviceSerial?.trim() || '未识别'}
+                              {duplicateSerials.has(serialKey(u.deviceSerial)) ? ' · 重复' : ''}
                             </span>
                           </span>
                           <span className="unit-mine-actions">
@@ -1004,9 +1024,12 @@ export default function FinanceCaseDetailPage() {
                                 {mine ? ' · 我的' : ''}
                               </span>
                               <span
-                                className={`unit-serial ${u.deviceSerial ? '' : 'is-empty'}`}
+                                className={`unit-serial ${u.deviceSerial ? '' : 'is-empty'}${
+                                  duplicateSerials.has(serialKey(u.deviceSerial)) ? ' is-dup' : ''
+                                }`}
                               >
                                 序列号：{u.deviceSerial?.trim() || '未识别'}
+                                {duplicateSerials.has(serialKey(u.deviceSerial)) ? ' · 重复' : ''}
                               </span>
                             </span>
                             <span className="unit-mine-actions">

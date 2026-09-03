@@ -1050,7 +1050,7 @@ export default function FinanceCaseDetailPage() {
         </section>
       )}
 
-      {['assigned', 'working', 'finished', 'settle_review'].includes(item.status) ? (
+      {['assigned', 'working', 'finished', 'settle_review', 'settled'].includes(item.status) ? (
         <section className="mobile-finance-card">
           <h3>行程与费用（可选）</h3>
           <p className="mobile-finance-muted">{expenseTip}</p>
@@ -1083,7 +1083,11 @@ export default function FinanceCaseDetailPage() {
       {finished && (
         <section className="mobile-finance-card mobile-finance-tip">
           <h3>本单已结束</h3>
-          <p className="mobile-finance-muted">可在「我的收入」查看结算进度；行程报销可在上方补填。</p>
+          <p className="mobile-finance-muted">
+            {expenseClaimStatus === 'submitted' || expenseClaimStatus === 'approved'
+              ? '可在「我的收入」查看结算与报销进度。'
+              : '可在「我的收入」查看结算进度；行程报销可在上方补填。'}
+          </p>
         </section>
       )}
     </div>

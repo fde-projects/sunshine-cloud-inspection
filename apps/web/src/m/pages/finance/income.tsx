@@ -324,20 +324,29 @@ export default function MyIncomePage() {
 
   const breakdown = useMemo(() => {
     if (!data) return null;
-    const perf = Number(settlement?.perfTotal ?? data.approvedAmount);
-    const expense = Number(settlement?.expenseTotal ?? 0);
+    /** 顶栏以案例明细即时汇总为准，避免月结表未刷新时报销/绩效显示为 0 */
+    let perf = 0;
+    let expense = 0;
+    let eventPenalty = 0;
+    for (const item of data.list || []) {
+      perf += Number(item.perfFinal || 0);
+      expense += (item.expenses || [])
+        .filter((e) => e.status === 'approved')
+        .reduce((n, e) => n + Number(e.amount || 0), 0);
+      eventPenalty += Number(item.eventPenaltyTotal || 0);
+    }
+    for (const p of otherPenalties) {
+      eventPenalty += Number(p.amount || 0);
+    }
     const reward = Number(settlement?.rewardTotal ?? assessment?.rewardAmount ?? 0);
-    const eventPenalty = Number(settlement?.eventPenalty ?? assessment?.eventPenalty ?? 0);
     const subsidy = Number(
       settlement?.subsidyTotal ??
         Number(assessment?.toolSubsidy || 0) + Number(assessment?.otherSubsidy || 0),
     );
     const correction = Number(settlement?.correctionTotal ?? assessment?.correctionAmount ?? 0);
-    const final = Number(
-      settlement?.finalAmount ?? perf + expense + reward + subsidy + correction - eventPenalty,
-    );
+    const final = perf + expense + reward + subsidy + correction - eventPenalty;
     return { perf, expense, reward, eventPenalty, subsidy, correction, final };
-  }, [data, settlement, assessment]);
+  }, [data, settlement, assessment, otherPenalties]);
 
   const calCells = useMemo(() => buildMonthCells(month), [month]);
 
@@ -528,7 +537,7 @@ export default function MyIncomePage() {
                                   ) : null}
                                 </p>
                               </div>
-                              <strong>{money(earned)}</strong>
+                              <strong>{money(net)}</strong>
                             </button>
                           </li>
                         );

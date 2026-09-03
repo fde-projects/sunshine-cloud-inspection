@@ -14,7 +14,10 @@ export const CASE_CORE_FIELDS = `
     inspector_id status completed_units
     inspector { real_name username phone }
   }
-  case_performance { case_revenue }
+  case_performance {
+    id case_revenue perf_base perf_final deduction review_status review_comment
+    inspector_id month
+  }
 `;
 
 export const CASE_FIELDS = `
@@ -116,8 +119,19 @@ export function mapCase(row: Record<string, unknown>) {
   const names = assignments
     .map((a) => (a.inspector as { real_name?: string } | null)?.real_name)
     .filter(Boolean);
-  const perf = row.case_performance as { case_revenue?: string | number } | null;
+  const perf = row.case_performance as {
+    id?: string;
+    case_revenue?: string | number;
+    perf_base?: string | number;
+    perf_final?: string | number;
+    deduction?: string | number;
+    review_status?: string;
+    review_comment?: string | null;
+  } | null;
   const pos = (row.po_orders as unknown[]) || [];
+  const perfBase = Number(perf?.perf_base ?? 0);
+  const deduction = Number(perf?.deduction ?? 0);
+  const perfFinal = Number(perf?.perf_final ?? Math.max(0, perfBase - deduction));
   return {
     id: row.id,
     gspCaseNo: row.gsp_case_no,
@@ -148,6 +162,17 @@ export function mapCase(row: Record<string, unknown>) {
     updatedAt: row.updated_at,
     hasPo: pos.length > 0,
     caseRevenue: pos.length > 0 ? String(perf?.case_revenue ?? "0") : "0",
+    perfBase: perfBase.toFixed(2),
+    deduction: deduction.toFixed(2),
+    perfFinal: perfFinal.toFixed(2),
+    reviewStatus: String(perf?.review_status || "pending"),
+    reviewComment: perf?.review_comment ?? null,
+    deductionStatus: "none",
+    missingPerf: 0,
+    missingSettle: 0,
+    pendingExpenseCount: 0,
+    approvalReady: !!row.inspector_id,
+    overdue: false,
     assignments: assignments.map((a) => {
       const ins = a.inspector as { real_name?: string; username?: string; phone?: string } | null;
       return {

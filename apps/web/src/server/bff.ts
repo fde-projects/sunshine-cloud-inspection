@@ -38,6 +38,7 @@ import {
 } from "@/lib/hard-rule-stats";
 import { ensureOriginalCatalog } from "./catalog-seed";
 import { rematchCasesForTemplate, syncBoundCaseNames } from "./finance/demand-type-match";
+import { decideRecordAuditRoute, recordNeedsHumanAudit } from "./record-audit-route";
 import {
   downloadTemplate,
   fileFromForm,
@@ -59,9 +60,9 @@ import {
   assertFinanceClearAllowed,
 } from "./finance/finance-ops";
 import { getFinanceDashboard, getFinanceVariance } from "./finance/dashboard";
-import { listPriceMappings, recalculate, recalculateLedgers, savePriceMapping } from "./finance/price-mapping";
+import { listPriceMappings, recalculate, recalculateLedgers, repriceByPoIds, savePriceMapping } from "./finance/price-mapping";
 import { DEFAULT_ASSESSMENT_SCORE_RULES } from "./finance/assessment-score-rule.catalog";
-import { ASSESSMENT_EVENT_CATALOG } from "./finance/assessment-event.catalog";
+import { ASSESSMENT_EVENT_CATALOG, rankRewardAmount } from "./finance/assessment-event.catalog";
 
 type Handler = (args: {
   req: Request;
@@ -216,11 +217,12 @@ async function dispatch(ctx: {
   }
 
   if (path === "templates" && method === "GET") return listTemplates(query);
-  if (path === "templates" && method === "POST") return saveTemplate(null, body);
+  if (path === "templates" && method === "POST") return saveTemplate(null, body, needFinanceMgr(user));
   {
     const m = match(path, "templates/:id");
-    if (m && method === "PUT") return saveTemplate(m.id, body);
+    if (m && method === "PUT") return saveTemplate(m.id, body, needFinanceMgr(user));
     if (m && method === "DELETE") {
+      needFinanceMgr(user);
       const used = await adminGql<{ service_cases_aggregate: { aggregate: { count: number } } }>(
         `query ($id: uuid!) {
           service_cases_aggregate(where: { task_template_id: { _eq: $id } }) { aggregate { count } }
@@ -242,7 +244,7 @@ async function dispatch(ctx: {
   }
   {
     const m = match(path, "templates/:id/clone");
-    if (m && method === "POST") return cloneTemplate(m.id, body);
+    if (m && method === "POST") return cloneTemplate(m.id, body, needFinanceMgr(user));
   }
 
   if (path === "ai-hard-rules" && method === "GET") {
@@ -323,12 +325,18 @@ async function dispatch(ctx: {
   if (path === "stats/inspector/me") return inspectorSummary(need(user), query);
 
   if (path === "devices" && method === "GET") return listDevices(query);
-  if (path === "devices" && method === "POST") return saveDevice(null, body);
+  if (path === "devices" && method === "POST") {
+    needFinanceMgr(user);
+    return saveDevice(null, body);
+  }
   {
     const h = match(path, "devices/:id/history");
     if (h && method === "GET") return deviceHistory(h.id);
     const m = match(path, "devices/:id");
-    if (m && method === "PUT") return saveDevice(m.id, body);
+    if (m && method === "PUT") {
+      needFinanceMgr(user);
+      return saveDevice(m.id, body);
+    }
   }
 
   if (path === "cases" && method === "GET") return listCases(need(user), query);
@@ -350,31 +358,31 @@ async function dispatch(ctx: {
   if (path === "cases/expenses/pending" && method === "GET") return pendingExpenses(query);
   {
     const m = match(path, "cases/expenses/:id/approve");
-    if (m && method === "POST") return reviewExpense(m.id, true, body, need(user));
+    if (m && method === "POST") return reviewExpense(m.id, true, body, needAdmin(user));
     const r = match(path, "cases/expenses/:id/reject");
-    if (r && method === "POST") return reviewExpense(r.id, false, body, need(user));
+    if (r && method === "POST") return reviewExpense(r.id, false, body, needAdmin(user));
   }
-  if (path === "cases/assign-sites" && method === "POST") return assignSites(need(user), body);
-  if (path === "cases/batch-create-tasks" && method === "POST") return batchCreateTasks(need(user), body);
+  if (path === "cases/assign-sites" && method === "POST") return assignSites(needAdmin(user), body);
+  if (path === "cases/batch-create-tasks" && method === "POST") return batchCreateTasks(needFinanceMgr(user), body);
   {
     const m = match(path, "cases/:id/inspectors");
     if (m && method === "GET") return caseInspectors(m.id);
     const a = match(path, "cases/:id/assign");
-    if (a && method === "POST") return assignCase(need(user), a.id, body);
+    if (a && method === "POST") return assignCase(needFinanceMgr(user), a.id, body);
     const s = match(path, "cases/:id/site");
-    if (s && method === "PUT") return setCaseSite(need(user), s.id, body);
+    if (s && method === "PUT") return setCaseSite(needAdmin(user), s.id, body);
     const t = match(path, "cases/:id/task-type");
-    if (t && method === "PUT") return setCaseTaskType(need(user), t.id, body);
+    if (t && method === "PUT") return setCaseTaskType(needFinanceMgr(user), t.id, body);
     const w = match(path, "cases/:id/work-plan");
-    if (w && method === "PUT") return setWorkPlan(w.id, body);
+    if (w && method === "PUT") return setWorkPlan(needFinanceMgr(user), w.id, body);
     const p = match(path, "cases/:id/profile");
-    if (p && method === "PATCH") return updateCaseProfile(p.id, body);
+    if (p && method === "PATCH") return updateCaseProfile(needFinanceMgr(user), p.id, body);
     const st = match(path, "cases/:id/start");
     if (st && method === "POST") return startMyCase(need(user), st.id);
     const fin = match(path, "cases/:id/finish");
     if (fin && method === "POST") return finishMyCase(need(user), fin.id);
     const wd = match(path, "cases/:id/assignees/:inspectorId/withdraw");
-    if (wd && method === "POST") return withdrawAssignee(wd.id, wd.inspectorId);
+    if (wd && method === "POST") return withdrawAssignee(needFinanceMgr(user), wd.id, wd.inspectorId);
     const cl = match(path, "cases/:id/units/:unitId/claim");
     if (cl && method === "POST") return claimUnit(need(user), cl.id, cl.unitId);
     const ucl = match(path, "cases/:id/units/:unitId/unclaim");
@@ -392,7 +400,7 @@ async function dispatch(ctx: {
     const uex = match(path, "cases/:id/units/:unitId/expense");
     if (uex && method === "POST") return saveExpense(need(user), uex.id, uex.unitId, body);
     const ser = match(path, "cases/:id/units/:unitId/serial");
-    if (ser && method === "POST") return saveSerial(ser.unitId, body);
+    if (ser && method === "POST") return saveSerial(need(user), ser.unitId, body);
     const expenses = match(path, "cases/:id/expenses");
     if (expenses && method === "POST") {
       const workUnitId = body.workUnitId ? String(body.workUnitId) : null;
@@ -401,7 +409,7 @@ async function dispatch(ctx: {
     const workPhoto = match(path, "cases/:id/work-photo");
     if (workPhoto && method === "POST") return uploadPhoto(form, need(user));
     const workRecord = match(path, "cases/:id/work-record");
-    if (workRecord && method === "PUT") return saveWorkRecord(body);
+    if (workRecord && method === "PUT") return saveWorkRecord(need(user), body);
     const c1 = match(path, "cases/:id");
     if (c1 && method === "GET") {
       const row = await loadCaseDetail(c1.id);
@@ -417,32 +425,32 @@ async function dispatch(ctx: {
   {
     const m = match(path, "tasks/:id");
     if (m && method === "GET") return getTask(m.id);
-    if (m && method === "PUT") return updateTask(m.id, body);
+    if (m && method === "PUT") return updateTask(needFinanceMgr(user), m.id, body);
     const st = match(path, "tasks/:id/start");
-    if (st && method === "PUT") return startTask(need(user), st.id);
+    if (st && (method === "PUT" || method === "POST")) return startTask(need(user), st.id);
     const rm = match(path, "tasks/:id/remove");
-    if (rm && method === "PUT") return removeTask(rm.id);
+    if (rm && method === "PUT") return removeTask(needFinanceMgr(user), rm.id);
   }
 
   if (path === "records" && method === "GET") return listRecords(query);
   if (path === "records/case-groups" && method === "GET") return recordCaseGroups(query);
   {
     const m = match(path, "records/by-case/:groupKey");
-    if (m && method === "GET") return recordsByCase(m.groupKey);
+    if (m && method === "GET") return recordsByCase(m.groupKey, query);
     const d = match(path, "records/:id");
     if (d && method === "GET") return getRecord(d.id);
     const dr = match(path, "records/:id/draft");
-    if (dr && method === "PUT") return saveDraft(dr.id, body);
+    if (dr && method === "PUT") return saveDraft(need(user), dr.id, body);
     const sub = match(path, "records/:id/submit");
     if (sub && method === "PUT") return submitRecord(need(user), sub.id, body);
     const ap = match(path, "records/:id/approve");
-    if (ap && method === "PUT") return approveRecord(need(user), ap.id);
+    if (ap && method === "PUT") return approveRecord(needFinanceMgr(user), ap.id);
     const rj = match(path, "records/:id/reject");
-    if (rj && method === "PUT") return rejectRecord(need(user), rj.id, body);
+    if (rj && method === "PUT") return rejectRecord(needFinanceMgr(user), rj.id, body);
     const man = match(path, "records/:id/entries/:entryId/manual-result");
-    if (man && method === "PUT") return setManualResult(man.id, man.entryId, body);
+    if (man && method === "PUT") return setManualResult(need(user), man.id, man.entryId, body);
   }
-  if (path === "ai/analyze" && method === "POST") return runAnalyze(body);
+  if (path === "ai/analyze" && method === "POST") return runAnalyze(need(user), body);
   {
     const m = match(path, "ai/result/:entryId");
     if (m && method === "GET") return aiResult(m.entryId, query.get("recordId"));
@@ -485,6 +493,16 @@ async function dispatch(ctx: {
   }
   if (path === "prices/mappings/recalculate" && method === "POST") {
     needAdmin(user);
+    const ignoreFreeze = body.ignoreFreeze === true || query.get("ignoreFreeze") === "1";
+    if (ignoreFreeze) {
+      const all = await adminGql<{ po_orders: { id: string }[] }>(`query { po_orders { id } }`);
+      return ok(
+        await repriceByPoIds(
+          all.po_orders.map((o) => o.id),
+          { ignoreFreeze: true },
+        ),
+      );
+    }
     return ok(await recalculate());
   }
   if (path === "prices/import" && method === "POST") {
@@ -533,9 +551,9 @@ async function dispatch(ctx: {
     const m = match(path, "review/:id/amount-breakdown");
     if (m && method === "GET") return amountBreakdown(m.id);
     const ap = match(path, "review/:id/approve");
-    if (ap && method === "POST") return reviewApprove(need(user), ap.id, body, true);
+    if (ap && method === "POST") return reviewApprove(needAdmin(user), ap.id, body, true);
     const rj = match(path, "review/:id/reject");
-    if (rj && method === "POST") return reviewApprove(need(user), rj.id, body, false);
+    if (rj && method === "POST") return reviewApprove(needAdmin(user), rj.id, body, false);
   }
 
   if (path === "finance/dashboard" && method === "GET") {
@@ -546,10 +564,10 @@ async function dispatch(ctx: {
   }
 
   if (path === "assessments" && method === "GET") return listAssessments(need(user), query);
-  if (path === "assessments" && method === "POST") return saveAssessment(body);
+  if (path === "assessments" && method === "POST") return saveAssessment(needFinanceMgr(user), body);
   if (path === "assessments/score-rule" && method === "GET") return scoreRule();
   if (path === "assessments/score-rule" && method === "POST") return saveScoreRule(needAdmin(user), body);
-  if (path === "assessments/score" && method === "POST") return saveAssessmentScore(need(user), body);
+  if (path === "assessments/score" && method === "POST") return saveAssessmentScore(needFinanceMgr(user), body);
   if (path === "assessments/clear" && method === "DELETE") {
     needAdmin(user);
     assertFinanceClearAllowed(query.get("confirm"));
@@ -561,30 +579,41 @@ async function dispatch(ctx: {
   }
   if (path === "assessments/event-catalog" && method === "GET") return eventCatalog();
   if (path === "assessments/events" && method === "GET") return listEvents(query);
-  if (path === "assessments/events" && method === "POST") return createEvent(need(user), body);
+  if (path === "assessments/events" && method === "POST") return createEvent(needFinanceMgr(user), body);
   {
     const m = match(path, "assessments/events/:id");
     if (m && method === "DELETE") {
+      needAdmin(user);
       await adminGql(`mutation ($id: uuid!) { delete_assessment_events_by_pk(id: $id) { id } }`, { id: m.id });
       return ok({ id: m.id });
     }
     const rk = match(path, "assessments/:month/rank");
-    if (rk && method === "POST") return rankAssessments(need(user), rk.month, body);
+    if (rk && method === "POST") return rankAssessments(needFinanceMgr(user), rk.month, body);
   }
 
-  if (path === "monthly-settlements" && method === "GET") return listMonthly(query);
+  if (path === "monthly-settlements" && method === "GET") return listMonthly(needFinanceMgr(user), query);
   {
     const exp = match(path, "monthly-settlements/:month/export");
     if (exp && method === "GET") {
-      needFinanceMgr(user);
-      return exportMonthly(exp.month, query.get("template") || "reconcile");
+      // 薪资对账表/发薪表含全员薪酬，仅超管可导出
+      const admin = needAdmin(user);
+      return exportMonthly(admin, exp.month, query.get("template") || "reconcile");
     }
     const m = match(path, "monthly-settlements/:month/lock");
-    if (m && method === "POST") return lockMonth(m.month, true);
+    if (m && method === "POST") {
+      needAdmin(user);
+      return lockMonth(m.month, true);
+    }
     const u = match(path, "monthly-settlements/:month/unlock");
-    if (u && method === "POST") return lockMonth(u.month, false);
+    if (u && method === "POST") {
+      needAdmin(user);
+      return lockMonth(u.month, false);
+    }
     const c = match(path, "monthly-settlements/:month/correct");
-    if (c && method === "POST") return correctMonthly(c.month, body);
+    if (c && method === "POST") {
+      const admin = needAdmin(user);
+      return correctMonthly(admin, c.month, body);
+    }
   }
 
   if (path === "my/income" && method === "GET") return myIncome(need(user), query);
@@ -1116,12 +1145,14 @@ async function hardRuleCatalog() {
 function resolveCustomPromptText(body: Record<string, unknown>, fallbackName: string) {
   const pass = String(body.passCriteria || "").trim();
   const fail = String(body.failCriteria || "").trim();
+  const notes = String(body.judgeNotes || "").trim();
   const override = String(body.promptText || "").trim();
-  if (pass || fail) {
+  if (pass || fail || notes) {
     return composeHardRulePrompt({
       name: String(body.name || fallbackName || "").trim(),
       passCriteria: pass,
       failCriteria: fail,
+      judgeNotes: notes,
       enforceMode: String(body.enforceMode || "strict"),
     });
   }
@@ -1305,15 +1336,26 @@ async function dashboard(user: AppUser) {
     sites_aggregate: { aggregate: { count: number } };
     devices_aggregate: { aggregate: { count: number } };
     inspection_tasks: { status: string }[];
-    inspection_records: { status: string; id: string; submitted_at?: string; device_type: string; task?: { task_name: string } }[];
+    inspection_records: {
+      status: string;
+      id: string;
+      submitted_at?: string;
+      device_type: string;
+      entries?: unknown;
+      task?: {
+        task_name?: string;
+        ai_enabled?: boolean | null;
+        template_snapshot?: unknown;
+      };
+    }[];
     sites: Array<{ id: string; name: string; city: string; province: string; latitude: number; longitude: number; devices_aggregate: { aggregate: { count: number } } }>;
   }>(`query ($tw: inspection_tasks_bool_exp) {
     sites_aggregate(where: { deleted_at: { _is_null: true } }) { aggregate { count } }
     devices_aggregate { aggregate { count } }
     inspection_tasks(where: $tw) { status }
-    inspection_records(where: { status: { _in: ["submitted","approved"] } }, order_by: { submitted_at: desc }, limit: 8) {
-      id status submitted_at device_type
-      task { task_name }
+    inspection_records(where: { status: { _in: ["submitted","approved"] } }, order_by: { submitted_at: desc }, limit: 80) {
+      id status submitted_at device_type entries
+      task { task_name ai_enabled template_snapshot }
     }
     sites(where: { deleted_at: { _is_null: true } }, limit: 50) {
       id name city province latitude longitude
@@ -1330,6 +1372,24 @@ async function dashboard(user: AppUser) {
     if (t.status === "rejected") tasks.rejected += 1;
   }
   const recs = d.inspection_records;
+  const auditPending = recs.filter((r) =>
+    recordNeedsHumanAudit({
+      status: r.status,
+      taskAiEnabled: r.task?.ai_enabled,
+      templateSnapshot: (r.task?.template_snapshot || []) as Array<{
+        id?: string;
+        aiEnabled?: boolean;
+        entryKind?: string;
+        checkType?: string;
+      }>,
+      entries: (r.entries || []) as Array<{
+        templateEntryId?: string;
+        manualResult?: string | null;
+        finalResult?: string | null;
+        aiResult?: { status?: string } | null;
+      }>,
+    }),
+  );
   return ok({
     sites: d.sites_aggregate.aggregate.count,
     devices: d.devices_aggregate.aggregate.count,
@@ -1339,15 +1399,13 @@ async function dashboard(user: AppUser) {
       submitted: recs.filter((r) => r.status === "submitted").length,
       approved: recs.filter((r) => r.status === "approved").length,
     },
-    pendingAudit: recs.filter((r) => r.status === "submitted").length,
-    recentPending: recs
-      .filter((r) => r.status === "submitted")
-      .map((r) => ({
-        id: r.id,
-        taskName: r.task?.task_name,
-        deviceType: r.device_type,
-        submittedAt: r.submitted_at,
-      })),
+    pendingAudit: auditPending.length,
+    recentPending: auditPending.slice(0, 8).map((r) => ({
+      id: r.id,
+      taskName: r.task?.task_name,
+      deviceType: r.device_type,
+      submittedAt: r.submitted_at,
+    })),
     trend: [],
     siteMarkers: d.sites.map((s) => ({
       id: s.id,
@@ -1941,6 +1999,40 @@ async function assignCase(user: AppUser, caseId: string, body: Record<string, un
   const row = await loadCase(caseId);
   if (!row) throw new HttpError(404, "案例不存在");
   if (!row.site_id) throw new HttpError(400, "请先将案例分配到网格，再派给本网格工程师");
+  if (user.role === "site_manager") {
+    // 越权防护：网格长只能给本人管理（正/副）的网格派单
+    const manages = await adminGql<{
+      sites: Array<{ id: string }>;
+      site_members: Array<{ id: string }>;
+    }>(
+      `query ($sid: uuid!, $uid: uuid!) {
+        sites(where: { id: { _eq: $sid }, manager_id: { _eq: $uid } }, limit: 1) { id }
+        site_members(
+          where: { site_id: { _eq: $sid }, user_id: { _eq: $uid }, member_role: { _eq: "deputy_manager" }, status: { _eq: "active" } }
+          limit: 1
+        ) { id }
+      }`,
+      { sid: row.site_id, uid: user.id },
+    );
+    if (!manages.sites.length && !manages.site_members.length) {
+      throw new HttpError(403, "只能给本人管理的网格派单");
+    }
+    // 越权防护：被指派的工程师必须在本网格编制内（含正网格长兼任工程师场景）
+    const memberRows = await adminGql<{ site_members: Array<{ user_id: string }> }>(
+      `query ($sid: uuid!, $uids: [uuid!]!) {
+        site_members(where: { site_id: { _eq: $sid }, user_id: { _in: $uids }, status: { _eq: "active" } }) { user_id }
+      }`,
+      { sid: row.site_id, uids: ids },
+    );
+    const memberSet = new Set(memberRows.site_members.map((m) => m.user_id));
+    const siteRow = await adminGql<{ sites_by_pk: { manager_id: string | null } | null }>(
+      `query ($id: uuid!) { sites_by_pk(id: $id) { manager_id } }`,
+      { id: row.site_id },
+    );
+    if (siteRow.sites_by_pk?.manager_id) memberSet.add(siteRow.sites_by_pk.manager_id);
+    const outsiders = ids.filter((id) => !memberSet.has(id));
+    if (outsiders.length) throw new HttpError(400, "所选工程师不在本网格编制内");
+  }
   if (!row.task_template_id && !row.task_type) throw new HttpError(400, "请先设置案例服务类型");
   const assignMode = (body.assignMode as string) || (row.assign_mode as string) || "single";
   const plannedUnits = Math.max(1, Number(body.plannedUnits ?? row.planned_units ?? 1));
@@ -2115,7 +2207,7 @@ async function setCaseTaskType(user: AppUser, caseId: string, body: Record<strin
   return ok(mapCase((await loadCase(caseId))!));
 }
 
-async function setWorkPlan(caseId: string, body: Record<string, unknown>) {
+async function setWorkPlan(user: AppUser, caseId: string, body: Record<string, unknown>) {
   const planned =
     body.plannedUnits != null ? Math.max(1, Number(body.plannedUnits) || 1) : undefined;
   await adminGql(
@@ -2136,7 +2228,7 @@ async function setWorkPlan(caseId: string, body: Record<string, unknown>) {
   return ok(mapCase((await loadCase(caseId))!));
 }
 
-async function updateCaseProfile(caseId: string, body: Record<string, unknown>) {
+async function updateCaseProfile(user: AppUser, caseId: string, body: Record<string, unknown>) {
   await adminGql(
     `mutation ($id: uuid!, $set: service_cases_set_input!) {
       update_service_cases_by_pk(pk_columns: { id: $id }, _set: $set) { id }
@@ -2156,7 +2248,7 @@ async function updateCaseProfile(caseId: string, body: Record<string, unknown>) 
   return ok(mapCase((await loadCase(caseId))!));
 }
 
-async function withdrawAssignee(caseId: string, inspectorId: string) {
+async function withdrawAssignee(user: AppUser, caseId: string, inspectorId: string) {
   await adminGql(
     `mutation ($cid: uuid!, $uid: uuid!) {
       update_case_assignments(
@@ -2188,10 +2280,12 @@ async function startMyCase(user: AppUser, caseId: string) {
 async function finishMyCase(user: AppUser, caseId: string) {
   await adminGql(
     `mutation ($id: uuid!, $now: timestamptz!) {
-      update_service_cases_by_pk(pk_columns: { id: $id }, _set: { status: "finished", finish_time: $now }) { id }
+      update_service_cases_by_pk(pk_columns: { id: $id }, _set: { status: "settle_review", finish_time: $now }) { id }
     }`,
     { id: caseId, now: new Date().toISOString() },
   );
+  // 完工后刷新绩效台账，供结算审核/我的收入使用
+  await recalculateLedgers([caseId]).catch(() => null);
   return myCase(user, caseId);
 }
 
@@ -2411,11 +2505,12 @@ async function syncCaseUnitProgress(caseId: string) {
       `mutation ($id: uuid!, $n: Int!, $now: timestamptz!) {
         update_service_cases_by_pk(
           pk_columns: { id: $id }
-          _set: { status: "finished", finish_time: $now, completed_units: $n }
+          _set: { status: "settle_review", finish_time: $now, completed_units: $n }
         ) { id }
       }`,
       { id: caseId, n: completed, now: new Date().toISOString() },
     );
+    await recalculateLedgers([caseId]).catch(() => null);
   } else {
     await adminGql(
       `mutation ($id: uuid!, $n: Int!) {
@@ -2463,7 +2558,7 @@ async function completeUnit(user: AppUser, caseId: string, unitId: string) {
   return myCase(user, caseId);
 }
 
-async function saveSerial(unitId: string, body: Record<string, unknown>) {
+async function saveSerial(user: AppUser, unitId: string, body: Record<string, unknown>) {
   const deviceSerial = String(body.deviceSerial || body.serial || "")
     .trim()
     .replace(/\s+/g, "")
@@ -2520,7 +2615,7 @@ async function ocrCaseSerial(body: Record<string, unknown>) {
 }
 
 /** 旧版作业记录接口占位（行程费用已迁到 my-expense） */
-async function saveWorkRecord(body: Record<string, unknown>) {
+async function saveWorkRecord(user: AppUser, body: Record<string, unknown>) {
   return ok({
     workload: body.workload || {},
     mileage: String(body.mileage ?? ""),
@@ -2706,7 +2801,7 @@ async function pendingExpenses(query: URLSearchParams) {
 async function reviewExpense(id: string, pass: boolean, body: Record<string, unknown>, user: AppUser) {
   await adminGql(
     `mutation ($id: uuid!, $set: case_expense_claims_set_input!) {
-      update_case_expense_claims_by_pk(pk_columns: { id: $id }, _set: $set) { id }
+      update_case_expense_claims_by_pk(pk_columns: { id: $id }, _set: $set) { id month }
     }`,
     {
       id,
@@ -2716,9 +2811,18 @@ async function reviewExpense(id: string, pass: boolean, body: Record<string, unk
         review_at: new Date().toISOString(),
         review_note: body.note || null,
         amount: pass && body.approvedAmount != null ? Number(body.approvedAmount) : undefined,
+        ...(pass ? { month: new Date().toISOString().slice(0, 7) } : {}),
       },
     },
   );
+  if (pass) {
+    const claim = await adminGql<{ case_expense_claims_by_pk: { month: string | null } | null }>(
+      `query ($id: uuid!) { case_expense_claims_by_pk(id: $id) { month } }`,
+      { id },
+    );
+    const month = claim.case_expense_claims_by_pk?.month || new Date().toISOString().slice(0, 7);
+    await syncMonthlySettlements(month).catch(() => null);
+  }
   return ok({ success: true });
 }
 
@@ -2968,7 +3072,7 @@ async function createTask(user: AppUser, body: Record<string, unknown>) {
   return ok(mapTask(d.insert_inspection_tasks_one));
 }
 
-async function updateTask(id: string, body: Record<string, unknown>) {
+async function updateTask(user: AppUser, id: string, body: Record<string, unknown>) {
   await adminGql(
     `mutation ($id: uuid!, $set: inspection_tasks_set_input!) {
       update_inspection_tasks_by_pk(pk_columns: { id: $id }, _set: $set) { id }
@@ -2978,7 +3082,7 @@ async function updateTask(id: string, body: Record<string, unknown>) {
   return getTask(id);
 }
 
-async function removeTask(id: string) {
+async function removeTask(user: AppUser, id: string) {
   await adminGql(`mutation ($id: uuid!) { delete_inspection_tasks_by_pk(id: $id) { id } }`, { id });
   return ok({ success: true });
 }
@@ -3024,7 +3128,86 @@ async function getRecord(id: string) {
   return ok(mapRecord(d.inspection_records_by_pk));
 }
 
-async function saveDraft(id: string, body: Record<string, unknown>) {
+/** 提交后 / AI 完成后：全合格自动通过；需人审则保持 submitted */
+async function routeRecordAudit(recordId: string): Promise<"auto_approve" | "need_audit" | "wait_ai" | "skip"> {
+  const d = await adminGql<{
+    inspection_records_by_pk: {
+      id: string;
+      status: string;
+      entries: unknown;
+      audit_trail: unknown;
+      task_id: string | null;
+      task?: {
+        id?: string;
+        ai_enabled?: boolean | null;
+        template_snapshot?: unknown;
+      } | null;
+    } | null;
+  }>(
+    `query ($id: uuid!) {
+      inspection_records_by_pk(id: $id) {
+        id status entries audit_trail task_id
+        task { id ai_enabled template_snapshot }
+      }
+    }`,
+    { id: recordId },
+  );
+  const row = d.inspection_records_by_pk;
+  if (!row) return "skip";
+  if (row.status !== "submitted") return "skip";
+
+  const decision = decideRecordAuditRoute({
+    taskAiEnabled: row.task?.ai_enabled,
+    templateSnapshot: (row.task?.template_snapshot || []) as Array<{
+      id?: string;
+      aiEnabled?: boolean;
+      entryKind?: string;
+      checkType?: string;
+    }>,
+    entries: (row.entries || []) as Array<{
+      templateEntryId?: string;
+      manualResult?: string | null;
+      finalResult?: string | null;
+      aiResult?: { status?: string } | null;
+    }>,
+  });
+
+  if (decision !== "auto_approve") return decision;
+
+  const trail = Array.isArray(row.audit_trail) ? [...(row.audit_trail as unknown[])] : [];
+  trail.push({
+    action: "auto_approved",
+    at: new Date().toISOString(),
+    by: null,
+    byName: "系统",
+    reason: "AI 全部合格自动通过",
+  });
+  const now = new Date().toISOString();
+  await adminGql(
+    `mutation ($id: uuid!, $set: inspection_records_set_input!) {
+      update_inspection_records_by_pk(pk_columns: { id: $id }, _set: $set) { id }
+    }`,
+    {
+      id: recordId,
+      set: {
+        status: "approved",
+        approved_at: now,
+        audit_trail: trail,
+      },
+    },
+  );
+  if (row.task_id) {
+    await adminGql(
+      `mutation ($id: uuid!, $now: timestamptz!) {
+        update_inspection_tasks_by_pk(pk_columns: { id: $id }, _set: { status: "approved", completed_at: $now }) { id }
+      }`,
+      { id: row.task_id, now },
+    ).catch(() => null);
+  }
+  return "auto_approve";
+}
+
+async function saveDraft(user: AppUser, id: string, body: Record<string, unknown>) {
   await adminGql(
     `mutation ($id: uuid!, $set: inspection_records_set_input!) {
       update_inspection_records_by_pk(pk_columns: { id: $id }, _set: $set) { id }
@@ -3062,6 +3245,7 @@ async function submitRecord(user: AppUser, id: string, body: Record<string, unkn
       { id: rec.inspection_records_by_pk.task_id, now: new Date().toISOString() },
     );
   }
+  await routeRecordAudit(id).catch(() => null);
   return getRecord(id);
 }
 
@@ -3104,8 +3288,11 @@ async function recordCaseGroups(query: URLSearchParams) {
       status?: string;
       submitted_at?: string | null;
       created_at?: string;
+      entries?: unknown;
       task?: {
         id?: string;
+        ai_enabled?: boolean | null;
+        template_snapshot?: unknown;
         service_case?: {
           id?: string;
           gsp_case_no?: string | null;
@@ -3123,9 +3310,9 @@ async function recordCaseGroups(query: URLSearchParams) {
   }>(
     `query ($where: inspection_records_bool_exp!) {
       inspection_records(where: $where, order_by: { created_at: desc }, limit: 500) {
-        id status submitted_at created_at
+        id status submitted_at created_at entries
         task {
-          id
+          id ai_enabled template_snapshot
           site { id name }
           service_case {
             id gsp_case_no project_name status planned_units completed_units unit_label assign_mode site_id
@@ -3180,7 +3367,25 @@ async function recordCaseGroups(query: URLSearchParams) {
     }
     row.recordCount += 1;
     const st = String(rec.status || "");
-    if (st === "submitted") row.pendingCount += 1;
+    const needsAudit =
+      st === "submitted" &&
+      recordNeedsHumanAudit({
+        status: st,
+        taskAiEnabled: rec.task?.ai_enabled,
+        templateSnapshot: (rec.task?.template_snapshot || []) as Array<{
+          id?: string;
+          aiEnabled?: boolean;
+          entryKind?: string;
+          checkType?: string;
+        }>,
+        entries: (rec.entries || []) as Array<{
+          templateEntryId?: string;
+          manualResult?: string | null;
+          finalResult?: string | null;
+          aiResult?: { status?: string } | null;
+        }>,
+      });
+    if (needsAudit) row.pendingCount += 1;
     if (st === "approved") row.approvedCount += 1;
     if (st === "rejected") row.rejectedCount += 1;
     const ts = rec.submitted_at || rec.created_at || null;
@@ -3201,27 +3406,58 @@ async function recordCaseGroups(query: URLSearchParams) {
   return ok({ list: list.slice(offset, offset + limit), total, page, limit });
 }
 
-async function recordsByCase(groupKey: string) {
+async function recordsByCase(groupKey: string, query: URLSearchParams = new URLSearchParams()) {
   const raw = String(groupKey || "").trim();
   const kind = raw.startsWith("task-") ? "task" : "case";
   const id = raw.startsWith("case-") || raw.startsWith("task-") ? raw.slice(5) : raw;
   if (!id || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) {
     throw new HttpError(400, "无效的案例标识");
   }
-  const where =
+  const where: Record<string, unknown> =
     kind === "task"
       ? { task_id: { _eq: id } }
       : { task: { service_case_id: { _eq: id } } };
+  if (query.get("status")) where.status = { _eq: query.get("status") };
+  if (query.get("scope") === "audit" && !query.get("status")) {
+    where.status = { _eq: "submitted" };
+  }
   const d = await adminGql<{ inspection_records: Record<string, unknown>[] }>(
     `query ($where: inspection_records_bool_exp!) {
       inspection_records(where: $where, order_by: { created_at: desc }) { ${RECORD_FIELDS} }
     }`,
     { where },
   );
-  return ok({ list: d.inspection_records.map(mapRecord), total: d.inspection_records.length, groupKey: raw });
+  let list = d.inspection_records.map(mapRecord) as Array<Record<string, unknown>>;
+  if (query.get("scope") === "audit") {
+    list = list.filter((row) => {
+      const task = row.task as
+        | {
+            aiEnabled?: boolean;
+            templateSnapshot?: unknown;
+          }
+        | undefined;
+      return recordNeedsHumanAudit({
+        status: String(row.status || ""),
+        taskAiEnabled: task?.aiEnabled,
+        templateSnapshot: (task?.templateSnapshot || []) as Array<{
+          id?: string;
+          aiEnabled?: boolean;
+          entryKind?: string;
+          checkType?: string;
+        }>,
+        entries: (row.entries || []) as Array<{
+          templateEntryId?: string;
+          manualResult?: string | null;
+          finalResult?: string | null;
+          aiResult?: { status?: string } | null;
+        }>,
+      });
+    });
+  }
+  return ok({ list, total: list.length, groupKey: raw });
 }
 
-async function runAnalyze(body: Record<string, unknown>) {
+async function runAnalyze(user: AppUser, body: Record<string, unknown>) {
   const recordId = body.recordId as string | undefined;
   const entryId = body.templateEntryId as string | undefined;
   let title = String(body.title || "").trim();
@@ -3276,6 +3512,7 @@ async function runAnalyze(body: Record<string, unknown>) {
       }`,
       { id: recordId, entries: next },
     );
+    await routeRecordAudit(recordId).catch(() => null);
   }
   return ok({ queued: false, completed: true, ...result, aiResult: result });
 }
@@ -3346,7 +3583,7 @@ async function loadHardRuleReviewStats(rules: Record<string, unknown>[]) {
   return accumulateHardRuleReviewStats(d.inspection_records || [], rules);
 }
 
-async function setManualResult(recordId: string, entryId: string, body: Record<string, unknown>) {
+async function setManualResult(user: AppUser, recordId: string, entryId: string, body: Record<string, unknown>) {
   const manualStatus = body.manualResult === "fail" ? "fail" : body.manualResult === "pass" ? "pass" : "";
   if (!manualStatus) throw new HttpError(400, "请选择合格或不合格");
   const rec = await adminGql<{
@@ -3404,6 +3641,7 @@ async function setManualResult(recordId: string, entryId: string, body: Record<s
     }`,
     { id: recordId, entries: next },
   );
+  await routeRecordAudit(recordId).catch(() => null);
   return getRecord(recordId);
 }
 
@@ -3413,14 +3651,14 @@ async function uploadPhoto(form: FormData | null, user: AppUser) {
   const contentType = file.type || "image/jpeg";
   const buf = Buffer.from(await file.arrayBuffer());
   let lastErr: unknown;
-  for (let attempt = 0; attempt < 2; attempt += 1) {
+  for (let attempt = 0; attempt < 3; attempt += 1) {
     const token = createUploadToken(file.name || "photo.jpg", user.id, { contentType });
     try {
       await uploadBufferWithToken(token, buf);
       return ok({ url: token.publicUrl, original: true });
     } catch (e) {
       lastErr = e;
-      if (attempt === 0) await new Promise((r) => setTimeout(r, 700));
+      if (attempt < 2) await new Promise((r) => setTimeout(r, 800 * (attempt + 1)));
     }
   }
   throw new HttpError(
@@ -3554,13 +3792,59 @@ async function savePrice(_user: AppUser, id: string | null, body: Record<string,
 }
 
 async function pendingReviews(query: URLSearchParams) {
-  const where: Record<string, unknown> = { status: { _eq: query.get("reviewStatus") === "all" ? undefined : query.get("reviewStatus") || "settle_review" } };
-  if (!query.get("reviewStatus") || query.get("reviewStatus") === "pending") {
-    where.status = { _in: ["finished", "settle_review"] };
+  const reviewStatus = query.get("reviewStatus") || "pending";
+  const keyword = (query.get("keyword") || "").trim();
+  const siteId = (query.get("siteId") || "").trim();
+  const month = (query.get("month") || "").trim(); // YYYY-MM，按完工时间过滤
+  const and: Record<string, unknown>[] = [];
+
+  if (reviewStatus === "pending") {
+    // 仍待结算的案例：含从未审过、以及驳回后需再审（status 仍为 settle_review/finished）
+    and.push({ status: { _in: ["finished", "settle_review"] } });
+    and.push({
+      _or: [
+        { case_performance: { review_status: { _in: ["pending", "rejected"] } } },
+        { _not: { case_performance: {} } },
+      ],
+    });
+  } else if (reviewStatus === "approved") {
+    and.push({ case_performance: { review_status: { _eq: "approved" } } });
+  } else if (reviewStatus === "rejected") {
+    and.push({ case_performance: { review_status: { _eq: "rejected" } } });
+  } else {
+    and.push({
+      _or: [
+        { status: { _in: ["finished", "settle_review", "settled"] } },
+        { case_performance: {} },
+      ],
+    });
   }
+
+  if (siteId) and.push({ site_id: { _eq: siteId } });
+  if (month && /^\d{4}-\d{2}$/.test(month)) {
+    const [yy, mm] = month.split("-").map(Number);
+    const from = `${month}-01T00:00:00+08:00`;
+    const to =
+      mm === 12
+        ? `${yy + 1}-01-01T00:00:00+08:00`
+        : `${yy}-${String(mm + 1).padStart(2, "0")}-01T00:00:00+08:00`;
+    and.push({ finish_time: { _gte: from, _lt: to } });
+  }
+  if (keyword) {
+    and.push({
+      _or: [
+        { gsp_case_no: { _ilike: `%${keyword}%` } },
+        { project_name: { _ilike: `%${keyword}%` } },
+        { inspector: { real_name: { _ilike: `%${keyword}%` } } },
+      ],
+    });
+  }
+
   const d = await adminGql<{ service_cases: Record<string, unknown>[] }>(
-    `query ($where: service_cases_bool_exp!) { service_cases(where: $where, order_by: { updated_at: desc }) { ${CASE_FIELDS} } }`,
-    { where },
+    `query ($where: service_cases_bool_exp!) {
+      service_cases(where: $where, order_by: { updated_at: desc }, limit: 200) { ${CASE_FIELDS} }
+    }`,
+    { where: and.length ? { _and: and } : {} },
   );
   return ok(
     d.service_cases.map((c) => ({
@@ -3657,13 +3941,70 @@ async function amountBreakdown(caseId: string) {
 }
 
 async function reviewApprove(user: AppUser, caseId: string, body: Record<string, unknown>, pass: boolean) {
+  const comment = String(body.comment || body.reason || "").trim() || null;
+  const row = await loadCase(caseId);
+  if (!row) throw new HttpError(404, "案例不存在");
+
+  // 先按最新 PO 计价刷新台账，再写入审核结论与工程师
+  await recalculateLedgers([caseId]).catch(() => null);
+
+  const ledger = await adminGql<{
+    case_performances: Array<{ id: string }>;
+  }>(
+    `query ($id: uuid!) {
+      case_performances(where: { service_case_id: { _eq: $id } }, limit: 1) { id }
+    }`,
+    { id: caseId },
+  );
+  const ledgerId = ledger.case_performances[0]?.id;
+  const reviewSet = {
+    review_status: pass ? "approved" : "rejected",
+    review_comment: comment,
+    inspector_id: (row.inspector_id as string) || null,
+  };
+  if (ledgerId) {
+    await adminGql(
+      `mutation ($id: uuid!, $set: case_performances_set_input!) {
+        update_case_performances_by_pk(pk_columns: { id: $id }, _set: $set) { id }
+      }`,
+      { id: ledgerId, set: reviewSet },
+    );
+  } else {
+    await adminGql(
+      `mutation ($obj: case_performances_insert_input!) {
+        insert_case_performances_one(object: $obj) { id }
+      }`,
+      {
+        obj: {
+          service_case_id: caseId,
+          gsp_case_no: row.gsp_case_no,
+          case_revenue: "0.00",
+          perf_base: "0.00",
+          perf_final: "0.00",
+          deduction: "0.00",
+          month: new Date().toISOString().slice(0, 7),
+          ...reviewSet,
+        },
+      },
+    );
+  }
+
   await adminGql(
     `mutation ($id: uuid!, $st: String!) {
       update_service_cases_by_pk(pk_columns: { id: $id }, _set: { status: $st }) { id }
     }`,
-    { id: caseId, st: pass ? "settled" : "working" },
+    { id: caseId, st: pass ? "settled" : "settle_review" },
   );
-  return ok({ success: true, comment: body.comment || body.reason });
+  const month =
+    (await adminGql<{ case_performances: Array<{ month: string | null }> }>(
+      `query ($id: uuid!) {
+        case_performances(where: { service_case_id: { _eq: $id } }, limit: 1) { month }
+      }`,
+      { id: caseId },
+    ).then((d) => d.case_performances[0]?.month)) || new Date().toISOString().slice(0, 7);
+  // 通过/驳回都重算：驳回后应从月结计件中剔除
+  await syncMonthlySettlements(month).catch(() => null);
+  return ok({ success: true, comment: comment || undefined, reviewStatus: pass ? "approved" : "rejected" });
 }
 
 async function listAssessments(user: AppUser, query: URLSearchParams) {
@@ -3881,10 +4222,7 @@ async function listAssessments(user: AppUser, query: URLSearchParams) {
     const a = byAssessment.get(person.userId);
     const detail = a?.score_detail as { items?: unknown[]; total?: number } | null | undefined;
     const scored = Boolean(detail && Array.isArray(detail.items) && detail.items.length);
-    const eventPenalty =
-      a?.event_penalty != null
-        ? Number(a.event_penalty)
-        : eventPenaltyByUser.get(person.userId) || 0;
+    const eventPenalty = eventPenaltyByUser.get(person.userId) || 0;
     const siteNames = person.sites.map((s) => s.name).filter(Boolean);
     return {
       id: a?.id ? String(a.id) : undefined,
@@ -3921,24 +4259,73 @@ async function listAssessments(user: AppUser, query: URLSearchParams) {
   return ok(list);
 }
 
-async function saveAssessment(body: Record<string, unknown>) {
-  const d = await adminGql<{ insert_assessments_one: { id: string } }>(
+async function saveAssessment(user: AppUser, body: Record<string, unknown>) {
+  const userId = String(body.userId || "");
+  const month = String(body.month || "");
+  if (!userId || !month) throw new HttpError(400, "请选择人员和月份");
+  if (user.role === "site_manager" && userId === user.id) {
+    throw new HttpError(403, "不能修改本人考核补助，请由管理员录入");
+  }
+
+  const target = await adminGql<{ users_by_pk: { id: string; role: string; roles: string[] | null } | null }>(
+    `query ($id: uuid!) { users_by_pk(id: $id) { id role roles } }`,
+    { id: userId },
+  );
+  if (!target.users_by_pk) throw new HttpError(404, "考核人员不存在");
+  const roles = target.users_by_pk.roles || [];
+  const isManager = roles.includes("site_manager") || target.users_by_pk.role === "site_manager";
+
+  const patch: Record<string, unknown> = {
+    user_role: body.role || (isManager ? "site_manager" : "inspector"),
+    rank_group: body.rankGroup || (isManager ? "station_manager" : "inspector"),
+  };
+  // UI 补助保存字段
+  if (body.rewardAmount != null || body.bonus != null) {
+    patch.reward_amount = Number(body.rewardAmount ?? body.bonus ?? 0);
+  }
+  if (body.toolSubsidy != null) patch.tool_subsidy = Number(body.toolSubsidy || 0);
+  if (body.otherSubsidy != null || body.subsidy != null) {
+    patch.other_subsidy = Number(body.otherSubsidy ?? body.subsidy ?? 0);
+  }
+  if (body.subsidyRemark != null || body.remark != null) {
+    patch.subsidy_remark = body.subsidyRemark ?? body.remark ?? null;
+  }
+  if (body.score != null) {
+    patch.total_score = Number(body.score);
+    patch.internal_score = Number(body.score);
+  }
+  if (body.penalty != null) patch.event_penalty = Number(body.penalty);
+
+  const existing = await adminGql<{ assessments: { id: string }[] }>(
+    `query ($m: String!, $uid: uuid!) {
+      assessments(where: { month: { _eq: $m }, user_id: { _eq: $uid } }, limit: 1) { id }
+    }`,
+    { m: month, uid: userId },
+  );
+
+  if (existing.assessments[0]) {
+    await adminGql(
+      `mutation ($id: uuid!, $set: assessments_set_input!) {
+        update_assessments_by_pk(pk_columns: { id: $id }, _set: $set) { id }
+      }`,
+      { id: existing.assessments[0].id, set: patch },
+    );
+    await syncMonthlySettlements(month).catch(() => null);
+    return ok({ id: existing.assessments[0].id, month, userId, ...patch });
+  }
+
+  const ins = await adminGql<{ insert_assessments_one: { id: string } }>(
     `mutation ($obj: assessments_insert_input!) { insert_assessments_one(object: $obj) { id } }`,
     {
       obj: {
-        user_id: body.userId,
-        month: body.month,
-        user_role: body.role || "inspector",
-        rank_group: body.rankGroup || "inspector",
-        total_score: body.score,
-        reward_amount: body.bonus,
-        event_penalty: body.penalty,
-        other_subsidy: body.subsidy,
-        subsidy_remark: body.remark,
+        user_id: userId,
+        month,
+        ...patch,
       },
     },
   );
-  return ok({ id: d.insert_assessments_one.id, ...body });
+  await syncMonthlySettlements(month).catch(() => null);
+  return ok({ id: ins.insert_assessments_one.id, month, userId, ...patch });
 }
 
 async function scoreRule() {
@@ -4098,27 +4485,524 @@ async function createEvent(user: AppUser, body: Record<string, unknown>) {
       },
     },
   );
+  const month = String(body.month || "");
+  if (month) await syncMonthlySettlements(month).catch(() => null);
   return ok({ id: d.insert_assessment_events_one.id });
 }
 
-async function rankAssessments(user: AppUser, month: string, body: Record<string, unknown>) {
-  void body;
-  return listAssessments(user, new URLSearchParams({ month }));
+type ScoredAssessmentRow = {
+  userId: string;
+  realName: string;
+  userRole: string;
+  siteIds: string[];
+  assessmentId?: string;
+  totalScore: number;
+  scored: boolean;
+};
+
+function assessmentScored(detail: unknown): boolean {
+  const d = detail as { items?: unknown[] } | null | undefined;
+  return Boolean(d && Array.isArray(d.items) && d.items.length);
 }
 
-async function listMonthly(query: URLSearchParams) {
-  const month = query.get("month") || new Date().toISOString().slice(0, 7);
-  const d = await adminGql<{ monthly_settlements: Record<string, unknown>[] }>(
+async function loadScoredAssessmentRows(
+  month: string,
+  opts: { siteId?: string; pool: "site_inspectors" | "company_inspectors" | "company_managers" },
+): Promise<ScoredAssessmentRow[]> {
+  const siteId = opts.siteId?.trim();
+  const roster = new Map<string, ScoredAssessmentRow>();
+
+  const push = (row: Omit<ScoredAssessmentRow, "totalScore" | "scored" | "assessmentId">) => {
+    const existing = roster.get(row.userId);
+    if (!existing) {
+      roster.set(row.userId, { ...row, totalScore: 0, scored: false });
+      return;
+    }
+    for (const sid of row.siteIds) {
+      if (sid && !existing.siteIds.includes(sid)) existing.siteIds.push(sid);
+    }
+    if (row.userRole === "dual" || existing.userRole === "dual") {
+      existing.userRole = "dual";
+    } else if (row.userRole === "site_manager") {
+      existing.userRole = "site_manager";
+    }
+  };
+
+  if (opts.pool === "site_inspectors" || opts.pool === "company_inspectors") {
+    type RankMemberRow = {
+      user_id: string;
+      site_id: string;
+      site: { id: string; name: string } | null;
+      user: {
+        id: string;
+        username: string;
+        real_name: string;
+        role: string;
+        roles: string[] | null;
+        status: string;
+      } | null;
+    };
+    const d = await adminGql<{ site_members: RankMemberRow[] }>(
+      `query ($where: site_members_bool_exp!) {
+        site_members(where: $where, order_by: [{ site: { name: asc } }, { joined_at: asc }]) {
+          user_id site_id
+          site { id name }
+          user { id username real_name role roles status }
+        }
+      }`,
+      {
+        where: {
+          status: { _eq: "active" },
+          member_role: { _eq: "inspector" },
+          ...(siteId ? { site_id: { _eq: siteId } } : {}),
+          user: { status: { _eq: "active" } },
+        },
+      },
+    );
+    for (const m of d.site_members) {
+      if (!m.user) continue;
+      const roles = m.user.roles || [];
+      const isMgr = roles.includes("site_manager") || m.user.role === "site_manager";
+      push({
+        userId: m.user_id,
+        realName: m.user.real_name,
+        userRole: isMgr ? "dual" : "inspector",
+        siteIds: m.site_id ? [m.site_id] : [],
+      });
+    }
+  }
+
+  if (opts.pool === "company_managers") {
+    const d = await adminGql<{
+      sites: Array<{
+        id: string;
+        manager: {
+          id: string;
+          real_name: string;
+          role: string;
+          roles: string[] | null;
+          status: string;
+        } | null;
+      }>;
+    }>(
+      `query {
+        sites(
+          where: { deleted_at: { _is_null: true }, status: { _eq: "active" }, manager_id: { _is_null: false } }
+          order_by: { name: asc }
+        ) {
+          id
+          manager { id real_name role roles status }
+        }
+      }`,
+    );
+    for (const s of d.sites) {
+      const mgr = s.manager;
+      if (!mgr || mgr.status !== "active") continue;
+      const roles = mgr.roles || [];
+      const isDual = roles.includes("inspector") || mgr.role === "inspector";
+      push({
+        userId: mgr.id,
+        realName: mgr.real_name,
+        userRole: isDual ? "dual" : "site_manager",
+        siteIds: [s.id],
+      });
+    }
+  }
+
+  const userIds = [...roster.keys()];
+  if (!userIds.length) return [];
+
+  const assessRows = await adminGql<{
+    assessments: Array<{
+      id: string;
+      user_id: string;
+      total_score: number | null;
+      score_detail: unknown;
+    }>;
+  }>(
+    `query ($m: String!, $ids: [uuid!]!) {
+      assessments(where: { month: { _eq: $m }, user_id: { _in: $ids } }) {
+        id user_id total_score score_detail
+      }
+    }`,
+    { m: month, ids: userIds },
+  );
+
+  for (const a of assessRows.assessments) {
+    const row = roster.get(String(a.user_id));
+    if (!row) continue;
+    row.assessmentId = String(a.id);
+    row.totalScore = Number(a.total_score || 0);
+    row.scored = assessmentScored(a.score_detail);
+  }
+
+  let list = [...roster.values()].filter((r) => r.scored && r.assessmentId);
+  if (opts.pool === "company_inspectors") {
+    list = list.filter((r) => r.userRole === "inspector");
+  } else if (opts.pool === "company_managers") {
+    list = list.filter((r) => r.userRole === "site_manager" || r.userRole === "dual");
+  }
+  list.sort(
+    (a, b) =>
+      b.totalScore - a.totalScore || a.realName.localeCompare(b.realName, "zh-CN"),
+  );
+  return list;
+}
+
+async function patchAssessmentRank(
+  assessmentId: string,
+  patch: {
+    site_rank_result?: string | null;
+    rank_result?: string | null;
+    reward_amount?: number;
+  },
+) {
+  await adminGql(
+    `mutation ($id: uuid!, $set: assessments_set_input!) {
+      update_assessments_by_pk(pk_columns: { id: $id }, _set: $set) { id }
+    }`,
+    { id: assessmentId, set: patch },
+  );
+}
+
+async function rankAssessments(user: AppUser, month: string, body: Record<string, unknown>) {
+  const mode = String(body.mode || "");
+  const siteId = String(body.siteId || "").trim();
+
+  if (mode === "site_preview") {
+    if (user.role === "super_admin" && !siteId) {
+      throw new HttpError(400, "请先选择网格，再生成网格内名次");
+    }
+    const targetSiteId =
+      siteId ||
+      (user.role === "site_manager"
+        ? (
+            await adminGql<{ sites: Array<{ id: string }> }>(
+              `query ($uid: uuid!) {
+                sites(where: { manager_id: { _eq: $uid }, status: { _eq: "active" } }, limit: 1) { id }
+              }`,
+              { uid: user.id },
+            )
+          ).sites[0]?.id
+        : undefined);
+    if (!targetSiteId) throw new HttpError(400, "请先选择网格，再生成网格内名次");
+
+    const rows = await loadScoredAssessmentRows(month, {
+      siteId: targetSiteId,
+      pool: "site_inspectors",
+    });
+    for (let i = 0; i < rows.length; i++) {
+      await patchAssessmentRank(rows[i].assessmentId!, {
+        site_rank_result: String(i + 1),
+      });
+    }
+    return listAssessments(user, new URLSearchParams({ month, siteId: targetSiteId }));
+  }
+
+  if (mode === "company_inspectors") {
+    needAdmin(user);
+    const rows = await loadScoredAssessmentRows(month, { pool: "company_inspectors" });
+    const n = rows.length;
+    const topN = Math.min(3, n);
+    const bottomN = Math.min(3, n);
+    const topIds = new Set(rows.slice(0, topN).map((r) => r.userId));
+    const bottomIds = rows
+      .slice(n - bottomN)
+      .map((r) => r.userId)
+      .filter((id) => !topIds.has(id));
+
+    for (const row of rows) {
+      let rankResult: string | null = null;
+      if (topIds.has(row.userId)) rankResult = "优秀";
+      else if (bottomIds.includes(row.userId)) rankResult = "不称职";
+      await patchAssessmentRank(row.assessmentId!, {
+        rank_result: rankResult,
+        reward_amount: rankRewardAmount("inspector", rankResult),
+      });
+    }
+    await syncMonthlySettlements(month).catch(() => null);
+    return listAssessments(user, new URLSearchParams({ month }));
+  }
+
+  if (mode === "company_managers") {
+    needAdmin(user);
+    const rows = await loadScoredAssessmentRows(month, { pool: "company_managers" });
+    const n = rows.length;
+    const topId = n > 0 ? rows[0].userId : null;
+    const bottomId = n > 1 ? rows[n - 1].userId : null;
+
+    for (const row of rows) {
+      let rankResult: string | null = null;
+      if (row.userId === topId) rankResult = "优秀";
+      else if (row.userId === bottomId) rankResult = "不称职";
+      await patchAssessmentRank(row.assessmentId!, {
+        rank_result: rankResult,
+        reward_amount: rankRewardAmount("station_manager", rankResult),
+      });
+    }
+    await syncMonthlySettlements(month).catch(() => null);
+    return listAssessments(user, new URLSearchParams({ month }));
+  }
+
+  throw new HttpError(400, "无效的排名模式");
+}
+
+type MonthSettlementTotals = {
+  perf: number;
+  expense: number;
+  reward: number;
+  eventPenalty: number;
+  subsidy: number;
+  correction: number;
+};
+
+function emptyMonthTotals(): MonthSettlementTotals {
+  return { perf: 0, expense: 0, reward: 0, eventPenalty: 0, subsidy: 0, correction: 0 };
+}
+
+function bumpMonthTotals(
+  map: Map<string, MonthSettlementTotals>,
+  userId: string | null | undefined,
+  patch: Partial<MonthSettlementTotals>,
+) {
+  if (!userId) return;
+  const row = map.get(userId) || emptyMonthTotals();
+  if (patch.perf) row.perf += patch.perf;
+  if (patch.expense) row.expense += patch.expense;
+  if (patch.reward) row.reward += patch.reward;
+  if (patch.eventPenalty) row.eventPenalty += patch.eventPenalty;
+  if (patch.subsidy) row.subsidy += patch.subsidy;
+  if (patch.correction) row.correction += patch.correction;
+  map.set(userId, row);
+}
+
+/** 按当月已审绩效/报销/考核汇总写入 monthly_settlements（跳过 locked/corrected） */
+async function syncMonthlySettlements(month: string) {
+  const monthStart = `${month}-01`;
+  const [yy, mm] = month.split("-").map(Number);
+  const next = mm === 12 ? `${yy + 1}-01-01` : `${yy}-${String(mm + 1).padStart(2, "0")}-01`;
+
+  const frozen = await adminGql<{
+    monthly_settlements: Array<{ user_id: string; status: string }>;
+  }>(
     `query ($m: String!) {
-      monthly_settlements(where: { month: { _eq: $m } }) {
-        id user_id month perf_total expense_total reward_total event_penalty subsidy_total correction_total final_amount status
-        user { real_name username role }
+      monthly_settlements(where: { month: { _eq: $m }, status: { _eq: "locked" } }) {
+        user_id status
       }
     }`,
     { m: month },
   );
+  const skipUsers = new Set(frozen.monthly_settlements.map((r) => r.user_id));
+
+  const totals = new Map<string, MonthSettlementTotals>();
+
+  const perfRows = await adminGql<{
+    case_performances: Array<{
+      perf_final: number;
+      inspector_id: string | null;
+      service_case: {
+        case_perf_shares: Array<{ inspector_id: string; perf_amount: number }>;
+      } | null;
+    }>;
+  }>(
+    `query ($m: String!) {
+      case_performances(
+        where: { month: { _eq: $m }, review_status: { _eq: "approved" } }
+      ) {
+        perf_final inspector_id
+        service_case { case_perf_shares { inspector_id perf_amount } }
+      }
+    }`,
+    { m: month },
+  );
+  for (const row of perfRows.case_performances) {
+    const shares = row.service_case?.case_perf_shares || [];
+    if (shares.length) {
+      for (const s of shares) {
+        bumpMonthTotals(totals, s.inspector_id, { perf: Number(s.perf_amount || 0) });
+      }
+    } else {
+      bumpMonthTotals(totals, row.inspector_id, { perf: Number(row.perf_final || 0) });
+    }
+  }
+
+  const expRows = await adminGql<{
+    case_expense_claims: Array<{ inspector_id: string | null; amount: number }>;
+  }>(
+    `query ($m: String!) {
+      case_expense_claims(where: { month: { _eq: $m }, status: { _eq: "approved" } }) {
+        inspector_id amount
+      }
+    }`,
+    { m: month },
+  );
+  for (const e of expRows.case_expense_claims) {
+    bumpMonthTotals(totals, e.inspector_id, { expense: Number(e.amount || 0) });
+  }
+
+  const assessRows = await adminGql<{
+    assessments: Array<{
+      user_id: string;
+      reward_amount: number;
+      event_penalty: number | null;
+      tool_subsidy: number;
+      other_subsidy: number;
+      correction_amount: number | null;
+    }>;
+  }>(
+    `query ($m: String!) {
+      assessments(where: { month: { _eq: $m } }) {
+        user_id reward_amount event_penalty tool_subsidy other_subsidy correction_amount
+      }
+    }`,
+    { m: month },
+  );
+  for (const a of assessRows.assessments) {
+    bumpMonthTotals(totals, a.user_id, {
+      reward: Number(a.reward_amount || 0),
+      subsidy: Number(a.tool_subsidy || 0) + Number(a.other_subsidy || 0),
+      correction: Number(a.correction_amount || 0),
+    });
+  }
+
+  // 事件扣罚以 assessment_events.month 为准；不再叠加 assessments.event_penalty，避免双计
+  const eventRows = await adminGql<{
+    assessment_events: Array<{ user_id: string; amount: number }>;
+  }>(
+    `query ($m: String!) {
+      assessment_events(where: { month: { _eq: $m }, user_id: { _is_null: false } }) {
+        user_id amount
+      }
+    }`,
+    { m: month },
+  );
+  for (const e of eventRows.assessment_events) {
+    bumpMonthTotals(totals, e.user_id, { eventPenalty: Number(e.amount || 0) });
+  }
+
+  const objects: Array<Record<string, unknown>> = [];
+  for (const [userId, t] of totals) {
+    if (skipUsers.has(userId)) continue;
+    const hasActivity =
+      t.perf !== 0 ||
+      t.expense !== 0 ||
+      t.reward !== 0 ||
+      t.eventPenalty !== 0 ||
+      t.subsidy !== 0 ||
+      t.correction !== 0;
+    if (!hasActivity) continue;
+    const final = t.perf + t.expense + t.reward - t.eventPenalty + t.subsidy + t.correction;
+    objects.push({
+      month,
+      user_id: userId,
+      perf_total: t.perf.toFixed(2),
+      expense_total: t.expense.toFixed(2),
+      reward_total: t.reward.toFixed(2),
+      event_penalty: t.eventPenalty.toFixed(2),
+      subsidy_total: t.subsidy.toFixed(2),
+      correction_total: t.correction.toFixed(2),
+      final_amount: final.toFixed(2),
+      status: "draft",
+    });
+  }
+
+  if (!objects.length) return;
+
+  await adminGql(
+    `mutation ($objects: [monthly_settlements_insert_input!]!) {
+      insert_monthly_settlements(
+        objects: $objects
+        on_conflict: {
+          constraint: monthly_settlements_month_user_id_key
+          update_columns: [
+            perf_total expense_total reward_total event_penalty
+            subsidy_total correction_total final_amount updated_at
+          ]
+        }
+      ) { affected_rows }
+    }`,
+    { objects },
+  );
+}
+
+async function listMonthly(user: AppUser, query: URLSearchParams) {
+  const month = query.get("month") || new Date().toISOString().slice(0, 7);
+  await syncMonthlySettlements(month).catch(() => null);
+  // 网格长仅能查看本人管理网格成员的结算，超管可看全部
+  let scopedUserIds: Set<string> | null = null;
+  if (user.role === "site_manager") {
+    const managed = await adminGql<{
+      sites: Array<{ id: string }>;
+      deputy: Array<{ site_id: string }>;
+    }>(
+      `query ($uid: uuid!) {
+        sites(where: { manager_id: { _eq: $uid }, deleted_at: { _is_null: true } }) { id }
+        deputy: site_members(where: { user_id: { _eq: $uid }, member_role: { _eq: "deputy_manager" }, status: { _eq: "active" } }) { site_id }
+      }`,
+      { uid: user.id },
+    );
+    const siteIds = [
+      ...managed.sites.map((s) => s.id),
+      ...managed.deputy.map((d) => d.site_id),
+    ];
+    scopedUserIds = new Set<string>([user.id]);
+    if (siteIds.length) {
+      const members = await adminGql<{ site_members: Array<{ user_id: string }> }>(
+        `query ($ids: [uuid!]!) {
+          site_members(where: { site_id: { _in: $ids }, status: { _eq: "active" } }) { user_id }
+        }`,
+        { ids: siteIds },
+      );
+      for (const m of members.site_members) scopedUserIds.add(m.user_id);
+    }
+  }
+  const d = await adminGql<{ monthly_settlements: Record<string, unknown>[] }>(
+    `query ($m: String!) {
+      monthly_settlements(where: { month: { _eq: $m } }) {
+        id user_id month perf_total expense_total reward_total event_penalty subsidy_total correction_total final_amount status
+        user { real_name username role roles }
+      }
+    }`,
+    { m: month },
+  );
+  let rows = scopedUserIds
+    ? d.monthly_settlements.filter((r) => scopedUserIds!.has(String(r.user_id)))
+    : d.monthly_settlements;
+
+  const keyword = (query.get("keyword") || "").trim().toLowerCase();
+  const roleFilter = (query.get("role") || "").trim();
+  const siteIdQ = (query.get("siteId") || "").trim();
+  if (keyword || roleFilter || siteIdQ) {
+    let siteUserIds: Set<string> | null = null;
+    if (siteIdQ) {
+      const members = await adminGql<{ site_members: Array<{ user_id: string }> }>(
+        `query ($sid: uuid!) {
+          site_members(where: { site_id: { _eq: $sid }, status: { _eq: "active" } }) { user_id }
+        }`,
+        { sid: siteIdQ },
+      );
+      siteUserIds = new Set(members.site_members.map((m) => m.user_id));
+    }
+    rows = rows.filter((r) => {
+      const u = r.user as { real_name?: string; username?: string; role?: string; roles?: string[] } | undefined;
+      if (siteUserIds && !siteUserIds.has(String(r.user_id))) return false;
+      if (roleFilter) {
+        const roles = u?.roles || [];
+        const primary = u?.role || "";
+        const isMgr = primary === "site_manager" || roles.includes("site_manager");
+        if (roleFilter === "site_manager" && !isMgr) return false;
+        if (roleFilter === "inspector" && isMgr && primary !== "inspector") return false;
+      }
+      if (keyword) {
+        const name = `${u?.real_name || ""} ${u?.username || ""}`.toLowerCase();
+        if (!name.includes(keyword)) return false;
+      }
+      return true;
+    });
+  }
+
   return ok(
-    d.monthly_settlements.map((r) => ({
+    rows.map((r) => ({
       id: r.id,
       userId: r.user_id,
       month: r.month,
@@ -4138,8 +5022,8 @@ async function listMonthly(query: URLSearchParams) {
   );
 }
 
-async function exportMonthly(month: string, template: string) {
-  const listed = await listMonthly(new URLSearchParams({ month }));
+async function exportMonthly(user: AppUser, month: string, template: string) {
+  const listed = await listMonthly(user, new URLSearchParams({ month }));
   const json = (await listed.json()) as { data?: Array<Record<string, unknown>> };
   const rows = json.data || [];
   const ExcelJS = (await import("exceljs")).default;
@@ -4181,17 +5065,66 @@ async function lockMonth(month: string, locked: boolean) {
   return ok({ month, locked: d.update_monthly_settlements.affected_rows });
 }
 
-async function correctMonthly(month: string, body: Record<string, unknown>) {
+async function correctMonthly(user: AppUser, month: string, body: Record<string, unknown>) {
+  const userId = String(body.userId || "");
+  const amount = Number(body.amount || 0);
+  const reason = String(body.reason || "").trim();
+  if (!userId) throw new HttpError(400, "请选择人员");
+  if (!reason) throw new HttpError(400, "请填写校正原因");
+  if (!Number.isFinite(amount)) throw new HttpError(400, "校正金额无效");
+
+  const target = await adminGql<{ users_by_pk: { id: string; role: string; roles: string[] | null } | null }>(
+    `query ($id: uuid!) { users_by_pk(id: $id) { id role roles } }`,
+    { id: userId },
+  );
+  if (!target.users_by_pk) throw new HttpError(404, "结算人员不存在");
+  const roles = target.users_by_pk.roles || [];
+  const isManager = roles.includes("site_manager") || target.users_by_pk.role === "site_manager";
+
+  const existing = await adminGql<{ assessments: { id: string }[] }>(
+    `query ($m: String!, $uid: uuid!) {
+      assessments(where: { month: { _eq: $m }, user_id: { _eq: $uid } }, limit: 1) { id }
+    }`,
+    { m: month, uid: userId },
+  );
+  const patch = {
+    correction_amount: amount,
+    correction_reason: reason,
+    updated_by_id: user.id,
+  };
+  if (existing.assessments[0]) {
+    await adminGql(
+      `mutation ($id: uuid!, $set: assessments_set_input!) {
+        update_assessments_by_pk(pk_columns: { id: $id }, _set: $set) { id }
+      }`,
+      { id: existing.assessments[0].id, set: patch },
+    );
+  } else {
+    await adminGql(
+      `mutation ($obj: assessments_insert_input!) { insert_assessments_one(object: $obj) { id } }`,
+      {
+        obj: {
+          month,
+          user_id: userId,
+          user_role: isManager ? "site_manager" : "inspector",
+          rank_group: isManager ? "station_manager" : "inspector",
+          ...patch,
+        },
+      },
+    );
+  }
+
+  await syncMonthlySettlements(month);
   await adminGql(
-    `mutation ($m: String!, $uid: uuid!, $amt: numeric!, $reason: String!) {
+    `mutation ($m: String!, $uid: uuid!) {
       update_monthly_settlements(
         where: { month: { _eq: $m }, user_id: { _eq: $uid } }
-        _set: { final_amount: $amt, correction_total: $amt }
+        _set: { status: "corrected" }
       ) { affected_rows }
     }`,
-    { m: month, uid: body.userId, amt: body.amount, reason: body.reason },
+    { m: month, uid: userId },
   );
-  return listMonthly(new URLSearchParams({ month }));
+  return listMonthly(user, new URLSearchParams({ month }));
 }
 
 async function myIncome(user: AppUser, query: URLSearchParams) {
@@ -4257,10 +5190,6 @@ async function myIncome(user: AppUser, query: URLSearchParams) {
     } | null;
   };
 
-  const monthStart = `${month}-01`;
-  const [yy, mm] = month.split("-").map(Number);
-  const next = mm === 12 ? `${yy + 1}-01-01` : `${yy}-${String(mm + 1).padStart(2, "0")}-01`;
-
   const d = await adminGql<{
     case_performances: PerfRow[];
     monthly_settlements: Array<{
@@ -4294,7 +5223,7 @@ async function myIncome(user: AppUser, query: URLSearchParams) {
       created_at: string;
     }>;
   }>(
-    `query ($m: String!, $uid: uuid!, $from: timestamptz!, $to: timestamptz!) {
+    `query ($m: String!, $uid: uuid!) {
       case_performances(
         where: {
           month: { _eq: $m }
@@ -4338,19 +5267,20 @@ async function myIncome(user: AppUser, query: URLSearchParams) {
       assessment_events(
         where: {
           user_id: { _eq: $uid }
+          month: { _eq: $m }
           service_case_id: { _is_null: true }
-          created_at: { _gte: $from, _lt: $to }
         }
         order_by: { created_at: desc }
       ) {
         id category content amount remark service_case_id created_at
       }
     }`,
-    { m: month, uid, from: monthStart, to: next },
+    { m: month, uid },
   );
 
   const settlement = d.monthly_settlements[0] || null;
   const assessment = d.assessments[0] || null;
+  const orphanEventPenalty = d.assessment_events.reduce((sum, e) => sum + Number(e.amount || 0), 0);
 
   const list = d.case_performances.map((row) => {
     const sc = row.service_case;
@@ -4439,7 +5369,10 @@ async function myIncome(user: AppUser, query: URLSearchParams) {
           totalScore: String(assessment.total_score ?? 0),
           rankResult: assessment.rank_result || undefined,
           rewardAmount: String(assessment.reward_amount ?? 0),
-          eventPenalty: String(assessment.event_penalty ?? 0),
+          eventPenalty: String(
+            settlement?.event_penalty ??
+              Number(assessment.event_penalty || 0) + orphanEventPenalty,
+          ),
           toolSubsidy: String(assessment.tool_subsidy ?? 0),
           otherSubsidy: String(assessment.other_subsidy ?? 0),
           subsidyRemark: assessment.subsidy_remark || undefined,

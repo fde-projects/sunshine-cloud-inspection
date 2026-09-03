@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
   Button,
@@ -57,7 +57,12 @@ import {
   sanitizePassViews,
   sanitizeViewLabel,
 } from '../../lib/hard-rule-match';
-import { composeHardRulePrompt, hydrateCriteriaFromPrompt } from '../../lib/hard-rule-prompt';
+import {
+  composeHardRulePrompt,
+  criteriaFromPassSamples,
+  hydrateCriteriaFromPrompt,
+  looksLikeLegacyMountCriteria,
+} from '../../lib/hard-rule-prompt';
 import { displayPhotoUrl } from '../../utils/photo-url';
 import { isAntValidateError } from '../../utils/ant-form';
 import FillTable, { listTablePagination } from '../../components/FillTable';
@@ -147,10 +152,13 @@ function bindingsFromKeys(keys: string[], catalog: HardRuleCatalogItem[]) {
 
 function SampleThumbs({
   urls,
+  labelsByUrl,
   onClear,
   onRemove,
 }: {
   urls: string[];
+  /** 若某张就是合格样，显示其短名，方便核对是否真的用了样张 */
+  labelsByUrl?: Record<string, string>;
   onClear: () => void;
   onRemove?: (url: string) => void;
 }) {
@@ -182,6 +190,13 @@ function SampleThumbs({
                   />
                 ) : null}
               </div>
+              {labelsByUrl?.[url] ? (
+                <div className="hard-rule-sample-labeling">{labelsByUrl[url]}</div>
+              ) : (
+                <div className="hard-rule-sample-labeling" style={{ color: '#999' }}>
+                  手动上传
+                </div>
+              )}
             </div>
           ))}
         </div>
@@ -202,12 +217,13 @@ function PassSampleCards({
   /** 来自服务类型时只展示，不可删 */
   readOnly?: boolean;
 }) {
+  const [composing, setComposing] = useState<Record<string, boolean>>({});
   if (!items.length) return null;
   return (
     <div className="hard-rule-sample-block">
       <div className="hard-rule-sample-toolbar">
         <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-          {labeling ? '正在起名…' : `来自服务类型 · ${items.length} 张`}
+          {labeling ? '正在起名…' : `来自服务类型 · ${items.length} 张 · 名称最多 ${HARD_RULE_VIEW_LABEL_MAX} 字`}
         </Typography.Text>
       </div>
       <Image.PreviewGroup>
@@ -215,20 +231,47 @@ function PassSampleCards({
           {items.map((item, index) => (
             <div key={item.url} className="hard-rule-sample-card">
               <div className="hard-rule-sample-thumb">
-                <Image src={displayPhotoUrl(item.url)} alt="" width={104} height={104} />
+                <Image src={displayPhotoUrl(item.url)} alt="" width={160} height={160} />
               </div>
               {labeling ? (
                 <div className="hard-rule-sample-labeling">起名中…</div>
               ) : readOnly && !onLabelChange ? (
-                <div className="hard-rule-sample-labeling">{item.label || `视角${index + 1}`}</div>
+                <div className="hard-rule-sample-labeling" title={item.label || `视角${index + 1}`}>
+                  {item.label || `视角${index + 1}`}
+                </div>
               ) : (
-                <Input
-                  size="small"
-                  value={item.label}
-                  maxLength={HARD_RULE_VIEW_LABEL_MAX}
-                  placeholder={`视角${index + 1}`}
-                  onChange={(event) => onLabelChange?.(item.url, event.target.value)}
-                />
+                <div>
+                  <Input
+                    size="small"
+                    value={item.label}
+                    placeholder={`视角${index + 1}，如：左侧固定`}
+                    title={item.label || undefined}
+                    onCompositionStart={() =>
+                      setComposing((prev) => ({ ...prev, [item.url]: true }))
+                    }
+                    onCompositionEnd={(event) => {
+                      setComposing((prev) => ({ ...prev, [item.url]: false }));
+                      onLabelChange?.(
+                        item.url,
+                        event.currentTarget.value.slice(0, HARD_RULE_VIEW_LABEL_MAX),
+                      );
+                    }}
+                    onChange={(event) => {
+                      const raw = event.target.value;
+                      if (composing[item.url]) {
+                        onLabelChange?.(item.url, raw);
+                        return;
+                      }
+                      onLabelChange?.(item.url, raw.slice(0, HARD_RULE_VIEW_LABEL_MAX));
+                    }}
+                    onBlur={(event) => {
+                      onLabelChange?.(item.url, sanitizeViewLabel(event.target.value));
+                    }}
+                  />
+                  <div style={{ fontSize: 11, color: '#98a29c', marginTop: 2, textAlign: 'right' }}>
+                    {Array.from(item.label || '').length}/{HARD_RULE_VIEW_LABEL_MAX}
+                  </div>
+                </div>
               )}
             </div>
           ))}
@@ -252,6 +295,8 @@ export default function HardRulesPage() {
   const [trialUploading, setTrialUploading] = useState(false);
   const [trialing, setTrialing] = useState(false);
   const [trialResult, setTrialResult] = useState<HardRulePreviewResult | null>(null);
+  /** 清空/移除试跑图时作废进行中的上传，避免按钮一直转圈 */
+  const trialUploadGenRef = useRef(0);
   const [passSamples, setPassSamples] = useState<HardRulePassView[]>([]);
   const [failSampleUrls, setFailSampleUrls] = useState<string[]>([]);
   const [sampleUploading, setSampleUploading] = useState<'fail' | null>(null);
@@ -266,6 +311,7 @@ export default function HardRulesPage() {
 
   const passWatch = Form.useWatch('passCriteria', form);
   const failWatch = Form.useWatch('failCriteria', form);
+  const notesWatch = Form.useWatch('judgeNotes', form);
   const enforceWatch = Form.useWatch('enforceMode', form);
   const entryKeyWatch = Form.useWatch('entryKey', form) as string | undefined;
 
@@ -275,9 +321,10 @@ export default function HardRulesPage() {
         name: ruleTitleFromKeys(entryKeyWatch ? [entryKeyWatch] : [], catalog),
         passCriteria: passWatch,
         failCriteria: failWatch,
+        judgeNotes: notesWatch,
         enforceMode: enforceWatch,
       }),
-    [entryKeyWatch, catalog, passWatch, failWatch, enforceWatch],
+    [entryKeyWatch, catalog, passWatch, failWatch, notesWatch, enforceWatch],
   );
 
   const filteredList = useMemo(() => {
@@ -324,7 +371,21 @@ export default function HardRulesPage() {
   }, [load]);
 
   const resetTrial = () => {
+    trialUploadGenRef.current += 1;
     setTrialUrls([]);
+    setTrialResult(null);
+    setTrialUploading(false);
+  };
+
+  const removeTrialUrl = (url: string) => {
+    setTrialUrls((prev) => {
+      const next = prev.filter((item) => item !== url);
+      if (!next.length) {
+        trialUploadGenRef.current += 1;
+        setTrialUploading(false);
+      }
+      return next;
+    });
     setTrialResult(null);
   };
 
@@ -391,6 +452,7 @@ export default function HardRulesPage() {
       entryKey: undefined,
       passCriteria: '',
       failCriteria: '',
+      judgeNotes: '',
       enabled: true,
       enforceMode: 'strict',
       changeNote: '',
@@ -413,6 +475,7 @@ export default function HardRulesPage() {
       entryKey: keys[0],
       passCriteria: parsed.passCriteria,
       failCriteria: parsed.failCriteria,
+      judgeNotes: parsed.judgeNotes,
       enabled: row.enabled,
       enforceMode: row.enforceMode,
       changeNote: '',
@@ -475,6 +538,7 @@ export default function HardRulesPage() {
           bindings,
           passCriteria: values.passCriteria,
           failCriteria: values.failCriteria,
+          judgeNotes: values.judgeNotes,
           passSampleViews: passSamples,
           failSampleUrls,
           enabled: values.enabled,
@@ -488,6 +552,7 @@ export default function HardRulesPage() {
           bindings,
           passCriteria: values.passCriteria,
           failCriteria: values.failCriteria,
+          judgeNotes: values.judgeNotes,
           passSampleViews: passSamples,
           failSampleUrls,
           enabled: values.enabled,
@@ -549,18 +614,36 @@ export default function HardRulesPage() {
     }
   };
 
-  const handleDraftFromSamples = async () => {
+  const handleWriteCriteriaFromSamples = async () => {
     const values = form.getFieldsValue();
     const selected = catalog.find((item) => item.key === values.entryKey);
-    if (!passSamples.length && !failSampleUrls.length) {
-      message.error('请先选择有示范图的检查项，或上传不合格样');
+    const title = selected?.entryName || values.name || '检查项';
+
+    // 多张合格样：按种类直接写，避免 AI 又写出「每张都要 A+B」旧稿
+    if (passSamples.length >= 2) {
+      const drafted = criteriaFromPassSamples({
+        title,
+        labels: passSamples.map((item) => item.label || ''),
+      });
+      form.setFieldsValue({
+        passCriteria: drafted.passCriteria,
+        failCriteria: drafted.failCriteria,
+      });
+      setDraftFromAi(false);
+      message.success('已按合格样写好合格/不合格标准（判定补充不会改，请自己写）');
       return;
     }
+
+    if (!passSamples.length && !failSampleUrls.length) {
+      message.error('请先选择有合格样的检查项，或上传不合格样');
+      return;
+    }
+
     setDrafting(true);
     try {
       const drafted = await draftHardRule({
         name: values.name,
-        title: selected?.entryName || values.name,
+        title,
         description: selected?.description || '',
         passPhotoUrls: passSamples.map((item) => item.url),
         failPhotoUrls: failSampleUrls,
@@ -571,7 +654,9 @@ export default function HardRulesPage() {
         failCriteria: drafted.failCriteria,
       });
       setDraftFromAi(true);
-      message.success(drafted.provider === 'mock' ? '已生成本地草稿，请改后再保存' : '已生成草稿，请改后再保存');
+      message.success(
+        drafted.provider === 'mock' ? '已生成本地草稿，请改后再保存' : '已根据样张生成草稿，请改后再保存',
+      );
     } catch {
       /* interceptor */
     } finally {
@@ -585,6 +670,7 @@ export default function HardRulesPage() {
     form.setFieldsValue({
       passCriteria: parsed.passCriteria,
       failCriteria: parsed.failCriteria,
+      judgeNotes: parsed.judgeNotes,
     });
     setDraftFromAi(false);
     message.success('已把旧正文拆进两栏，请核对后保存');
@@ -594,32 +680,43 @@ export default function HardRulesPage() {
     if (!files.length) return;
     const room = Math.max(0, HARD_RULE_TRIAL_PHOTO_LIMIT - trialUrls.length);
     if (!room) return;
+    const gen = ++trialUploadGenRef.current;
     setTrialUploading(true);
     try {
       const urls: string[] = [];
       for (const file of files.slice(0, room)) {
+        if (gen !== trialUploadGenRef.current) return;
         const res = await uploadImage(file, { siteName: '硬规则试跑', serialNumber: 'trial' });
+        if (gen !== trialUploadGenRef.current) return;
         urls.push(res.url);
       }
+      if (gen !== trialUploadGenRef.current) return;
       setTrialUrls((prev) => [...prev, ...urls].slice(0, HARD_RULE_TRIAL_PHOTO_LIMIT));
       setTrialResult(null);
       message.success(`已上传 ${urls.length} 张`);
     } catch {
-      message.error('照片上传失败');
+      if (gen === trialUploadGenRef.current) message.error('照片上传失败');
     } finally {
-      setTrialUploading(false);
+      if (gen === trialUploadGenRef.current) setTrialUploading(false);
     }
   };
 
   const handleUseSamplesAsTrial = () => {
-    const urls = [...passSamples.map((item) => item.url), ...failSampleUrls].slice(0, HARD_RULE_TRIAL_PHOTO_LIMIT);
+    // 只拿合格样做自检；不合格样混进待判定会导致必然失败，失去「样张应能过」的意义
+    const urls = passSamples.map((item) => item.url).filter(Boolean).slice(0, HARD_RULE_TRIAL_PHOTO_LIMIT);
     if (!urls.length) {
-      message.error('请先上传对照样张');
+      message.error('请先选择有合格样的检查项');
       return;
     }
+    trialUploadGenRef.current += 1;
+    setTrialUploading(false);
     setTrialUrls(urls);
     setTrialResult(null);
-    message.success('已用对照样张作为试跑照片');
+    const names = passSamples
+      .map((item) => item.label || '视角')
+      .filter(Boolean)
+      .join('、');
+    message.success(`已填入合格样：${names}。请再点「开始试跑」`);
   };
 
   const handleTrial = async () => {
@@ -646,6 +743,7 @@ export default function HardRulesPage() {
         name: values.name,
         passCriteria: values.passCriteria,
         failCriteria: values.failCriteria,
+        judgeNotes: values.judgeNotes,
         enforceMode: values.enforceMode,
         passSampleViews: passSamples,
         failSampleUrls,
@@ -804,7 +902,8 @@ export default function HardRulesPage() {
         }
       >
         <Typography.Paragraph type="secondary" style={{ marginTop: 0, marginBottom: 10 }}>
-          一项一条规则。合格样直接用服务类型检查条目的示范图；不合格样可另挂。改规则只影响<strong>新发起的分析</strong>。
+          一项一条规则。合格样用服务类型示范图。改规则只影响<strong>新发起的分析</strong>。
+          日常调参：改合格/不合格/判定补充 → 试跑 → 保存，不必改代码。
         </Typography.Paragraph>
         <Space className="finance-toolbar" wrap style={{ marginBottom: 10 }}>
           <Input.Search
@@ -953,9 +1052,7 @@ export default function HardRulesPage() {
                         readOnly
                         onLabelChange={(url, label) =>
                           setPassSamples((prev) =>
-                            prev.map((item) =>
-                              item.url === url ? { ...item, label: sanitizeViewLabel(label) } : item,
-                            ),
+                            prev.map((item) => (item.url === url ? { ...item, label } : item)),
                           )
                         }
                       />
@@ -1009,15 +1106,31 @@ export default function HardRulesPage() {
               >
                 <Input placeholder="例如：只拍到机箱，看不清抱箍和螺栓" />
               </Form.Item>
-              <Button
-                type="primary"
-                ghost
-                icon={<ThunderboltOutlined />}
-                loading={drafting}
-                onClick={() => void handleDraftFromSamples()}
-              >
-                生成合格/不合格草稿
-              </Button>
+              <div>
+                <Button
+                  type="primary"
+                  ghost
+                  icon={<ThunderboltOutlined />}
+                  loading={drafting}
+                  onClick={() => void handleWriteCriteriaFromSamples()}
+                >
+                  根据样张写标准
+                </Button>
+                <div style={{ marginTop: 6 }}>
+                  <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                    {passSamples.length >= 2
+                      ? '有多张合格样时：按「整机/抱箍/…」种类直接写，现场对齐这些种类即可。'
+                      : '样张较少时：用 AI 对照合格/不合格样生成草稿，生成后请改再保存。'}
+                  </Typography.Text>
+                </div>
+              </div>
+              {passSamples.length >= 2 && looksLikeLegacyMountCriteria(String(passWatch || '')) ? (
+                <Alert
+                  type="warning"
+                  showIcon
+                  message="当前仍是旧版「每张都要 A+B/锁紧点」标准，会把整机、线缆样张否掉。请点「根据样张写标准」后保存再试跑。"
+                />
+              ) : null}
             </Space>
           </Card>
 
@@ -1026,7 +1139,7 @@ export default function HardRulesPage() {
               type="warning"
               showIcon
               style={{ marginBottom: 16 }}
-              message="下面是 AI 草稿，请改完再保存。样张会随规则保存，现场验图会对照。"
+              message="下面是 AI 生成的草稿，请改完再保存。"
             />
           ) : null}
 
@@ -1058,6 +1171,16 @@ export default function HardRulesPage() {
             <Input.TextArea
               rows={4}
               placeholder="例如：只交一张；两张都是同一页签；一张图里能看见两个页签标题但只点开了一页"
+            />
+          </Form.Item>
+          <Form.Item
+            name="judgeNotes"
+            label="判定补充（易误判，自己改）"
+            extra="不会自动生成。试跑发现误判时自己写纠正，改完可直接试跑；保存后才对现场新分析生效。"
+          >
+            <Input.TextArea
+              rows={3}
+              placeholder="选填。例如：拧紧后螺杆外露丝牙不算松动；线缆图只看接线，不要因看不见抱箍判不合格。"
             />
           </Form.Item>
           {editing?.promptText && hydrateCriteriaFromPrompt(editing.promptText).source === 'legacy' ? (
@@ -1122,7 +1245,7 @@ export default function HardRulesPage() {
             style={{ marginTop: 8 }}
             extra={
               <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                用当前合格/不合格标准，并对照上面的样张
+                用上面正在编辑的内容试跑，不必先保存
               </Typography.Text>
             }
           >
@@ -1131,8 +1254,10 @@ export default function HardRulesPage() {
                 ? `按「${catalogLabel(selectedEntry)}」试跑`
                 : '请先在上方选择检查项'}
               {passSamples.length >= 2
-                ? `。上面挂了 ${passSamples.length} 种合格样，试跑也请拍齐 ${passSamples.length} 种不同的图；同一种拍两张会不合格。`
+                ? `。上面挂了 ${passSamples.length} 种合格样，试跑也请拍齐 ${passSamples.length} 种不同的图；同一种拍两张会不合格。上传顺序不限，按内容对号即可。`
                 : ''}
+              {' '}
+              改合格/不合格/判定补充后直接点「开始试跑」即可。点右下角「保存」后，才对工程师现场新分析生效。
             </Typography.Paragraph>
             <Space direction="vertical" style={{ width: '100%' }} size={12}>
               <Upload
@@ -1155,20 +1280,20 @@ export default function HardRulesPage() {
               </Upload>
               <SampleThumbs
                 urls={trialUrls}
+                labelsByUrl={Object.fromEntries(
+                  passSamples.filter((item) => item.url).map((item) => [item.url, item.label || '合格样']),
+                )}
                 onClear={() => {
                   resetTrial();
                 }}
-                onRemove={(url) => {
-                  setTrialUrls((prev) => prev.filter((item) => item !== url));
-                  setTrialResult(null);
-                }}
+                onRemove={removeTrialUrl}
               />
               <Space wrap>
                 <Button
-                  disabled={!passSamples.length && !failSampleUrls.length}
+                  disabled={!passSamples.length}
                   onClick={handleUseSamplesAsTrial}
                 >
-                  用上面的样张试跑
+                  用合格样试跑
                 </Button>
                 <Button
                   type="primary"
@@ -1180,6 +1305,9 @@ export default function HardRulesPage() {
                   开始试跑
                 </Button>
               </Space>
+              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                试跑读的是本弹窗正在填的标准，不用先保存。保存后才给现场新分析用。测不合格请上传「差于合格样」的现场图，不要把不合格样原图和合格样混在一起当待判定。
+              </Typography.Text>
               {trialResult ? (
                 <Alert
                   type={

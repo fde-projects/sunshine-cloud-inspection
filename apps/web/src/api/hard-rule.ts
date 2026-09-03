@@ -79,6 +79,7 @@ export type HardRuleWritePayload = {
   promptText?: string;
   passCriteria?: string;
   failCriteria?: string;
+  judgeNotes?: string;
   jsonSchemaHint?: string | null;
   enabled?: boolean;
   enforceMode?: HardRuleEnforceMode;
@@ -122,6 +123,7 @@ export async function previewHardRule(payload: {
   name?: string;
   passCriteria?: string;
   failCriteria?: string;
+  judgeNotes?: string;
   promptText?: string;
   enforceMode?: HardRuleEnforceMode | string;
   passSampleUrls?: string[];

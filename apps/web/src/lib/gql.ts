@@ -13,6 +13,18 @@ export async function getGraphqlUrl(): Promise<string> {
   return graphqlUrlCache;
 }
 
+function roleAllowedByJwt(jwt: string, role: string): boolean {
+  try {
+    const payload = JSON.parse(atob(jwt.split(".")[1] || "")) as {
+      "https://hasura.io/jwt/claims"?: { "x-hasura-allowed-roles"?: string[] };
+    };
+    const allowed = payload["https://hasura.io/jwt/claims"]?.["x-hasura-allowed-roles"] || [];
+    return allowed.includes(role);
+  } catch {
+    return false;
+  }
+}
+
 export async function gql<T>(
   query: string,
   variables?: Record<string, unknown>,
@@ -21,12 +33,14 @@ export async function gql<T>(
   const url = await getGraphqlUrl();
   const jwt = token === undefined ? getToken() : token;
   const activeRole = getStoredUser()?.role;
+  const roleHeader =
+    activeRole && jwt && roleAllowedByJwt(jwt, activeRole) ? activeRole : undefined;
   const res = await fetch(url, {
     method: "POST",
     headers: {
       "content-type": "application/json",
       ...(jwt ? { authorization: `Bearer ${jwt}` } : {}),
-      ...(activeRole ? { "x-hasura-role": activeRole } : {}),
+      ...(roleHeader ? { "x-hasura-role": roleHeader } : {}),
     },
     body: JSON.stringify({ query, variables }),
   }).catch(() => {

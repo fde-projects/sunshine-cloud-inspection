@@ -396,7 +396,10 @@ async function attachProductLinesFromCases() {
     const pl = String(item.product_line || "").trim();
     if (!pl) continue;
     const demand = String(item.service_type || "").trim();
-    const tpl = (demand && templates.find((t) => t.name === demand)) || null;
+    const tpl =
+      (item.task_template_id ? byId.get(item.task_template_id) : undefined) ||
+      (demand ? templates.find((t) => t.name === demand) : undefined) ||
+      null;
     if (!tpl) continue;
     const lines = Array.isArray(tpl.product_lines) ? tpl.product_lines : [];
     if (lines.some((p) => String(p.name || "").trim() === pl)) continue;
@@ -458,7 +461,7 @@ async function seedOriginalCatalog(): Promise<CatalogSeedResult> {
   };
 }
 
-const CATALOG_SEED_REV = 3;
+const CATALOG_SEED_REV = 4;
 const SEED_SETTING_KEY = "catalog_seed";
 
 let inflight: Promise<CatalogSeedResult | null> | null = null;
@@ -523,14 +526,26 @@ export async function ensureOriginalCatalog() {
         completedRev = CATALOG_SEED_REV;
         return null;
       }
-      const result = persisted > 0 ? {
-        hardRules: { inserted: 0, updated: 0 },
-        devices: { created: 0, synced: 0 },
-        demandTypes: 0,
-        caseTypes: 0,
-        productLines: 0,
-        rematched: 0,
-      } : await seedOriginalCatalog();
+      const result =
+        persisted === 0
+          ? await seedOriginalCatalog()
+          : persisted < CATALOG_SEED_REV
+            ? {
+                hardRules: { inserted: 0, updated: 0 },
+                devices: { created: 0, synced: 0 },
+                demandTypes: 0,
+                caseTypes: 0,
+                productLines: await attachProductLinesFromCases(),
+                rematched: (await rematchUnboundCases()).matched,
+              }
+            : {
+                hardRules: { inserted: 0, updated: 0 },
+                devices: { created: 0, synced: 0 },
+                demandTypes: 0,
+                caseTypes: 0,
+                productLines: 0,
+                rematched: 0,
+              };
       const removedDeviceTypes = await removeUnusedDeviceNamedTemplates();
       await writePersistedSeedRev({ ...result, removedDeviceTypes });
       completedRev = CATALOG_SEED_REV;

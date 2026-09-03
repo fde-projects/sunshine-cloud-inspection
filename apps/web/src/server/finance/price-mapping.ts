@@ -83,7 +83,7 @@ export async function loadActivePrices(): Promise<PriceLike[]> {
     "price_library_bool_exp",
     PRICE_GQL_FIELDS,
     { status: { _eq: "active" } },
-    "{ effective_date: desc }",
+    "[{ effective_date: desc }, { id: asc }]",
   );
   return rows.map(mapPrice);
 }
@@ -419,5 +419,100 @@ export async function recalculateLedgers(caseIds: string[], caseMap?: Map<string
         },
       );
     }
+  }
+
+  await syncCasePerfShares(ids);
+}
+
+/** 按已完成作业单元重写多人绩效分账；单人案例不写分账行（收入走台账全额） */
+export async function syncCasePerfShares(caseIds: string[]) {
+  const ids = [...new Set(caseIds.filter(Boolean))];
+  for (const caseId of ids) {
+    const d = await adminGql<{
+      service_cases_by_pk: {
+        id: string;
+        assign_mode: string | null;
+        inspector_id: string | null;
+        case_performance: { perf_final: number | string } | null;
+        case_assignments: Array<{
+          inspector_id: string;
+          completed_units: number | null;
+          status: string;
+        }>;
+        case_work_units: Array<{ inspector_id: string | null; status: string }>;
+      } | null;
+    }>(
+      `query ($id: uuid!) {
+        service_cases_by_pk(id: $id) {
+          id assign_mode inspector_id
+          case_performance { perf_final }
+          case_assignments(where: { status: { _neq: "withdrawn" } }) {
+            inspector_id completed_units status
+          }
+          case_work_units { inspector_id status }
+        }
+      }`,
+      { id: caseId },
+    );
+    const sc = d.service_cases_by_pk;
+    if (!sc) continue;
+
+    await adminGql(
+      `mutation ($cid: uuid!) {
+        delete_case_perf_shares(where: { service_case_id: { _eq: $cid } }) { affected_rows }
+      }`,
+      { cid: caseId },
+    );
+
+    const byInspector = new Map<string, number>();
+    for (const u of sc.case_work_units || []) {
+      if (u.status !== "completed" || !u.inspector_id) continue;
+      byInspector.set(u.inspector_id, (byInspector.get(u.inspector_id) || 0) + 1);
+    }
+    if (!byInspector.size) {
+      for (const a of sc.case_assignments || []) {
+        const n = Number(a.completed_units || 0);
+        if (n > 0) byInspector.set(a.inspector_id, n);
+      }
+    }
+
+    const multi = sc.assign_mode === "multi" || byInspector.size > 1;
+    if (!multi) continue;
+
+    if (!byInspector.size && sc.inspector_id) {
+      byInspector.set(sc.inspector_id, 1);
+    }
+    if (!byInspector.size) continue;
+
+    const perfFinal = Number(sc.case_performance?.perf_final || 0);
+    const totalUnits = [...byInspector.values()].reduce((s, n) => s + n, 0);
+    if (totalUnits <= 0) continue;
+
+    const entries = [...byInspector.entries()];
+    let allocated = 0;
+    const objects = entries.map(([inspectorId, units], index) => {
+      const ratio = units / totalUnits;
+      let amount: number;
+      if (index === entries.length - 1) {
+        amount = Math.round((perfFinal - allocated) * 100) / 100;
+      } else {
+        amount = Math.round(perfFinal * ratio * 100) / 100;
+        allocated += amount;
+      }
+      return {
+        service_case_id: caseId,
+        inspector_id: inspectorId,
+        completed_units: units,
+        share_ratio: Math.round(ratio * 1_000_000) / 1_000_000,
+        perf_amount: money(amount),
+      };
+    });
+
+    await adminGql(
+      `mutation ($objects: [case_perf_shares_insert_input!]!) {
+        insert_case_perf_shares(objects: $objects) { affected_rows }
+      }`,
+      { objects },
+    );
   }
 }

@@ -37,8 +37,15 @@ export function isIgnoredItem(value: string): boolean {
 }
 
 export function completeSourceItemName(source: string, productModel: string | null): string {
-  if (!productModel || !/^整机更换[_*\-]?维修[（(]≤?3台场景[）)]$/i.test(source)) return source;
-  return `整机更换_${productModel}_维修（≤3台场景）`;
+  if (!productModel) return source;
+  if (/^整机更换[_*\-]?维修[（(]≤?3台场景[）)]$/i.test(source)) {
+    return `整机更换_${productModel}_维修（≤3台场景）`;
+  }
+  // PO 常写「整机更换_维修」，价格库多为「整机更换_<型号>_维修」
+  if (/^整机更换[_*\-]?维修$/i.test(source)) {
+    return `整机更换_${productModel}_维修`;
+  }
+  return source;
 }
 
 function modelTokens(value: string): string[] {
@@ -62,6 +69,14 @@ export function builtinTargetCode(
   targetItemCode: string;
   confidence: number;
 } | null {
+  // 价格库已有同名条目时优先精确命中，避免被宽泛别名（如「整机更换_*_维修」→「整机更换_整改、维修」）抢走
+  const normalized = normalizeItemName(source);
+  const exact = targetCodes.filter((code) => normalizeItemName(code) === normalized);
+  const rawExact =
+    exact.find((code) => code === source) || targetCodes.find((code) => code === source);
+  if (rawExact) return { targetItemCode: rawExact, confidence: 1 };
+  if (exact.length === 1) return { targetItemCode: exact[0], confidence: 1 };
+
   const directAliases: Array<[RegExp, RegExp]> = [
     [/^在途\d*$/i, /^其他[_*\-]?在途$/i],
     [/^入离场$/i, /^其他[_*\-]?入场$/i],
@@ -77,14 +92,9 @@ export function builtinTargetCode(
     if (target) return { targetItemCode: target, confidence: 0.99 };
   }
 
-  const normalized = normalizeItemName(source);
-  const exact = targetCodes.filter((code) => normalizeItemName(code) === normalized);
-  const rawExact = exact.find((code) => code === source);
-  if (rawExact) return { targetItemCode: rawExact, confidence: 1 };
   const sourcePrefix = source.split(/[_*\-]/)[0];
   const sameStyle = exact.filter((code) => code.split(/[_*\-]/)[0] === sourcePrefix);
   if (sameStyle.length === 1) return { targetItemCode: sameStyle[0], confidence: 0.99 };
-  if (exact.length === 1) return { targetItemCode: exact[0], confidence: 1 };
 
   const sourceAction = actionOf(source);
   const sourceModels = modelTokens(source);

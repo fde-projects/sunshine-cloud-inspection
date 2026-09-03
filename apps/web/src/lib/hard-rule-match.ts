@@ -30,7 +30,7 @@ export const HARD_RULE_FAIL_SAMPLE_LIMIT = 2;
 export const HARD_RULE_FIELD_PHOTO_LIMIT = 4;
 export const HARD_RULE_TRIAL_PHOTO_LIMIT = HARD_RULE_FIELD_PHOTO_LIMIT;
 export const HARD_RULE_REVIEW_WINDOW_DAYS = 30;
-export const HARD_RULE_VIEW_LABEL_MAX = 12;
+export const HARD_RULE_VIEW_LABEL_MAX = 24;
 const MAX_SAMPLE_URL_LEN = 1024;
 
 export type HardRuleMatchContext = {
@@ -171,9 +171,14 @@ export function failReasonIfFaultTabsNotDistinct(
 
 export function parseCoverIndexes(raw: unknown, photoCount: number, views: HardRulePassView[] = []): number[] {
   const slots = labeledPassViews(views);
-  const list = Array.isArray(raw) ? raw : [];
-  return Array.from({ length: photoCount }, (_, i) => {
-    const item = list[i];
+  const resolveOne = (item: unknown): number => {
+    if (item == null) return 0;
+    if (typeof item === "object" && !Array.isArray(item)) {
+      const row = item as Record<string, unknown>;
+      return resolveOne(
+        row.matchSample ?? row.sampleIndex ?? row.sample ?? row.view ?? row.label ?? row.value,
+      );
+    }
     if (typeof item === "string") {
       const text = item.trim();
       if (!text) return 0;
@@ -183,11 +188,30 @@ export function parseCoverIndexes(raw: unknown, photoCount: number, views: HardR
         );
         return hit >= 0 ? hit + 1 : 0;
       }
+      const n = Number(text);
+      return Number.isFinite(n) ? Math.max(0, Math.floor(n)) : 0;
     }
     const value = Number(item);
     if (!Number.isFinite(value)) return 0;
     return Math.max(0, Math.floor(value));
-  });
+  };
+
+  // 支持 [{photoIndex:1,matchSample:2}, ...]（photoIndex 从 1 起）
+  if (Array.isArray(raw) && raw.some((item) => item && typeof item === "object" && !Array.isArray(item))) {
+    const out = Array.from({ length: photoCount }, () => 0);
+    for (const item of raw) {
+      if (!item || typeof item !== "object" || Array.isArray(item)) continue;
+      const row = item as Record<string, unknown>;
+      const photoRaw = Number(row.photoIndex ?? row.index ?? row.i);
+      const match = resolveOne(row.matchSample ?? row.sampleIndex ?? row.sample ?? row.view ?? row.label);
+      if (!Number.isInteger(photoRaw) || photoRaw < 1 || photoRaw > photoCount) continue;
+      out[photoRaw - 1] = match;
+    }
+    if (out.some((n) => n > 0)) return out;
+  }
+
+  const list = Array.isArray(raw) ? raw : [];
+  return Array.from({ length: photoCount }, (_, i) => resolveOne(list[i]));
 }
 
 function parseHintObject(hint: string | null | undefined): Record<string, unknown> | null {

@@ -9,16 +9,19 @@ import {
 export type HardRuleEnforceMode = "strict" | "normal" | "off";
 
 const STRICT_LINE = "拿不准时必须判不合格，禁止猜测通过。";
+const NOTES_HEAD = "判定补充";
 
 export function composeHardRulePrompt(input: {
   name?: string;
   passCriteria?: string;
   failCriteria?: string;
+  judgeNotes?: string;
   enforceMode?: string;
 }): string {
   const name = String(input.name || "").trim() || "自定义检查";
   const pass = String(input.passCriteria || "").trim();
   const fail = String(input.failCriteria || "").trim();
+  const notes = String(input.judgeNotes || "").trim();
   const lines = [`【${name}】`];
   if (pass) {
     lines.push("合格：", pass);
@@ -27,10 +30,50 @@ export function composeHardRulePrompt(input: {
     if (pass) lines.push("");
     lines.push("必须不合格：", fail);
   }
+  if (notes) {
+    if (pass || fail) lines.push("");
+    lines.push(`${NOTES_HEAD}：`, notes);
+  }
   if (input.enforceMode === "strict") {
     lines.push("", STRICT_LINE);
   }
   return lines.join("\n").trim();
+}
+
+/** 有多张合格样时，用「种类覆盖」写标准，避免旧版 A/B 每张都要锁紧点把样张自己否掉。 */
+export function criteriaFromPassSamples(input: {
+  title?: string;
+  labels: string[];
+}): { passCriteria: string; failCriteria: string } {
+  const labels = input.labels.map((x) => String(x || "").trim()).filter(Boolean);
+  const title = String(input.title || "").trim() || "该检查项";
+  if (labels.length >= 2) {
+    return {
+      passCriteria: [
+        `${title}：现场须拍齐 ${labels.length} 种视角，并达到上方合格样同级：${labels.join("、")}。`,
+        "上传顺序不限，按画面内容对号即可；不同种类不算构图重复。",
+        "达到对应合格样同级即合格，不额外要求合格样里看不清或没有的细节。",
+        "各类证据由不同照片分担（例如整机看安装关系，抱箍看锁紧点，线缆看接线），禁止要求每一张同时满足所有要点。",
+      ].join("\n"),
+      failCriteria: [
+        `缺「${labels.join("、")}」中任一种、两张都属同一种、明显差于对应合格样，或设备倾斜/支架开裂/螺母明显未压实 → 不合格。`,
+        "拿不准是否已拍齐全部种类时，按不合格处理。",
+      ].join("\n"),
+    };
+  }
+  return {
+    passCriteria: `${title}：按合格样视角拍摄，关键部位清晰、不遮挡。`,
+    failCriteria: "缺必要视角、看不清判定点、照片重复或可见明显缺陷 → 不合格。",
+  };
+}
+
+/** 旧版安装固定类文案：容易与「多张合格样分工」冲突。 */
+export function looksLikeLegacyMountCriteria(text: string): boolean {
+  const t = String(text || "");
+  return (
+    /mountPointsVisible|multiAngleCoverage|两类证据|A\)\s*整机|B\)\s*固定点/.test(t) &&
+    /每一张|同时具备|缺一不可|锁紧螺母本体/.test(t)
+  );
 }
 
 function stripStrictLine(value: string) {
@@ -40,22 +83,31 @@ function stripStrictLine(value: string) {
 export function parseHardRulePrompt(promptText: string | null | undefined): {
   passCriteria: string;
   failCriteria: string;
+  judgeNotes: string;
   structured: boolean;
 } {
   const text = String(promptText || "").replace(/\r\n/g, "\n").trim();
-  if (!text) return { passCriteria: "", failCriteria: "", structured: false };
+  if (!text) return { passCriteria: "", failCriteria: "", judgeNotes: "", structured: false };
 
-  const passNew = text.match(/(?:^|\n)合格[：:]\s*([\s\S]*?)(?=\n必须不合格[：:]|$)/);
-  const failNew = text.match(/\n必须不合格[：:]\s*([\s\S]*)$/);
+  const notesRe = new RegExp(`(?:^|\\n)${NOTES_HEAD}[：:]\\s*([\\s\\S]*)$`);
+  const notesHit = text.match(notesRe);
+  const withoutNotes = notesHit
+    ? text.slice(0, notesHit.index).replace(/\n+$/, "")
+    : text;
+  const judgeNotes = stripStrictLine(notesHit?.[1] || "");
+
+  const passNew = withoutNotes.match(/(?:^|\n)合格[：:]\s*([\s\S]*?)(?=\n必须不合格[：:]|$)/);
+  const failNew = withoutNotes.match(/\n必须不合格[：:]\s*([\s\S]*)$/);
   if (passNew && failNew) {
     return {
       passCriteria: stripStrictLine(passNew[1] || ""),
       failCriteria: stripStrictLine(failNew[1] || ""),
+      judgeNotes,
       structured: true,
     };
   }
 
-  const lines = text.split("\n");
+  const lines = withoutNotes.split("\n");
   let passStart = -1;
   let failStart = -1;
   for (let i = 0; i < lines.length; i += 1) {
@@ -73,32 +125,46 @@ export function parseHardRulePrompt(promptText: string | null | undefined): {
     return {
       passCriteria: slice(passStart, failStart >= 0 ? failStart : lines.length),
       failCriteria: slice(failStart, lines.length),
+      judgeNotes,
       structured: true,
     };
   }
 
-  return { passCriteria: "", failCriteria: "", structured: false };
+  if (judgeNotes) {
+    return { passCriteria: "", failCriteria: "", judgeNotes, structured: true };
+  }
+  return { passCriteria: "", failCriteria: "", judgeNotes: "", structured: false };
 }
 
 /** 旧版整段正文拆进两栏；拆不出结构时把全文放入合格，并补一条通用不合格。 */
 export function hydrateCriteriaFromPrompt(promptText: string | null | undefined): {
   passCriteria: string;
   failCriteria: string;
+  judgeNotes: string;
   structured: boolean;
   source: "structured" | "legacy" | "empty";
 } {
   const parsed = parseHardRulePrompt(promptText);
-  if (parsed.passCriteria || parsed.failCriteria) {
+  if (parsed.passCriteria || parsed.failCriteria || parsed.judgeNotes) {
     return { ...parsed, source: "structured" };
   }
   const text = String(promptText || "").replace(/\r\n/g, "\n").trim();
-  if (!text) return { passCriteria: "", failCriteria: "", structured: false, source: "empty" };
+  if (!text) {
+    return {
+      passCriteria: "",
+      failCriteria: "",
+      judgeNotes: "",
+      structured: false,
+      source: "empty",
+    };
+  }
   const body = text.replace(/^【[^】]+】\s*\n?/, "").trim();
   const failAt = body.search(/\n(?:不合格|必须\s*fail|禁止放行|拿不准.*不合格)/i);
   if (failAt > 20) {
     return {
       passCriteria: body.slice(0, failAt).trim(),
       failCriteria: body.slice(failAt).replace(/^\n/, "").trim(),
+      judgeNotes: "",
       structured: true,
       source: "legacy",
     };
@@ -106,6 +172,7 @@ export function hydrateCriteriaFromPrompt(promptText: string | null | undefined)
   return {
     passCriteria: body,
     failCriteria: "缺关键证据、视角不完整、照片重复或看不清判定点时必须不合格。",
+    judgeNotes: "",
     structured: true,
     source: "legacy",
   };

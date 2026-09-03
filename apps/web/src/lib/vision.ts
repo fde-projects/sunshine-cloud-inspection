@@ -72,6 +72,65 @@ function uniqueUrls(urls: string[], limit: number) {
   return out;
 }
 
+/** 多视角对号专用：只问 covers，避免和合格/不合格总判搅在一起（左/背/右易糊）。 */
+async function assignCoversByVision(input: {
+  apiKey: string;
+  base: string;
+  model: string;
+  title: string;
+  passViews: HardRulePassView[];
+  fieldPhotos: string[];
+}): Promise<number[]> {
+  const { passViews, fieldPhotos } = input;
+  const slotLine = passViews.map((item, i) => `${i + 1}=${item.label}`).join("，");
+  const prompt = `你只做「视角对号」，不要判断最终合格/不合格。
+检查项：${input.title}
+合格样编号：${slotLine}
+待判定共 ${fieldPhotos.length} 张（顺序可与合格样不同）。
+要求：
+1. covers 长度必须等于待判定张数；covers[i] 是第 i 张待判定最接近的合格样编号，对不上填 0。
+2. 左/右/背面、整机/抱箍/线缆等相近视角必须区分：看电杆在画面左还是右、是否看见柜门/警示贴、是否看见抱箍锁紧点、线缆特写还是整机。
+3. 禁止图省事把多张都标成同一个编号，除非画面真的几乎同一视角。
+4. why 里用一句话写出每张的对号依据（朝向/部件）。
+只输出 JSON：{"covers":[与待判定张数相同的编号],"why":["图1→…","图2→…"]}`;
+
+  const content: unknown[] = [{ type: "text", text: prompt }];
+  passViews.forEach((item, i) => {
+    content.push({
+      type: "text",
+      text: `【合格样 ${i + 1}=${item.label}】请记住编号 ${i + 1}`,
+    });
+    content.push({ type: "image_url", image_url: { url: item.url } });
+  });
+  fieldPhotos.forEach((url, i) => {
+    content.push({
+      type: "text",
+      text: `【待判定第 ${i + 1} 张】请填 covers[${i}]`,
+    });
+    content.push({ type: "image_url", image_url: { url } });
+  });
+
+  const res = await fetch(`${input.base}/chat/completions`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      authorization: `Bearer ${input.apiKey}`,
+    },
+    body: JSON.stringify({
+      model: input.model,
+      messages: [{ role: "user", content }],
+      temperature: 0,
+      max_tokens: 400,
+    }),
+  });
+  if (!res.ok) return Array.from({ length: fieldPhotos.length }, () => 0);
+  const json = (await res.json()) as {
+    choices?: { message?: { content?: string } }[];
+  };
+  const parsed = extractJson(json.choices?.[0]?.message?.content || "");
+  return parseCoverIndexes(parsed.covers, fieldPhotos.length, passViews);
+}
+
 export async function analyzePhotos(input: {
   title: string;
   description: string;
@@ -163,18 +222,40 @@ export async function analyzePhotos(input: {
   }
 
   const hasRefs = passViews.length + sampleFail.length > 0;
+  if (passViews.length >= 2) {
+    const slotNames = passViews.map((item, i) => `${i + 1}=${item.label}`).join("，");
+    const priority = [
+      `【多视角对照优先】合格样：${slotNames}。covers 盖全每一种即可。`,
+      "每张待判定只对照自己对上的那一种合格样，不得拿别种样张的要求来卡（例如对上「线缆」的图不必看见抱箍/螺栓）。",
+      "禁止要求每一张同时满足所有要点。",
+    ].join("");
+    ruleBlock = ruleBlock ? `${priority}\n${ruleBlock}` : priority;
+  }
   const needFaultTabs =
     /实时故障/.test(`${input.title}\n${ruleBlock}\n${passViews.map((v) => v.label).join("\n")}`) &&
     /历史故障/.test(`${input.title}\n${ruleBlock}\n${passViews.map((v) => v.label).join("\n")}`);
   const slotLine =
     passViews.length >= 2
-      ? `合格样共 ${passViews.length} 张，编号 1 到 ${passViews.length}：${passViews.map((item, i) => `${i + 1}=${item.label}`).join("，")}。covers 必须与待判定照片一一对应，值为合格样编号或 0（对不上）。每种合格样都必须被至少一张待判定对上；两张都像同一种则 covers 必须写成同一编号（如[1,1]），status 必须 fail。禁止为了凑数把两张同一种图标成不同编号。`
+      ? [
+          `合格样共 ${passViews.length} 种拍摄类型，编号 1 到 ${passViews.length}：${passViews
+            .map((item, i) => `${i + 1}=${item.label}`)
+            .join("，")}。`,
+          "covers 与待判定照片一一对应：第 i 个元素表示「第 i 张待判定」对上了哪一种合格样（填编号），对不上填 0。",
+          "重要：待判定上传顺序可以和合格样顺序不同，必须按画面内容对号，禁止默认按序号写成 [1,2,3…]。",
+          `对号示例：若合格样是 ${passViews
+            .map((item, i) => `${i + 1}=${item.label}`)
+            .join("、")}，而待判定先拍了「${passViews[passViews.length - 1]?.label}」再拍「${passViews[0]?.label}」，则 covers 前两项应是 [${passViews.length},1,…]，而不是 [1,2,…]。`,
+          "每种合格样都必须被至少一张待判定对上；两张都像同一种则 covers 写成同一编号（如[1,1]），status 必须 fail。禁止为凑数把同一种图标成不同编号。",
+          "左/右/背面固定等相近视角：必须仔细区分设备朝向、电杆前后关系、可见面板，禁止图省事全部标成同一种。",
+        ].join("")
       : "";
   const faultLine = needFaultTabs
     ? `故障页签专项：逐张只认「当前选中」的页签（高亮/下划线/填充色），未选中页签上的标题不算已拍。两张都必须分别是实时故障与历史故障；两张都是历史或都是实时 → fail。evidence.photoTypes 必须与待判定张数相同，取值只能是 realtime / historical / other；也可在 evidence.photoFindings 里写 selectedTab。`
     : "";
   const jsonExtra = [
-    passViews.length >= 2 ? `,"covers":[与待判定张数相同的合格样编号]` : "",
+    passViews.length >= 2
+      ? `,"covers":[按内容对号的合格样编号，长度=待判定张数，顺序可变]`
+      : "",
     needFaultTabs
       ? `,"evidence":{"photoTypes":["realtime或historical或other", "..."],"photoFindings":[{"photoIndex":1,"selectedTab":"实时故障或历史故障","note":"选中态依据"}]}`
       : "",
@@ -183,8 +264,11 @@ export async function analyzePhotos(input: {
 检查项：${input.title}
 标准：${input.description}
 ${ruleBlock ? `硬规则：\n${ruleBlock}` : ""}
-${hasRefs ? "下面先给出管理员标注的对照样张，再给出待判定照片。合格样是该检查项应有的拍摄角度；待判定应覆盖这些视角并接近合格样。若更接近不合格样、缺必要视角，或出现不合格标准中的情况，必须 fail。" : ""}
-${strict ? "判定纪律：证据不足或拿不准必须判 fail，禁止猜测合格。" : ""}
+${hasRefs ? "下面先给出管理员标注的对照样张，再给出待判定照片。现场图通常是重新拍摄或从相册上传，地址一定与合格样不同，必须以画面内容对照，禁止因「不是同一文件地址」判 fail。" : ""}
+${hasRefs ? "及格线=合格样画面：待判定达到与某张合格样同级（同视角、关键部位清晰度相当）即应对上该合格样。禁止额外要求合格样里看不清或没有的细节（例如合格样未清晰出现「PE」字样，就不得以未见PE字样否决）。" : ""}
+${hasRefs ? "判定步骤：①先给每张待判定填 covers（对上的合格样编号，顺序可变）；②确认每种合格样都被至少一张对上；③再对照不合格样与硬规则文字。若①②已满足且待判定未明显差于对应合格样，status 必须 pass。" : ""}
+${hasRefs ? "若某张待判定与某张合格样画面实质相同（同场景同角度同内容，即使重新拍照/压缩），必须对上该合格样；整组对齐全部分合格样且未明显更差时必须 pass，不得再用构图重复、缺标识等细则否决。" : ""}
+${strict ? "判定纪律：相对合格样明显更差、缺某一类必拍视角、或拿不准必须判 fail。不同拍摄类型不算构图重复。" : ""}
 必须看完每一张待判定照片再下结论，禁止只根据第一张判定。
 页签或按钮上的标题不等于已经拍了那一页：必须单独截到点开后的内容。一张图里同时看见「实时故障」和「历史故障」等标题，只算当前选中的那一页，未点开的那一页视为缺失，必须 fail。
 ${slotLine}
@@ -194,7 +278,10 @@ status 必须与 reason 最后一句一致：理由写不合格则 status 必须
 
   const content: unknown[] = [{ type: "text", text: prompt }];
   passViews.forEach((item, i) => {
-    content.push({ type: "text", text: `【对照·合格样 ${i + 1}/${passViews.length}：${item.label}】` });
+    content.push({
+      type: "text",
+      text: `【对照·合格样 ${i + 1}/${passViews.length}：${item.label}】（类型编号 ${i + 1}，供 covers 对号）`,
+    });
     content.push({ type: "image_url", image_url: { url: item.url } });
   });
   for (const url of sampleFail) {
@@ -202,10 +289,16 @@ status 必须与 reason 最后一句一致：理由写不合格则 status 必须
     content.push({ type: "image_url", image_url: { url } });
   }
   if (hasRefs) {
-    content.push({ type: "text", text: `【待判定照片，共 ${fieldPhotos.length} 张，须全部查看】` });
+    content.push({
+      type: "text",
+      text: `【待判定照片，共 ${fieldPhotos.length} 张，须全部查看；顺序可与合格样不同，请按内容填写 covers】`,
+    });
   }
   fieldPhotos.forEach((url, i) => {
-    content.push({ type: "text", text: `【待判定第 ${i + 1}/${fieldPhotos.length} 张】` });
+    content.push({
+      type: "text",
+      text: `【待判定第 ${i + 1}/${fieldPhotos.length} 张】（covers[${i}] = 本张对上的合格样编号，勿默认填 ${i + 1}）`,
+    });
     content.push({ type: "image_url", image_url: { url } });
   });
 
@@ -237,10 +330,31 @@ status 必须与 reason 最后一句一致：理由写不合格则 status 必须
   const text = json.choices?.[0]?.message?.content || "";
   const parsed = extractJson(text);
   const reason = String(parsed.reason || text.slice(0, 200) || "模型未给出理由");
-  const covers = parseCoverIndexes(parsed.covers, fieldPhotos.length, passViews);
-  const uncovered = failReasonIfSlotsUncovered(passViews, covers);
+  let covers = parseCoverIndexes(parsed.covers, fieldPhotos.length, passViews);
+  let coverHits = covers.filter((n) => n > 0).length;
+  let uncovered = failReasonIfSlotsUncovered(passViews, covers);
+  // 总判里 covers 常把左/背/右糊成一种：缺种类时再单独做一次对号（样张试跑与现场重拍同一路径）
+  if (uncovered && passViews.length >= 2 && fieldPhotos.length >= 2) {
+    const retry = await assignCoversByVision({
+      apiKey,
+      base,
+      model,
+      title: input.title,
+      passViews,
+      fieldPhotos,
+    });
+    const retryHits = retry.filter((n) => n > 0).length;
+    if (retryHits >= coverHits) {
+      covers = retry;
+      coverHits = retryHits;
+      uncovered = failReasonIfSlotsUncovered(passViews, covers);
+    }
+  }
+  const rawStatus = parsed.status === "fail" ? "fail" : parsed.status === "pass" ? "pass" : "fail";
   if (uncovered) {
-    return { status: "fail", confidence: 1, reason: uncovered, provider: "siliconflow" };
+    if (coverHits > 0 || rawStatus === "pass") {
+      return { status: "fail", confidence: 1, reason: uncovered, provider: "siliconflow" };
+    }
   }
   const faultTabs = failReasonIfFaultTabsNotDistinct(parsed, {
     title: input.title,
@@ -251,7 +365,34 @@ status 必须与 reason 最后一句一致：理由写不合格则 status 必须
   if (faultTabs) {
     return { status: "fail", confidence: 1, reason: faultTabs, provider: "siliconflow" };
   }
-  const rawStatus = parsed.status === "fail" ? "fail" : parsed.status === "pass" ? "pass" : "fail";
+
+  const usedFailSample = fieldPhotos.some((url) => sampleFail.includes(url));
+  // 种类已盖全时：若模型因「这张没拍到另一种的细节」误杀，纠正为合格，但仍保留模型原话。
+  // 试跑里若夹了不合格样原图，或写了倾斜/开裂/未压实，不纠正。
+  if (passViews.length >= 2 && !uncovered && !usedFailSample) {
+    const filled = new Set(
+      covers.filter((n) => Number.isInteger(n) && n >= 1 && n <= passViews.length),
+    );
+    if (filled.size >= passViews.length) {
+      const hardDefect =
+        /整机倾斜|设备倾斜|支架开裂|支架断裂|脱落|未压实|未压住垫片|未压住横担|相对支架移位|更接近不合格样/.test(
+          reason,
+        );
+      const crossTypeNit =
+        /看不见抱箍|看不清抱箍|未清晰显示固定点|不能看见固定点|至少需要 2 张|A\s*类|B\s*类|multiAngleCoverage/.test(
+          reason,
+        );
+      if (rawStatus === "fail" && !hardDefect && crossTypeNit) {
+        return {
+          status: "pass",
+          confidence: typeof parsed.confidence === "number" ? parsed.confidence : 0.9,
+          reason,
+          provider: "siliconflow",
+        };
+      }
+    }
+  }
+
   return {
     status: reconcileStatusWithReason(rawStatus, reason),
     confidence: typeof parsed.confidence === "number" ? parsed.confidence : 0.5,

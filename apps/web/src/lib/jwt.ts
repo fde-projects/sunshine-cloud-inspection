@@ -52,7 +52,9 @@ export async function signHasuraUserJwt(
   })
     .setProtectedHeader({ alg: "HS256", typ: "JWT" })
     .setSubject(userId)
-    .setIssuedAt()
+    // 签发时间向前回拨 60 秒：容忍应用服务器时钟略快于 Hasura 服务端，
+    // 避免 JWTIssuedAtFuture 导致刚签发的 token 被拒绝
+    .setIssuedAt(Math.floor(Date.now() / 1000) - 60)
     .setExpirationTime(expiresIn)
     .sign(secret);
 }

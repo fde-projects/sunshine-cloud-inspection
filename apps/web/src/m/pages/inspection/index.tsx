@@ -988,11 +988,24 @@ export default function InspectionPage() {
       Toast.info('照片正在上传，请稍候');
       return;
     }
+    /** 模板无检查项时仅剩序列号一步，底部是「提交报告」而非「下一步」——提交前先落库序列号 */
     if (serialRequired && !serialConfirmed) {
-      Toast.info('请先完成序列号识别（点下一步保存）');
-      const serialIdx = wizardSteps.findIndex((s) => s.kind === 'serial');
-      if (serialIdx >= 0) setWizardIndex(serialIdx);
-      return;
+      if (currentWizard?.kind === 'serial') {
+        setTripBusy(true);
+        try {
+          const saved = await serialStepRef.current?.confirmAndSave();
+          if (!saved) return;
+          setUnitSerial(saved.serial);
+          setUnitSerialPhoto(saved.photoUrl || '');
+        } finally {
+          setTripBusy(false);
+        }
+      } else {
+        Toast.info('请先完成序列号识别（点下一步保存）');
+        const serialIdx = wizardSteps.findIndex((s) => s.kind === 'serial');
+        if (serialIdx >= 0) setWizardIndex(serialIdx);
+        return;
+      }
     }
     if (currentWizard?.kind === 'entry') {
       const mustCurrent = !!currentTpl && currentTpl.isRequired !== false;

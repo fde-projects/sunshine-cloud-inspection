@@ -33,6 +33,11 @@ import {
 import { useAuthStore } from '../../stores/auth';
 import { uploadImage } from '../../api/upload';
 import { displayPhotoUrl } from '../../utils/photo-url';
+
+function isUsablePhotoUrl(url: unknown): boolean {
+  const u = String(url || '').trim();
+  return /^https?:\/\//i.test(u);
+}
 import { isAntValidateError } from '../../utils/ant-form';
 import FillTable from '../../components/FillTable';
 
@@ -71,6 +76,12 @@ export default function TemplatesPage() {
   const [productLines, setProductLines] = useState<TemplateProductLine[]>([]);
   const [activeLineId, setActiveLineId] = useState<string>('');
   const [entries, setEntries] = useState<TemplateEntry[]>([]);
+
+  const sanitizeEntries = (list: TemplateEntry[]) =>
+    (list || []).map((e) => ({
+      ...e,
+      samplePhotos: (e.samplePhotos || []).filter((u) => isUsablePhotoUrl(u)),
+    }));
   const [uploadingEntry, setUploadingEntry] = useState<number | null>(null);
 
   const load = useCallback(async () => {
@@ -117,7 +128,7 @@ export default function TemplatesPage() {
     persistActiveEntries(entries);
     setActiveLineId(lineId);
     const line = productLines.find((p) => p.id === lineId);
-    setEntries([...(line?.entries || [])]);
+    setEntries(sanitizeEntries([...(line?.entries || [])]));
   };
 
   const openCreate = (presetName = '', presetLine = '') => {
@@ -152,25 +163,29 @@ export default function TemplatesPage() {
     let lines: TemplateProductLine[] = [...(record.productLines || [])].map((p) => ({
       id: p.id,
       name: p.name,
-      entries: [...(p.entries || [])]
-        .sort((a, b) => a.order - b.order)
-        .map((e) => ({
-          ...e,
-          checkType: e.checkType === 'text' ? 'text' : 'photo',
-          aiEnabled: resolveEntryAiEnabled(e),
-        })),
+      entries: sanitizeEntries(
+        [...(p.entries || [])]
+          .sort((a, b) => a.order - b.order)
+          .map((e) => ({
+            ...e,
+            checkType: e.checkType === 'text' ? 'text' : 'photo',
+            aiEnabled: resolveEntryAiEnabled(e),
+          })),
+      ),
     }));
     if (!lines.length && defs.length) {
       const id = `pl-${Date.now()}`;
       lines = [
         {
           id,
-          name: record.name?.trim() || '默认',
-          entries: defs.map((e) => ({
-            ...e,
-            checkType: e.checkType === 'text' ? 'text' : 'photo',
-            aiEnabled: resolveEntryAiEnabled(e),
-          })),
+          name: '默认',
+          entries: sanitizeEntries(
+            defs.map((e) => ({
+              ...e,
+              checkType: e.checkType === 'text' ? 'text' : 'photo',
+              aiEnabled: resolveEntryAiEnabled(e),
+            })),
+          ),
         },
       ];
     }
@@ -195,7 +210,7 @@ export default function TemplatesPage() {
       const hit = lines.find((p) => String(p.name || '').trim() === want);
       if (hit) {
         setActiveLineId(hit.id);
-        setEntries([...(hit.entries || [])]);
+        setEntries(sanitizeEntries([...(hit.entries || [])]));
         setModalOpen(true);
         message.info(`产品线「${want}」已存在，请确认后保存`);
         return;
@@ -203,7 +218,7 @@ export default function TemplatesPage() {
     }
     if (lines.length) {
       setActiveLineId(lines[0].id);
-      setEntries([...(lines[0].entries || [])]);
+      setEntries(sanitizeEntries([...(lines[0].entries || [])]));
     } else {
       setActiveLineId('');
       setEntries([]);
@@ -287,7 +302,7 @@ export default function TemplatesPage() {
           samplePhotos:
             e.checkType === 'text' || !resolveEntryAiEnabled(e)
               ? []
-              : e.samplePhotos || [],
+              : (e.samplePhotos || []).filter((u) => isUsablePhotoUrl(u)),
         })),
       })),
     };
@@ -563,16 +578,19 @@ export default function TemplatesPage() {
                 </div>
                 {isPhoto && aiOn ? (
                   <>
-                    {(entry.samplePhotos || []).length > 0 && (
+                    {(entry.samplePhotos || []).filter((u) => isUsablePhotoUrl(u)).length > 0 && (
                       <Image.PreviewGroup>
                         <Space wrap>
-                          {entry.samplePhotos!.map((url) => (
-                            <div key={url} style={{ position: 'relative' }}>
+                          {(entry.samplePhotos || [])
+                            .filter((u) => isUsablePhotoUrl(u))
+                            .map((url, photoIdx) => (
+                            <div key={`${photoIdx}-${url.slice(-24)}`} style={{ position: 'relative' }}>
                               <Image
                                 src={displayPhotoUrl(url)}
                                 width={72}
                                 height={72}
                                 style={{ objectFit: 'cover', borderRadius: 6, cursor: 'pointer' }}
+                                fallback="data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='72' height='72'%3E%3Crect fill='%23f5f5f5' width='100%25' height='100%25'/%3E%3Ctext x='50%25' y='50%25' dominant-baseline='middle' text-anchor='middle' fill='%23999' font-size='11'%3E失败%3C/text%3E%3C/svg%3E"
                               />
                               <Button
                                 size="small"
@@ -583,7 +601,7 @@ export default function TemplatesPage() {
                                   const next = [...entries];
                                   next[index] = {
                                     ...entry,
-                                    samplePhotos: entry.samplePhotos!.filter((u) => u !== url),
+                                    samplePhotos: (entry.samplePhotos || []).filter((u) => u !== url),
                                   };
                                   setEntries(next);
                                 }}
@@ -611,62 +629,74 @@ export default function TemplatesPage() {
                           return false;
                         }
                         setUploadingEntry(index);
-                        const hide = message.loading(
-                          files.length > 1
-                            ? `正在压缩并上传 ${files.length} 张样本图…`
-                            : '正在压缩并上传样本图…',
-                          0,
-                        );
                         void (async () => {
-                          let ok = 0;
-                          let fail = 0;
+                          // 串行上传：天翼直传若因 CORS 失败会回退服务端，并行易挤爆导致部分 500
                           const urls: string[] = [];
-                          const concurrency = 3;
-                          let cursor = 0;
-                          const workers = Array.from(
-                            { length: Math.min(concurrency, files.length) },
-                            async () => {
-                              while (cursor < files.length) {
-                                const current = files[cursor++];
-                                try {
-                                  const res = await uploadImage(current as File, {
-                                    siteName,
-                                    serialNumber: '样本图',
-                                  });
-                                  urls.push(res.url);
-                                  ok += 1;
-                                } catch {
-                                  fail += 1;
-                                }
+                          let fail = 0;
+                          let lastErr = '';
+                          for (let i = 0; i < files.length; i += 1) {
+                            const current = files[i] as File;
+                            const progress = message.loading(
+                              files.length > 1
+                                ? `正在上传样本图 ${i + 1}/${files.length}…`
+                                : '正在压缩并上传样本图…',
+                              0,
+                            );
+                            try {
+                              const res = await uploadImage(current, {
+                                siteName,
+                                serialNumber: '样本图',
+                              });
+                              if (isUsablePhotoUrl(res?.url)) {
+                                const url = String(res.url).trim();
+                                urls.push(url);
+                                setEntries((prev) => {
+                                  const next = [...prev];
+                                  const cur = next[index];
+                                  if (!cur) return prev;
+                                  const merged = [
+                                    ...(cur.samplePhotos || []).filter((u) =>
+                                      isUsablePhotoUrl(u),
+                                    ),
+                                    url,
+                                  ];
+                                  next[index] = { ...cur, samplePhotos: merged };
+                                  return next;
+                                });
+                              } else {
+                                fail += 1;
+                                lastErr = '上传未返回有效图片地址';
                               }
-                            },
-                          );
-                          await Promise.all(workers);
-                          if (urls.length) {
-                            setEntries((prev) => {
-                              const next = [...prev];
-                              const cur = next[index];
-                              if (!cur) return prev;
-                              next[index] = {
-                                ...cur,
-                                samplePhotos: [...(cur.samplePhotos || []), ...urls],
-                              };
-                              return next;
-                            });
+                            } catch (e) {
+                              fail += 1;
+                              lastErr =
+                                e instanceof Error ? e.message : String(e || '上传失败');
+                            } finally {
+                              progress();
+                            }
                           }
                           if (fail === 0) {
                             message.success(
-                              files.length > 1 ? `已上传 ${ok} 张样本图` : '样本图已上传',
+                              files.length > 1
+                                ? `已上传 ${urls.length} 张样本图`
+                                : '样本图已上传',
                             );
-                          } else if (ok > 0) {
-                            message.warning(`成功 ${ok} 张，失败 ${fail} 张`);
+                          } else if (urls.length > 0) {
+                            message.warning(
+                              `成功 ${urls.length} 张，失败 ${fail} 张${
+                                lastErr ? `（${lastErr}）` : ''
+                              }`,
+                            );
                           } else {
-                            message.error('样本图上传失败，请重试');
+                            message.error(
+                              lastErr
+                                ? `样本图上传失败：${lastErr}`
+                                : '样本图上传失败，请重试',
+                            );
                           }
                         })()
                           .catch(() => undefined)
                           .finally(() => {
-                            hide();
                             setUploadingEntry(null);
                           });
                         return false;
@@ -835,7 +865,7 @@ export default function TemplatesPage() {
                       setProductLines(rest);
                       if (rest.length) {
                         setActiveLineId(rest[0].id);
-                        setEntries([...(rest[0].entries || [])]);
+                        setEntries(sanitizeEntries([...(rest[0].entries || [])]));
                       } else {
                         setActiveLineId('');
                         setEntries([]);

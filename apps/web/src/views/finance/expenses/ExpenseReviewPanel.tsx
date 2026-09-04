@@ -549,6 +549,87 @@ export default function ExpenseReviewPanel({ onChanged }: Props) {
         scroll={{ x: 1400 }}
         pagination={{ pageSize: 25 }}
         locale={{ emptyText }}
+        mobileSheetTitle={(r) => r.gspCaseNo || r.projectName || '行程报销'}
+        mobileCard={(r, _i, { closeSheet }) => {
+          const summary = tripMileageSummary(r);
+          const units = Number(r.completedUnits || 0);
+          const claim = Number(r.claimAmount ?? r.amount ?? 0);
+          const tripTag = r.tripSkipped ? (
+            <Tag color="orange">无行程</Tag>
+          ) : summary.tripCount > 1 ? (
+            <Tag color="blue">{summary.tripCount}段行程</Tag>
+          ) : summary.tripCount === 1 || r.startOdometerUrl || r.startMileage ? (
+            <Tag color="blue">有行程</Tag>
+          ) : (
+            '-'
+          );
+          return (
+            <>
+              <div className="admin-mobile-card__head">
+                <div>
+                  <strong>{r.gspCaseNo || r.serviceCaseId}</strong>
+                  {r.projectName ? (
+                    <span className="admin-mobile-card__code">{r.projectName}</span>
+                  ) : null}
+                </div>
+                {statusTag(r.status)}
+              </div>
+              <div className="admin-mobile-card__meta">
+                <span>工程师：{r.inspectorName || r.inspectorId}</span>
+                <span className="finance-money">申报 ¥{claim.toFixed(2)}</span>
+                <span>行程：{tripTag}</span>
+                <span>
+                  完成台数：
+                  {units > 0 ? `${units}${r.unitLabel || '台'}` : '-'}
+                </span>
+              </div>
+              <div className="admin-mobile-card__actions">
+                {r.status === 'submitted' ? (
+                  <>
+                    <Button
+                      size="middle"
+                      type="primary"
+                      onClick={() => {
+                        closeSheet();
+                        setCurrent(r);
+                        setAction('approve');
+                        form.setFieldsValue({
+                          approvedAmount: Number(r.claimAmount ?? r.amount ?? 0),
+                          note: undefined,
+                        });
+                      }}
+                    >
+                      核定通过
+                    </Button>
+                    <Button
+                      size="middle"
+                      danger
+                      onClick={() => {
+                        closeSheet();
+                        setCurrent(r);
+                        setAction('reject');
+                        form.resetFields();
+                      }}
+                    >
+                      驳回
+                    </Button>
+                  </>
+                ) : (
+                  <Button
+                    size="middle"
+                    onClick={() => {
+                      closeSheet();
+                      setCurrent(r);
+                      setAction('view');
+                    }}
+                  >
+                    详情
+                  </Button>
+                )}
+              </div>
+            </>
+          );
+        }}
       />
 
       <Modal
@@ -590,7 +671,7 @@ export default function ExpenseReviewPanel({ onChanged }: Props) {
           const summary = tripMileageSummary(current);
           return (
           <>
-            <Descriptions size="small" column={2} style={{ marginBottom: 12 }}>
+            <Descriptions size="small" column={{ xs: 1, sm: 2 }} style={{ marginBottom: 12 }}>
               <Descriptions.Item label="案例">
                 {current.gspCaseNo || current.serviceCaseId}
               </Descriptions.Item>

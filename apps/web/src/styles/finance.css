@@ -44,6 +44,120 @@
   min-width: 132px;
   flex: 0 0 auto;
 }
+
+/* PO 管理：筛选+操作一排 */
+.po-orders-toolbar {
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  margin-top: 10px;
+}
+.po-orders-toolbar__search {
+  width: 220px !important;
+  max-width: 100%;
+  flex: 0 0 auto;
+}
+.po-orders-toolbar__date {
+  width: 260px !important;
+  flex: 0 0 auto;
+}
+.po-orders-toolbar__actions {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+.po-orders-toolbar__actions .ant-btn {
+  flex: 0 0 auto;
+}
+
+@media (max-width: 767px) {
+  .po-orders-toolbar {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    overflow-x: visible;
+    flex-wrap: wrap;
+  }
+  .po-orders-toolbar__search,
+  .po-orders-toolbar__date,
+  .po-orders-toolbar__actions {
+    grid-column: 1 / -1;
+    width: 100% !important;
+    margin-left: 0;
+  }
+  .po-orders-toolbar__actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+  }
+  .po-orders-toolbar__actions .ant-btn-primary {
+    grid-column: 1 / -1;
+  }
+  .po-orders-toolbar__actions .ant-btn {
+    width: 100%;
+    min-height: 40px;
+  }
+}
+
+/* 考核管理：筛选+操作一排 */
+.assessment-toolbar {
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  align-items: center;
+}
+.assessment-toolbar__month {
+  width: 128px !important;
+  flex: 0 0 auto;
+}
+.assessment-toolbar__search {
+  width: 140px !important;
+  flex: 0 0 auto;
+  min-width: 0 !important;
+}
+.assessment-toolbar__select {
+  width: 120px !important;
+  flex: 0 0 auto;
+  min-width: 0 !important;
+}
+.assessment-toolbar__actions {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+.assessment-toolbar__actions .ant-btn {
+  flex: 0 0 auto;
+}
+
+@media (max-width: 767px) {
+  .assessment-toolbar {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    overflow-x: visible;
+    flex-wrap: wrap;
+  }
+  .assessment-toolbar__month,
+  .assessment-toolbar__search,
+  .assessment-toolbar__select {
+    width: 100% !important;
+  }
+  .assessment-toolbar > .ant-btn-primary,
+  .assessment-toolbar__actions {
+    grid-column: 1 / -1;
+    width: 100%;
+    margin-left: 0;
+  }
+  .assessment-toolbar__actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+  }
+  .assessment-toolbar__actions .ant-btn {
+    width: 100%;
+    min-height: 40px;
+  }
+}
 /* 仅案例管理：日期成组不拆行；其余仍用公共 .finance-toolbar 换行 */
 .finance-cases-page .finance-cases-toolbar .ant-input-search {
   width: 220px;
@@ -182,52 +296,113 @@
   color: #1b4b3e;
 }
 @media (max-width: 768px) {
+  .finance-shell {
+    margin: 0;
+  }
+
+  .finance-heading {
+    align-items: flex-start;
+    gap: 8px;
+    margin-bottom: 10px;
+  }
+
+  .finance-heading h2 {
+    font-size: 18px;
+  }
+
+  .finance-heading p {
+    display: none;
+  }
+
+  .finance-phase {
+    flex-shrink: 0;
+    padding: 4px 10px;
+    font-size: 12px;
+  }
+
   .finance-stat-grid {
     grid-template-columns: repeat(2, 1fr);
+    gap: 8px;
   }
+
+  .finance-stat {
+    padding: 12px;
+    border-radius: 14px;
+  }
+
+  .finance-stat b,
+  .finance-stat .finance-money {
+    font-size: 18px;
+  }
+
   .finance-profit-grid {
     grid-template-columns: 1fr;
   }
-  .finance-heading {
-    align-items: flex-start;
-  }
+
   .finance-tabs .ant-tabs-nav-wrap {
     overflow-x: auto;
   }
+
   .finance-toolbar {
     width: 100%;
   }
+
   .finance-toolbar > * {
     width: 100% !important;
     max-width: 100%;
   }
+
   .finance-card {
     min-width: 0;
     overflow-x: hidden;
+    border-radius: 16px !important;
+    box-shadow: 0 6px 20px rgba(25, 82, 65, 0.06) !important;
   }
+
+  .finance-card > .ant-card-body {
+    padding: 12px !important;
+  }
+
+  .finance-card .ant-alert {
+    margin-bottom: 10px;
+    padding: 8px 10px;
+    border-radius: 12px;
+    font-size: 12px;
+  }
+
   .variance-detail-drawer .ant-drawer-extra {
     max-width: min(100%, 220px);
   }
+
   .variance-detail-drawer .ant-drawer-extra .ant-btn {
     font-size: 12px;
   }
+
   .variance-case-card,
   .variance-po-card {
     min-width: 0;
   }
+
   .finance-cases-page .finance-cases-toolbar > *:not(.finance-date-range) {
     width: 100% !important;
     max-width: 100%;
   }
+
   .finance-cases-page .finance-date-range {
     width: 100% !important;
-    justify-content: space-between;
+    display: grid !important;
+    grid-template-columns: 1fr auto 1fr;
+    align-items: center;
+    gap: 6px;
+    white-space: normal;
   }
+
   .finance-cases-page .finance-date-range .ant-input {
     flex: 1 1 0;
-    width: auto !important;
-    min-width: 0;
+    width: 100% !important;
+    min-width: 0 !important;
   }
+
   .finance-card .ant-table-wrapper {
     position: relative;
   }

@@ -36,11 +36,13 @@ import ImportDialog from '../components/ImportDialog';
 import ItemMappingDialog from './ItemMappingDialog';
 import { canUseDangerousClear, confirmDangerousClear } from '../../../utils/finance-clear';
 import FillTable, { listTablePagination } from '../../../components/FillTable';
+import { useDrawerWidth } from '../../../hooks/useDrawerWidth';
 import { useSearchParams } from 'react-router-dom';
 
 const scenes = ['平地', '水上', '山地', '高原', '屋顶'];
 export default function PricesPage() {
   const user = useAuthStore((s) => s.user);
+  const modalWidth = useDrawerWidth(680);
   const [searchParams, setSearchParams] = useSearchParams();
   const initialType = searchParams.get('type') === 'perf' ? 'perf' : 'settle';
   const [type, setType] = useState<'settle' | 'perf'>(initialType),
@@ -224,6 +226,49 @@ export default function PricesPage() {
           },
         })}
         scroll={{ x: 1100 }}
+        mobileCard={(r, _i, { closeSheet }) => (
+          <>
+            <div className="admin-mobile-card__head">
+              <div>
+                <strong>{r.itemName}</strong>
+                <span className="admin-mobile-card__code">{r.itemCode}</span>
+              </div>
+              <Tag color={r.status === 'active' ? 'success' : 'default'}>
+                {r.status === 'active' ? '启用' : '停用'}
+              </Tag>
+            </div>
+            <div className="admin-mobile-card__meta">
+              <span className="finance-money">¥ {Number(r.unitPrice).toFixed(2)}</span>
+              <span>
+                {r.productModel || '通用'} · {r.scene || '通用'} ·{' '}
+                {r.region === 'yunnan' ? '云南' : r.region === 'south_china' ? '华南' : '通用'}
+              </span>
+              <span>
+                {r.unit || '-'}
+                {r.workHours != null ? ` · ${r.workHours} 工时` : ''}
+                {r.effectiveDate ? ` · ${r.effectiveDate}` : ''}
+              </span>
+            </div>
+            {admin ? (
+              <div className="admin-mobile-card__actions">
+                <Button
+                  size="middle"
+                  onClick={() => {
+                    closeSheet();
+                    openEdit(r);
+                  }}
+                >
+                  编辑
+                </Button>
+                <Popconfirm title="确认删除这条价格？" onConfirm={() => void onDelete(r)}>
+                  <Button size="middle" danger>
+                    删除
+                  </Button>
+                </Popconfirm>
+              </div>
+            ) : null}
+          </>
+        )}
         columns={[
           { title: '条目编码', dataIndex: 'itemCode', width: 240 },
           { title: '名称', dataIndex: 'itemName', width: 180 },
@@ -274,7 +319,7 @@ export default function PricesPage() {
         ]}
       />
       <Modal
-        width={680}
+        width={modalWidth}
         open={modalOpen}
         title={editing ? '编辑价格' : '新增价格'}
         onCancel={() => setModalOpen(false)}

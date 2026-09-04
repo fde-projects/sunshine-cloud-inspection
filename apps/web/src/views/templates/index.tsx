@@ -40,6 +40,7 @@ function isUsablePhotoUrl(url: unknown): boolean {
 }
 import { isAntValidateError } from '../../utils/ant-form';
 import FillTable from '../../components/FillTable';
+import { useDrawerWidth } from '../../hooks/useDrawerWidth';
 
 function emptyEntry(order = 0): TemplateEntry {
   return {
@@ -59,6 +60,7 @@ export default function TemplatesPage() {
   const currentUser = useAuthStore((s) => s.user);
   const canManage =
     currentUser?.role === 'super_admin' || currentUser?.role === 'site_manager';
+  const modalWidth = useDrawerWidth(880);
   const [searchParams, setSearchParams] = useSearchParams();
   const deepLinkHandled = useRef(false);
 
@@ -750,14 +752,14 @@ export default function TemplatesPage() {
 
   return (
     <div className="admin-fill-page">
-      <Space wrap style={{ marginBottom: 16 }}>
+      <Space className="admin-toolbar" wrap style={{ marginBottom: 16 }}>
         <Input.Search
           allowClear
           placeholder="搜索服务类型名称"
           value={keyword}
           onChange={(e) => setKeyword(e.target.value)}
           onSearch={(v) => setSearchKeyword(v.trim())}
-          style={{ width: 260 }}
+          className="admin-toolbar__search"
         />
         {canManage && (
           <Button type="primary" icon={<PlusOutlined />} onClick={() => openCreate()}>
@@ -771,6 +773,78 @@ export default function TemplatesPage() {
         loading={loading}
         columns={columns}
         dataSource={list}
+        mobileCard={(record, _index, { closeSheet }) => {
+          const lines = record.productLines || [];
+          return (
+            <>
+              <div className="admin-mobile-card__head">
+                <div>
+                  <strong>{record.name}</strong>
+                  <span className="admin-mobile-card__code">v{record.version}</span>
+                </div>
+              </div>
+              <div className="admin-mobile-card__meta">
+                <span className="admin-mobile-card__tags">
+                  {lines.length ? (
+                    lines.slice(0, 4).map((p) => (
+                      <Tag key={p.id} color="cyan">
+                        {p.name}
+                        {` · ${p.entries?.length || 0}项`}
+                      </Tag>
+                    ))
+                  ) : (
+                    <span style={{ color: '#bfbfbf' }}>未配置产品线</span>
+                  )}
+                  {lines.length > 4 ? <Tag>+{lines.length - 4}</Tag> : null}
+                </span>
+              </div>
+              <div className="admin-mobile-card__actions">
+                {canManage ? (
+                  <>
+                    <Button
+                      size="middle"
+                      icon={<EditOutlined />}
+                      onClick={() => {
+                        closeSheet();
+                        openEdit(record);
+                      }}
+                    >
+                      编辑
+                    </Button>
+                    <Popconfirm
+                      title="确认删除该服务类型？"
+                      description="已被案例引用时无法删除"
+                      onConfirm={async () => {
+                        try {
+                          await deleteTemplate(record.id);
+                          message.success('已删除');
+                          closeSheet();
+                          await load();
+                        } catch {
+                          /* interceptor 已提示 */
+                        }
+                      }}
+                    >
+                      <Button size="middle" danger icon={<DeleteOutlined />}>
+                        删除
+                      </Button>
+                    </Popconfirm>
+                  </>
+                ) : (
+                  <Button
+                    size="middle"
+                    onClick={() => {
+                      closeSheet();
+                      openEdit(record);
+                    }}
+                  >
+                    查看
+                  </Button>
+                )}
+              </div>
+            </>
+          );
+        }}
         pagination={{
           current: page,
           pageSize,
@@ -797,8 +871,8 @@ export default function TemplatesPage() {
         className="template-editor-dialog"
         wrapClassName="template-editor-modal"
         open={modalOpen}
-        centered
-        width={880}
+        width={modalWidth}
+        zIndex={1100}
         forceRender
         onCancel={() => setModalOpen(false)}
         footer={
@@ -925,7 +999,14 @@ export default function TemplatesPage() {
           </div>
           {activeLineId ? (
             <div className="template-editor-entries">
-              <div style={{ fontWeight: 600, marginBottom: 4 }}>当前产品线条目</div>
+              <div className="template-editor-entries__head">
+                <div style={{ fontWeight: 600 }}>当前产品线条目</div>
+                {canManage ? (
+                  <Button size="small" icon={<PlusOutlined />} onClick={addEntry}>
+                    添加条目
+                  </Button>
+                ) : null}
+              </div>
               {entryEditor}
             </div>
           ) : null}

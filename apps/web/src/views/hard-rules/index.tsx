@@ -72,6 +72,7 @@ import {
 import { displayPhotoUrl } from '../../utils/photo-url';
 import { isAntValidateError } from '../../utils/ant-form';
 import FillTable, { listTablePagination } from '../../components/FillTable';
+import { useDrawerWidth } from '../../hooks/useDrawerWidth';
 
 const ENFORCE_MODE_LABEL: Record<string, string> = {
   strict: '严格（拿不准判不合格）',
@@ -360,6 +361,7 @@ function HardRulePipelineCard({
   );
 }
 export default function HardRulesPage() {
+  const modalWidth = useDrawerWidth(1080);
   const [loading, setLoading] = useState(false);
   const [list, setList] = useState<HardRuleItem[]>([]);
   const [catalog, setCatalog] = useState<HardRuleCatalogItem[]>([]);
@@ -1070,6 +1072,55 @@ export default function HardRulesPage() {
           columns={columns}
           dataSource={pageRows}
           scroll={{ x: 1320 }}
+          mobileCard={(row, _i, { closeSheet }) => (
+            <>
+              <div className="admin-mobile-card__head">
+                <div>
+                  <strong>{row.name || row.code}</strong>
+                  <span className="admin-mobile-card__code">
+                    {row.code} · v{row.version}
+                  </span>
+                </div>
+                <Tag color={row.active ? 'success' : 'default'}>{row.active ? '启用' : '停用'}</Tag>
+              </div>
+              <div className="admin-mobile-card__meta">
+                <span>强度：{ENFORCE_MODE_LABEL[String(row.enforceMode)] || row.enforceMode}</span>
+                <span>{row.changeNote || '暂无变更说明'}</span>
+              </div>
+              <div className="admin-mobile-card__actions">
+                <Button
+                  size="middle"
+                  icon={<EditOutlined />}
+                  onClick={() => {
+                    closeSheet();
+                    openEdit(row);
+                  }}
+                >
+                  编辑
+                </Button>
+                {row.hasDefault ? (
+                  <Popconfirm
+                    title="恢复上次备份的判定说明？"
+                    description="将覆盖当前合格/不合格与匹配配置"
+                    onConfirm={() => void handleReset(row)}
+                  >
+                    <Button size="middle" icon={<ReloadOutlined />}>
+                      恢复备份
+                    </Button>
+                  </Popconfirm>
+                ) : null}
+                <Popconfirm
+                  title="删除这条规则？"
+                  description="删除后新分析不再匹配该规则"
+                  onConfirm={() => void handleDelete(row)}
+                >
+                  <Button size="middle" danger icon={<DeleteOutlined />}>
+                    删除
+                  </Button>
+                </Popconfirm>
+              </div>
+            </>
+          )}
           pagination={listTablePagination({
             current: page,
             total: filteredList.length,
@@ -1093,7 +1144,7 @@ export default function HardRulesPage() {
         wrapClassName="hard-rule-editor-modal"
         open={editorOpen}
         centered
-        width={1080}
+        width={modalWidth}
         destroyOnHidden
         onCancel={() => {
           setEditorOpen(false);

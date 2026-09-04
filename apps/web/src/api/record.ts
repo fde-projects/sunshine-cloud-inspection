@@ -130,6 +130,8 @@ export interface RecordCaseGroup {
   pendingCount: number;
   approvedCount: number;
   rejectedCount: number;
+  /** 已归档报告数（历史查询状态汇总） */
+  archivedCount?: number;
   latestSubmittedAt: string | null;
 }
 

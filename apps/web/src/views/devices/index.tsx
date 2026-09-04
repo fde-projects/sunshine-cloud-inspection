@@ -40,9 +40,11 @@ import { DEVICE_TYPE_LABEL } from '../../types';
 import FillTable, { listTablePagination } from '../../components/FillTable';
 import { RECORD_STATUS_LABEL, TASK_STATUS_LABEL, formatDateTime } from '../../utils/displayLabels';
 import { isAntValidateError } from '../../utils/ant-form';
+import { useDrawerWidth } from '../../hooks/useDrawerWidth';
 
 /** 设备管理：表格 + 网格筛选 + 批量导入 Excel + 历史 */
 export default function DevicesPage() {
+  const modalWidth = useDrawerWidth(720);
   const [loading, setLoading] = useState(false);
   const [data, setData] = useState<DeviceItem[]>([]);
   const [total, setTotal] = useState(0);
@@ -252,11 +254,11 @@ export default function DevicesPage() {
 
   return (
     <div className="admin-fill-page">
-      <Space style={{ marginBottom: 16 }} wrap>
+      <Space className="admin-toolbar" style={{ marginBottom: 16 }} wrap>
         <Select
           allowClear
           placeholder="所属网格"
-          style={{ width: 180 }}
+          className="admin-toolbar__select"
           value={siteId}
           onChange={(v) => {
             setPage(1);
@@ -267,7 +269,7 @@ export default function DevicesPage() {
         <Select
           allowClear
           placeholder="设备类型"
-          style={{ width: 160 }}
+          className="admin-toolbar__select"
           value={deviceType}
           onChange={(v) => {
             setPage(1);
@@ -285,7 +287,7 @@ export default function DevicesPage() {
             setPage(1);
             setSerialNumber(v);
           }}
-          style={{ width: 180 }}
+          className="admin-toolbar__search"
         />
         <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
           新增设备
@@ -304,6 +306,59 @@ export default function DevicesPage() {
         columns={columns}
         dataSource={data}
         scroll={{ x: 1100 }}
+        mobileCard={(record, _i, { closeSheet }) => {
+          const map: Record<string, { color: string; text: string }> = {
+            active: { color: 'green', text: '正常' },
+            inactive: { color: 'default', text: '停用' },
+            maintenance: { color: 'orange', text: '维护中' },
+          };
+          const st = map[record.status] || { color: 'default', text: record.status };
+          return (
+            <>
+              <div className="admin-mobile-card__head">
+                <div>
+                  <strong>{record.serialNumber}</strong>
+                  <span className="admin-mobile-card__code">
+                    {DEVICE_TYPE_LABEL[record.deviceType] || '未知类型'}
+                  </span>
+                </div>
+                <Tag color={st.color}>{st.text}</Tag>
+              </div>
+              <div className="admin-mobile-card__meta">
+                <span>网格：{(record as { site?: { name?: string } }).site?.name || record.siteId}</span>
+                <span>型号：{record.model || '-'}</span>
+                <span>制造商：{record.manufacturer || '-'}</span>
+              </div>
+              <div className="admin-mobile-card__actions">
+                <Button
+                  size="middle"
+                  icon={<EditOutlined />}
+                  onClick={() => {
+                    closeSheet();
+                    openEdit(record);
+                  }}
+                >
+                  编辑
+                </Button>
+                <Button
+                  size="middle"
+                  icon={<HistoryOutlined />}
+                  onClick={() => {
+                    closeSheet();
+                    openHistory(record.id);
+                  }}
+                >
+                  历史
+                </Button>
+                <Popconfirm title="确认删除该设备？" onConfirm={() => onDelete(record.id)}>
+                  <Button size="middle" danger icon={<DeleteOutlined />}>
+                    删除
+                  </Button>
+                </Popconfirm>
+              </div>
+            </>
+          );
+        }}
         pagination={listTablePagination({
           current: page,
           total,
@@ -371,7 +426,7 @@ export default function DevicesPage() {
         open={historyOpen}
         onCancel={() => setHistoryOpen(false)}
         footer={null}
-        width={720}
+        width={modalWidth}
       >
         <h4>任务记录</h4>
         <Table

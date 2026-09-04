@@ -38,6 +38,7 @@ import SettlementAmountDrawer from '../components/SettlementAmountDrawer';
 import ExpenseReviewPanel from '../expenses/ExpenseReviewPanel';
 import DayDatePicker from '../../../components/DayDatePicker';
 import FillTable from '../../../components/FillTable';
+import AdminFilterMore from '../../../components/AdminFilterMore';
 import { formatDateTime } from '../../../utils/displayLabels';
 
 type Action = 'approve' | 'reject';
@@ -298,38 +299,42 @@ export default function FinanceReviewPage() {
               </span>
             </Tooltip>
           </div>
-          <Space className="finance-toolbar" wrap>
+          <div className="finance-toolbar">
             <Input
               allowClear
               placeholder="案例号/项目/工程师"
+              className="admin-toolbar__search"
               value={keyword}
               onChange={(event) => setKeyword(event.target.value)}
               style={{ width: 200 }}
             />
-            <DayDatePicker
-              allowClear
-              value={month}
-              onChange={setMonth}
-              placeholder="完工日期"
-              title="完工日期"
-              style={{ width: 160 }}
-            />
-            {isAdmin && (
-              <Select
-                allowClear
-                showSearch
-                optionFilterProp="label"
-                placeholder="网格"
-                value={siteId}
-                onChange={setSiteId}
-                style={{ width: 180 }}
-                options={sites.map((site) => ({ value: site.id, label: site.name }))}
-              />
-            )}
+            <AdminFilterMore>
+                <DayDatePicker
+                  allowClear
+                  value={month}
+                  onChange={setMonth}
+                  placeholder="完工日期"
+                  title="完工日期"
+                  style={{ width: 160 }}
+                />
+                {isAdmin && (
+                  <Select
+                    allowClear
+                    showSearch
+                    optionFilterProp="label"
+                    placeholder="网格"
+                    className="admin-toolbar__select"
+                    value={siteId}
+                    onChange={setSiteId}
+                    style={{ width: 180 }}
+                    options={sites.map((site) => ({ value: site.id, label: site.name }))}
+                  />
+                )}
+            </AdminFilterMore>
             <Button type="primary" onClick={() => void load()}>
               查询
             </Button>
-          </Space>
+          </div>
           <FillTable
             rowKey="id"
             loading={loading}
@@ -344,6 +349,129 @@ export default function FinanceReviewPage() {
                     : tab === 'rejected'
                       ? '暂无已驳回记录'
                       : '暂无结算审核记录',
+            }}
+            mobileSheetTitle={(row) => row.gspCaseNo || row.projectName || '结算审核'}
+            mobileCard={(row, _i, { closeSheet }) => {
+              const missingSettle = Number(row.missingSettle || 0);
+              const missingPerf = Number(row.missingPerf || 0);
+              const pendingExpense = Number(row.pendingExpenseCount || 0);
+              return (
+                <>
+                  <div className="admin-mobile-card__head">
+                    <div>
+                      <strong>{row.gspCaseNo || '-'}</strong>
+                    </div>
+                    {statusTag(row.reviewStatus)}
+                  </div>
+                  <div className="admin-mobile-card__meta">
+                    <span>{row.projectName || '-'}</span>
+                    <span>工程师：{row.inspectorName || '-'}</span>
+                    <span>收入 {moneyText(row.caseRevenue)}</span>
+                    <span>绩效 {moneyText(row.perfBase)}</span>
+                    <span>事件 {moneyText(row.eventPenalty)}</span>
+                    <span>
+                      待审报销{' '}
+                      {pendingExpense > 0 ? (
+                        <Tag color="orange" style={{ marginInlineEnd: 0 }}>
+                          {pendingExpense} 条
+                        </Tag>
+                      ) : (
+                        '无'
+                      )}
+                    </span>
+                    <span>完工 {formatDateTime(row.finishTime)}</span>
+                    <span>
+                      {!row.inspectorName ? (
+                        <Tag color="orange">未派工程师</Tag>
+                      ) : missingSettle === 0 && missingPerf === 0 ? (
+                        <Tag color="green">可结算</Tag>
+                      ) : (
+                        <Space size={4} wrap>
+                          {missingSettle > 0 ? (
+                            <Tag color="orange">缺甲方价 {missingSettle} 条</Tag>
+                          ) : null}
+                          {missingPerf > 0 ? (
+                            <Tag color="orange">缺绩效价 {missingPerf} 条</Tag>
+                          ) : null}
+                        </Space>
+                      )}
+                    </span>
+                  </div>
+                  <div className="admin-mobile-card__actions">
+                    <Button
+                      size="middle"
+                      onClick={() => {
+                        closeSheet();
+                        setAmountCase(row);
+                      }}
+                    >
+                      明细
+                    </Button>
+                    <Button
+                      size="middle"
+                      onClick={() => {
+                        closeSheet();
+                        void openEventPenalty(row);
+                      }}
+                    >
+                      事件
+                    </Button>
+                    {canAudit(row) &&
+                      row.deductionStatus === 'pending' &&
+                      user?.role === 'super_admin' && (
+                        <Button
+                          size="middle"
+                          onClick={async () => {
+                            await reviewFinanceDeduction(row.id, true);
+                            message.success('历史特殊扣减已复核');
+                            await load();
+                            void refreshPendingBadges();
+                          }}
+                        >
+                          复核
+                        </Button>
+                      )}
+                    {canAudit(row) && (
+                      <>
+                        <Button
+                          size="middle"
+                          danger
+                          onClick={() => {
+                            closeSheet();
+                            setCurrent(row);
+                            setAction('reject');
+                          }}
+                        >
+                          驳回
+                        </Button>
+                        <Button
+                          size="middle"
+                          type="primary"
+                          disabled={!row.approvalReady || row.deductionStatus === 'pending'}
+                          onClick={() => {
+                            closeSheet();
+                            setCurrent(row);
+                            setAction('approve');
+                          }}
+                        >
+                          通过
+                        </Button>
+                      </>
+                    )}
+                    {row.reviewComment?.trim() ? (
+                      <Button
+                        size="middle"
+                        onClick={() => {
+                          closeSheet();
+                          showReviewComment(row.reviewComment!);
+                        }}
+                      >
+                        意见
+                      </Button>
+                    ) : null}
+                  </div>
+                </>
+              );
             }}
             columns={[
               { title: '案例号', dataIndex: 'gspCaseNo', width: 145 },

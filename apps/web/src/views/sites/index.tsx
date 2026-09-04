@@ -47,12 +47,15 @@ import { isAntValidateError } from '../../utils/ant-form';
 import { chineseErrorMessage } from '../../utils/displayLabels';
 import { useAuthStore } from '../../stores/auth';
 import FillTable, { listTablePagination } from '../../components/FillTable';
+import AdminFilterMore from '../../components/AdminFilterMore';
+import { useDrawerWidth } from '../../hooks/useDrawerWidth';
 
 /** 网格管理：电站档案 + 编制（正/副网格长、工程师） */
 export default function SitesPage() {
   const currentUser = useAuthStore((state) => state.user);
   const isAdmin = currentUser?.role === 'super_admin';
   const currentUserId = currentUser?.id;
+  const modalWidth = useDrawerWidth(720);
   const [loading, setLoading] = useState(false);
   const [data, setData] = useState<SiteItem[]>([]);
   const [total, setTotal] = useState(0);
@@ -517,7 +520,7 @@ export default function SitesPage() {
 
   return (
     <div className="admin-fill-page">
-      <Space style={{ marginBottom: 12 }} wrap>
+      <Space className="admin-toolbar" style={{ marginBottom: 12 }} wrap>
         <Input.Search
           placeholder="搜索名称/编码/地区"
           allowClear
@@ -525,46 +528,48 @@ export default function SitesPage() {
             setPage(1);
             setKeyword(v);
           }}
-          style={{ width: 220 }}
+          className="admin-toolbar__search"
         />
-        <Input.Search
-          placeholder="省份，如：四川"
-          allowClear
-          value={province}
-          onChange={(e) => setProvince(e.target.value)}
-          onSearch={(v) => {
-            setPage(1);
-            setProvince(v.trim());
-          }}
-          enterButton="按省查"
-          style={{ width: 240 }}
-        />
-        <Input.Search
-          placeholder="城市，如：自贡"
-          allowClear
-          value={city}
-          onChange={(e) => setCity(e.target.value)}
-          onSearch={(v) => {
-            setPage(1);
-            setCity(v.trim());
-          }}
-          enterButton="按市查"
-          style={{ width: 240 }}
-        />
-        <Select
-          allowClear
-          placeholder="状态"
-          style={{ width: 120 }}
-          value={status}
-          onChange={(v) => {
-            setPage(1);
-            setStatus(v);
-          }}
-          options={[
-            { value: 'active', label: '启用' },
-            { value: 'inactive', label: '停用' },
-          ]}
-        />
+        <AdminFilterMore summary="地区与状态筛选">
+            <Input.Search
+              placeholder="省份，如：四川"
+              allowClear
+              value={province}
+              onChange={(e) => setProvince(e.target.value)}
+              onSearch={(v) => {
+                setPage(1);
+                setProvince(v.trim());
+              }}
+              enterButton="按省查"
+              className="admin-toolbar__search"
+            />
+            <Input.Search
+              placeholder="城市，如：自贡"
+              allowClear
+              value={city}
+              onChange={(e) => setCity(e.target.value)}
+              onSearch={(v) => {
+                setPage(1);
+                setCity(v.trim());
+              }}
+              enterButton="按市查"
+              className="admin-toolbar__search"
+            />
+            <Select
+              allowClear
+              placeholder="状态"
+              className="admin-toolbar__select"
+              value={status}
+              onChange={(v) => {
+                setPage(1);
+                setStatus(v);
+              }}
+              options={[
+                { value: 'active', label: '启用' },
+                { value: 'inactive', label: '停用' },
+              ]}
+            />
+        </AdminFilterMore>
         {isAdmin && (
           <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
             新增网格
@@ -572,10 +577,10 @@ export default function SitesPage() {
         )}
       </Space>
 
-      <Typography.Paragraph type="secondary" style={{ marginBottom: 12 }}>
+      <Typography.Paragraph type="secondary" className="admin-page-hint" style={{ marginBottom: 12 }}>
         {regionHint
           ? `当前筛选：${regionHint} → 共 ${total} 个网格`
-          : '管理员任命正网格长；正网格长可设副长与工程师，副网格长只能管工程师。人员支持「新建并加入」。一网格一名正网格长，工程师可跨网格。'}
+          : '管理员任命正网格长；正网格长可设副长与工程师，副网格长只能管工程师。一网格一名正网格长。'}
       </Typography.Paragraph>
 
       <FillTable
@@ -584,6 +589,69 @@ export default function SitesPage() {
         columns={columns}
         dataSource={data}
         scroll={{ x: 1100 }}
+        mobileCard={(record, _i, { closeSheet }) => (
+          <>
+            <div className="admin-mobile-card__head">
+              <div>
+                <strong>{record.name}</strong>
+                <span className="admin-mobile-card__code">{record.code}</span>
+              </div>
+              <Tag color={record.status === 'active' ? 'green' : 'default'}>
+                {record.status === 'active' ? '启用' : '停用'}
+              </Tag>
+            </div>
+            <div className="admin-mobile-card__meta">
+              <span>
+                {record.province}
+                {record.city}
+                {record.district}
+              </span>
+              <span>正网格长：{record.manager?.realName || '未任命'}</span>
+              {record.address ? <span>{record.address}</span> : null}
+            </div>
+            <div className="admin-mobile-card__actions">
+              <Button
+                size="middle"
+                icon={<EditOutlined />}
+                onClick={() => {
+                  closeSheet();
+                  openEdit(record);
+                }}
+              >
+                编辑
+              </Button>
+              {isAdmin && (
+                <Button
+                  size="middle"
+                  icon={<UserSwitchOutlined />}
+                  onClick={() => {
+                    closeSheet();
+                    void openAppoint(record);
+                  }}
+                >
+                  正网格长
+                </Button>
+              )}
+              <Button
+                size="middle"
+                icon={<TeamOutlined />}
+                onClick={() => {
+                  closeSheet();
+                  void openStaff(record);
+                }}
+              >
+                人员
+              </Button>
+              {isAdmin && (
+                <Popconfirm title="确认删除该网格？有设备时将失败" onConfirm={() => onDelete(record.id)}>
+                  <Button size="middle" danger icon={<DeleteOutlined />}>
+                    删除
+                  </Button>
+                </Popconfirm>
+              )}
+            </div>
+          </>
+        )}
         pagination={listTablePagination({
           current: page,
           total,
@@ -636,7 +704,7 @@ export default function SitesPage() {
         open={staffOpen}
         onCancel={() => setStaffOpen(false)}
         footer={null}
-        width={720}
+        width={modalWidth}
         destroyOnHidden
       >
         <div

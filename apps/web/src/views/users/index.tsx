@@ -456,7 +456,7 @@ export default function UsersPage() {
         />
       )}
 
-      <Space style={{ marginBottom: 16 }} wrap>
+      <Space className="admin-toolbar" style={{ marginBottom: 16 }} wrap>
         <Input.Search
           placeholder="搜索用户名/姓名/手机"
           allowClear
@@ -464,12 +464,12 @@ export default function UsersPage() {
             setPage(1);
             setKeyword(v);
           }}
-          style={{ width: 240 }}
+          className="admin-toolbar__search"
         />
         <Select
           allowClear
           placeholder="身份"
-          style={{ width: 160 }}
+          className="admin-toolbar__select"
           value={role}
           onChange={(v) => {
             setPage(1);
@@ -503,6 +503,88 @@ export default function UsersPage() {
         columns={listColumns}
         dataSource={data}
         scroll={{ x: 960 }}
+        mobileCard={(record, _i, { closeSheet }) => {
+          const tags = roleTagsOf(record, {
+            appointment: appointments[record.id] || 'none',
+            currentUserId: currentUser?.id,
+          });
+          const title = record.realName || record.username;
+          const showCode = Boolean(record.username && record.username !== title);
+          return (
+            <>
+              <div className="admin-mobile-card__head">
+                <div>
+                  <strong>{title}</strong>
+                  {showCode ? <span className="admin-mobile-card__code">{record.username}</span> : null}
+                </div>
+                <Tag color={record.status === 'active' ? 'green' : 'default'}>
+                  {record.status === 'active' ? '启用' : '停用'}
+                </Tag>
+              </div>
+              <div className="admin-mobile-card__meta">
+                {record.employeeNo ? <span>工号 {record.employeeNo}</span> : null}
+                {record.phone ? <span>{record.phone}</span> : null}
+                {tags.length ? (
+                  <span className="admin-mobile-card__tags">
+                    {tags.map((t) => (
+                      <Tag
+                        key={t}
+                        color={
+                          t === '工程师'
+                            ? 'blue'
+                            : t === '超级管理员'
+                              ? 'gold'
+                              : t.includes('待任命')
+                                ? 'default'
+                                : 'green'
+                        }
+                      >
+                        {t}
+                      </Tag>
+                    ))}
+                  </span>
+                ) : null}
+              </div>
+              <div className="admin-mobile-card__actions">
+                {canStaffAccounts ? (
+                  <>
+                    <Button
+                      size="middle"
+                      icon={<EditOutlined />}
+                      onClick={() => {
+                        closeSheet();
+                        openEdit(record);
+                      }}
+                    >
+                      编辑
+                    </Button>
+                    <Button
+                      size="middle"
+                      onClick={() => {
+                        closeSheet();
+                        setPwdUser(record);
+                        pwdForm.resetFields();
+                        setPwdOpen(true);
+                      }}
+                    >
+                      重置密码
+                    </Button>
+                    <Popconfirm
+                      title={`确认${record.status === 'active' ? '停用' : '启用'}该账号？`}
+                      onConfirm={() => void toggleStatus(record)}
+                    >
+                      <Button size="middle" danger={record.status === 'active'}>
+                        {record.status === 'active' ? '停用' : '启用'}
+                      </Button>
+                    </Popconfirm>
+                  </>
+                ) : (
+                  <Typography.Text type="secondary">只读</Typography.Text>
+                )}
+              </div>
+            </>
+          );
+        }}
         pagination={listTablePagination({
           current: page,
           total,

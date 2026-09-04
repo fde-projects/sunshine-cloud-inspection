@@ -13,6 +13,7 @@ import {
 } from '../api/record';
 import { useAuthStore } from '../stores/auth';
 import { formatDateTime } from '../utils/displayLabels';
+import { useMobileDrawer } from '../hooks/useDrawerWidth';
 import EntryReviewCard from './EntryReviewCard';
 
 const STATUS_MAP: Record<string, { color: string; text: string }> = {
@@ -229,6 +230,8 @@ export default function RecordDetailDrawer({
     });
   };
 
+  const drawerProps = useMobileDrawer(760);
+
   return (
     <Drawer
       title={
@@ -236,7 +239,7 @@ export default function RecordDetailDrawer({
           ? `${detail.gspCaseNo ? `${detail.gspCaseNo} · ` : ''}${recordUnitTitle(detail)}`
           : '记录详情'
       }
-      width={760}
+      {...drawerProps}
       open={open}
       onClose={onClose}
       destroyOnHidden

@@ -32,18 +32,18 @@ import {
   type AuditTrailEvent,
   resolveEntryKind,
 } from '../../api/record';
-import { fetchSites, fetchSiteMembers } from '../../api/site';
-import { fetchDevices } from '../../api/device';
-import { fetchInspectorPool } from '../../api/user';
+import { fetchSites } from '../../api/site';
 import { downloadRecordsExport } from '../../api/stats';
-import type { SiteItem, DeviceItem } from '../../types';
+import type { SiteItem } from '../../types';
 import { useAuthStore } from '../../stores/auth';
 import { displayPhotoUrl } from '../../utils/photo-url';
 import { formatDateTime } from '../../utils/displayLabels';
 import EntryReviewCard from '../../components/EntryReviewCard';
 import FillTable, { listTablePagination } from '../../components/FillTable';
+import { useMobileDrawer, useDrawerWidth } from '../../hooks/useDrawerWidth';
 
 const STATUS_MAP: Record<string, { color: string; text: string }> = {
+  draft: { color: 'default', text: '草稿' },
   submitted: { color: 'processing', text: '待审核' },
   approved: { color: 'success', text: '已通过' },
   rejected: { color: 'error', text: '已驳回' },
@@ -133,7 +133,6 @@ export default function RecordsPage() {
   const [siteId, setSiteId] = useState<string | undefined>(
     searchParams.get('siteId') || undefined,
   );
-  const [deviceId, setDeviceId] = useState<string>();
   const [status, setStatus] = useState<string>();
   const [keyword, setKeyword] = useState(() =>
     String(searchParams.get('keyword') || '').trim(),
@@ -143,13 +142,8 @@ export default function RecordsPage() {
   );
   const openGroupOnce = useRef(searchParams.get('openGroup') === '1');
   const [listReady, setListReady] = useState(false);
-  const [region, setRegion] = useState('');
-  const [serialNumber, setSerialNumber] = useState('');
-  const [inspectorId, setInspectorId] = useState<string>();
   const [dateRange, setDateRange] = useState<[dayjs.Dayjs, dayjs.Dayjs] | null>(null);
   const [sites, setSites] = useState<SiteItem[]>([]);
-  const [devices, setDevices] = useState<DeviceItem[]>([]);
-  const [inspectors, setInspectors] = useState<Array<{ value: string; label: string }>>([]);
 
   const [unitsOpen, setUnitsOpen] = useState(false);
   const [unitsLoading, setUnitsLoading] = useState(false);
@@ -165,58 +159,23 @@ export default function RecordsPage() {
   const [selectedRowKeys, setSelectedRowKeys] = useState<string[]>([]);
   const [compareResult, setCompareResult] = useState<RecordItem[]>([]);
 
+  const unitsDrawer = useMobileDrawer(920);
+  const detailDrawer = useMobileDrawer(760);
+  const compareModalWidth = useDrawerWidth(900);
+
   useEffect(() => {
     fetchSites({ limit: 100, status: 'active' }).then((res) => setSites(res.list));
   }, []);
 
-  useEffect(() => {
-    if (siteId) {
-      fetchDevices({ siteId, limit: 100 }).then((res) => setDevices(res.list));
-      fetchSiteMembers(siteId, 'inspector').then((members) => {
-        setInspectors(
-          members
-            .filter((m) => m.user)
-            .map((m) => ({
-              value: m.userId,
-              label: m.user!.realName,
-            })),
-        );
-      });
-    } else {
-      setDevices([]);
-      setDeviceId(undefined);
-      fetchInspectorPool({ limit: 100 })
-        .then((result) => {
-          setInspectors(result.list.map((user) => ({ value: user.id, label: user.realName })));
-        })
-        .catch(() => {
-          setInspectors([]);
-        });
-    }
-  }, [siteId]);
-
   const filterParams = useCallback(() => {
     const params: Record<string, unknown> = { scope: 'history' };
     if (siteId) params.siteId = siteId;
-    if (deviceId) params.deviceId = deviceId;
     if (status) params.status = status;
     if (keyword.trim()) params.keyword = keyword.trim();
-    if (region.trim()) params.region = region.trim();
-    if (serialNumber.trim()) params.serialNumber = serialNumber.trim();
-    if (inspectorId) params.inspectorId = inspectorId;
     if (dateRange?.[0]) params.startDate = dateRange[0].format('YYYY-MM-DD');
     if (dateRange?.[1]) params.endDate = dateRange[1].format('YYYY-MM-DD');
     return params;
-  }, [
-    siteId,
-    deviceId,
-    status,
-    keyword,
-    region,
-    serialNumber,
-    inspectorId,
-    dateRange,
-  ]);
+  }, [siteId, status, keyword, dateRange]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -293,6 +252,7 @@ export default function RecordsPage() {
           pendingCount: 0,
           approvedCount: 0,
           rejectedCount: 0,
+          archivedCount: 0,
           latestSubmittedAt: null,
         });
         setUnitsOpen(true);
@@ -473,14 +433,15 @@ export default function RecordsPage() {
   const handleExport = async () => {
     try {
       await downloadRecordsExport({
+        keyword: keyword.trim() || undefined,
         siteId,
         status: status || undefined,
         startDate: dateRange?.[0]?.format('YYYY-MM-DD'),
         endDate: dateRange?.[1]?.format('YYYY-MM-DD'),
       });
       message.success('导出已开始');
-    } catch {
-      message.error('导出失败');
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : '导出失败');
     }
   };
 
@@ -508,7 +469,7 @@ export default function RecordsPage() {
     },
     {
       title: '报告进度',
-      width: 160,
+      width: 200,
       render: (_, row) => {
         const planned = Math.max(1, Number(row.plannedUnits) || 0) || null;
         const unit = row.unitLabel || '台';
@@ -529,15 +490,17 @@ export default function RecordsPage() {
               ? `未交 ${planned - submitted} ${unit}`
               : '';
         return (
-          <Tooltip title={['已提交 / 计划台数', extra].filter(Boolean).join(' · ')}>
+          <Tooltip
+            title={`已提交报告 ${submitted} 份 / 计划 ${planned ?? '-'} ${unit}（不含草稿；重交时份数可大于计划）`}
+          >
             <span>
               {planned != null ? (
                 <>
                   <span style={{ fontWeight: 600 }}>{submitted}</span>
-                  <span style={{ color: '#8c8c8c' }}> / {planned} {unit}</span>
+                  <span style={{ color: '#8c8c8c' }}> 份 / 计划 {planned} {unit}</span>
                 </>
               ) : (
-                <span style={{ fontWeight: 600 }}>{submitted}</span>
+                <span style={{ fontWeight: 600 }}>{submitted} 份</span>
               )}
               {extra ? (
                 <Tag color={caseDone ? 'success' : doneByPlan ? 'blue' : 'default'} style={{ marginLeft: 6 }}>
@@ -551,14 +514,38 @@ export default function RecordsPage() {
     },
     {
       title: '状态汇总',
-      width: 220,
-      render: (_, row) => (
-        <Space size={[4, 4]} wrap>
-          {row.pendingCount > 0 ? <Tag color="processing">待审 {row.pendingCount}</Tag> : null}
-          {row.approvedCount > 0 ? <Tag color="success">通过 {row.approvedCount}</Tag> : null}
-          {row.rejectedCount > 0 ? <Tag color="error">驳回 {row.rejectedCount}</Tag> : null}
-        </Space>
-      ),
+      width: 240,
+      render: (_, row) => {
+        const archived = Number(row.archivedCount || 0);
+        const tags = [
+          row.pendingCount > 0 ? (
+            <Tag key="p" color="processing">
+              待审 {row.pendingCount}
+            </Tag>
+          ) : null,
+          row.approvedCount > 0 ? (
+            <Tag key="a" color="success">
+              通过 {row.approvedCount}
+            </Tag>
+          ) : null,
+          row.rejectedCount > 0 ? (
+            <Tag key="r" color="error">
+              驳回 {row.rejectedCount}
+            </Tag>
+          ) : null,
+          archived > 0 ? (
+            <Tag key="z" color="default">
+              归档 {archived}
+            </Tag>
+          ) : null,
+        ].filter(Boolean);
+        if (!tags.length) return <span style={{ color: '#8c8c8c' }}>—</span>;
+        return (
+          <Space size={[4, 4]} wrap>
+            {tags}
+          </Space>
+        );
+      },
     },
     {
       title: '最近提交',
@@ -655,14 +642,14 @@ export default function RecordsPage() {
 
   return (
     <div className="admin-fill-page">
-      <p style={{ color: '#666', marginBottom: 8 }}>
-        按案例汇总已提交报告。点进案例看单元；审核仍在「验图审核」。
+      <p className="records-page-hint">
+        按案例汇总已提交报告（不含草稿）。点进案例看单元；审核在「验图审核」。
       </p>
-      <Space wrap style={{ marginBottom: 10 }}>
+      <div className="records-filter">
         <Input
           allowClear
           placeholder="案例号/项目/任务"
-          style={{ width: 160 }}
+          className="records-filter__item records-filter__item--search"
           value={keyword}
           onChange={(e) => setKeyword(e.target.value)}
           onPressEnter={() => {
@@ -670,87 +657,56 @@ export default function RecordsPage() {
             void load();
           }}
         />
-        <Input
-          allowClear
-          placeholder="区域（省/市/现场）"
-          style={{ width: 160 }}
-          value={region}
-          onChange={(e) => setRegion(e.target.value)}
-          onPressEnter={() => {
-            setPage(1);
-            void load();
-          }}
-        />
-        <Input
-          allowClear
-          placeholder="设备序列号"
-          style={{ width: 150 }}
-          value={serialNumber}
-          onChange={(e) => setSerialNumber(e.target.value)}
-          onPressEnter={() => {
-            setPage(1);
-            void load();
-          }}
-        />
         <Select
           allowClear
-          placeholder="网格"
-          style={{ width: 160 }}
-          value={siteId}
-          onChange={setSiteId}
-          options={sites.map((s) => ({ label: s.name, value: s.id }))}
-        />
-        <Select
-          allowClear
-          placeholder="设备"
-          style={{ width: 150 }}
-          value={deviceId}
-          onChange={setDeviceId}
-          disabled={!siteId}
-          options={devices.map((d) => ({
-            label: d.serialNumber,
-            value: d.id,
-          }))}
-        />
-        <Select
-          allowClear
-          placeholder="工程师"
-          style={{ width: 120 }}
-          value={inspectorId}
-          onChange={setInspectorId}
-          options={inspectors}
-        />
-        <Select
-          allowClear
-          placeholder="状态"
-          style={{ width: 120 }}
+          placeholder="报告状态"
+          className="records-filter__item"
           value={status}
-          onChange={setStatus}
           options={[
             { label: '待审核', value: 'submitted' },
             { label: '已通过', value: 'approved' },
             { label: '已驳回', value: 'rejected' },
             { label: '已归档', value: 'archived' },
           ]}
+          onChange={(v) => {
+            setPage(1);
+            setStatus(v);
+          }}
+        />
+        <Select
+          allowClear
+          showSearch
+          optionFilterProp="label"
+          placeholder="网格"
+          className="records-filter__item"
+          value={siteId}
+          options={sites.map((s) => ({ label: s.name, value: s.id }))}
+          onChange={(v) => {
+            setPage(1);
+            setSiteId(v);
+          }}
         />
         <DatePicker.RangePicker
+          className="records-filter__item records-filter__item--date"
           value={dateRange}
           onChange={(v) => {
             setPage(1);
             setDateRange(v as [dayjs.Dayjs, dayjs.Dayjs] | null);
           }}
         />
-        <Button
-          type="primary"
-          onClick={() => {
-            setPage(1);
-            void load();
-          }}
-        >
-          查询
-        </Button>
-        <Button onClick={() => void handleExport()}>导出表格</Button>
-      </Space>
+        <div className="records-filter__actions">
+          <Button
+            type="primary"
+            onClick={() => {
+              setPage(1);
+              void load();
+            }}
+          >
+            查询
+          </Button>
+          <Button onClick={() => void handleExport()}>导出</Button>
+        </div>
+      </div>
 
       <FillTable
         rowKey="groupKey"
@@ -767,6 +723,72 @@ export default function RecordsPage() {
             setPageSize(ps);
           },
         })}
+        mobileSheetTitle={(row) => row.gspCaseNo || row.projectName || '报告'}
+        mobileCard={(row, _i, { closeSheet }) => {
+          const planned = Math.max(1, Number(row.plannedUnits) || 0) || null;
+          const unit = row.unitLabel || '台';
+          const submitted = Number(row.recordCount) || 0;
+          return (
+            <>
+              <div className="admin-mobile-card__head">
+                <div>
+                  <strong>{row.gspCaseNo || '独立任务'}</strong>
+                  {row.projectName ? (
+                    <span className="admin-mobile-card__code">{row.projectName}</span>
+                  ) : null}
+                </div>
+                {row.pendingCount > 0 ? (
+                  <Tag color="processing">待审 {row.pendingCount}</Tag>
+                ) : row.rejectedCount > 0 ? (
+                  <Tag color="error">驳回 {row.rejectedCount}</Tag>
+                ) : row.approvedCount > 0 ? (
+                  <Tag color="success">通过 {row.approvedCount}</Tag>
+                ) : Number(row.archivedCount || 0) > 0 ? (
+                  <Tag>归档 {row.archivedCount}</Tag>
+                ) : (
+                  <Tag>无报告</Tag>
+                )}
+              </div>
+              <div className="admin-mobile-card__meta">
+                <span>
+                  {planned != null
+                    ? `${submitted} 份 / 计划 ${planned} ${unit}`
+                    : `${submitted} 份`}
+                </span>
+                <span>
+                  {row.latestSubmittedAt
+                    ? formatDateTime(row.latestSubmittedAt)
+                    : '暂无提交'}
+                </span>
+              </div>
+              <div className="admin-mobile-card__actions">
+                <div className="admin-mobile-card__tags">
+                  {row.pendingCount > 0 ? (
+                    <Tag color="processing">待审 {row.pendingCount}</Tag>
+                  ) : null}
+                  {row.approvedCount > 0 ? (
+                    <Tag color="success">通过 {row.approvedCount}</Tag>
+                  ) : null}
+                  {row.rejectedCount > 0 ? (
+                    <Tag color="error">驳回 {row.rejectedCount}</Tag>
+                  ) : null}
+                  {Number(row.archivedCount || 0) > 0 ? (
+                    <Tag>归档 {row.archivedCount}</Tag>
+                  ) : null}
+                </div>
+                <Button
+                  type="primary"
+                  onClick={() => {
+                    closeSheet();
+                    void openGroup(row);
+                  }}
+                >
+                  查看单元
+                </Button>
+              </div>
+            </>
+          );
+        }}
       />
 
       <Drawer
@@ -774,14 +796,14 @@ export default function RecordsPage() {
           activeGroup
             ? `${activeGroup.gspCaseNo || '独立任务'} · ${
                 activeGroup.plannedUnits
-                  ? `${activeGroup.recordCount}/${activeGroup.plannedUnits}${
+                  ? `${activeGroup.recordCount}份 / 计划${activeGroup.plannedUnits}${
                       activeGroup.unitLabel || '台'
                     }`
                   : `${activeGroup.recordCount}份报告`
               } · ${activeGroup.projectName || ''}`
             : '案例报告'
         }
-        width={920}
+        {...unitsDrawer}
         open={unitsOpen}
         onClose={() => {
           setUnitsOpen(false);
@@ -818,7 +840,7 @@ export default function RecordsPage() {
             ? `${detail.gspCaseNo ? `${detail.gspCaseNo} · ` : ''}${unitTitle(detail)}`
             : '记录详情'
         }
-        width={760}
+        {...detailDrawer}
         open={drawerOpen}
         onClose={() => setDrawerOpen(false)}
       >
@@ -960,7 +982,7 @@ export default function RecordsPage() {
       <Modal
         title="横向对比"
         open={compareOpen}
-        width={900}
+        width={compareModalWidth}
         footer={null}
         onCancel={() => setCompareOpen(false)}
       >

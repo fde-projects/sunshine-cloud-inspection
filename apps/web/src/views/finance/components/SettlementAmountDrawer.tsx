@@ -1,7 +1,7 @@
 "use client";
 
 import { Drawer, Empty } from "antd";
-import { useDrawerWidth } from "../../../hooks/useDrawerWidth";
+import { useMobileDrawer } from "../../../hooks/useDrawerWidth";
 import { SettlementAmountBody } from "./SettlementAmountPanel";
 
 type Props = {
@@ -12,13 +12,13 @@ type Props = {
 };
 
 export default function SettlementAmountDrawer({ open, caseId, caseLabel, onClose }: Props) {
-  const drawerWidth = useDrawerWidth(800);
+  const drawerProps = useMobileDrawer(800);
 
   return (
     <Drawer
       open={open}
       onClose={onClose}
-      width={drawerWidth}
+      {...drawerProps}
       title={caseLabel ? `金额构成 · ${caseLabel}` : "金额构成"}
       destroyOnHidden
     >

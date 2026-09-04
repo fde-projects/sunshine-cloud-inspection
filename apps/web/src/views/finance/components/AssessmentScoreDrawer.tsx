@@ -7,6 +7,7 @@ import {
   saveFinanceAssessmentScore,
 } from '../../../api/finance';
 import type { AssessmentScoreRuleItem, FinanceAssessment } from '../../../types/finance';
+import { useMobileDrawer } from '../../../hooks/useDrawerWidth';
 
 type Props = {
   open: boolean;
@@ -103,10 +104,12 @@ export default function AssessmentScoreDrawer({
     }
   };
 
+  const drawerProps = useMobileDrawer(560);
+
   return (
     <Drawer
       title={target ? `打分 · ${target.realName}` : '打分'}
-      width={560}
+      {...drawerProps}
       open={open}
       onClose={onClose}
       destroyOnHidden

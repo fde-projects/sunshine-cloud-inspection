@@ -5,6 +5,7 @@ import {
   Alert,
   Button,
   Card,
+  DatePicker,
   Descriptions,
   Drawer,
   Form,
@@ -28,6 +29,7 @@ import {
   SyncOutlined,
 } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
+import dayjs from 'dayjs';
 import {
   clearPoOrders,
   downloadFinanceImportTemplate,
@@ -42,6 +44,7 @@ import { useAuthStore } from '../../../stores/auth';
 import ImportDialog from '../components/ImportDialog';
 import { canUseDangerousClear, confirmDangerousClear } from '../../../utils/finance-clear';
 import FillTable, { listTablePagination } from '../../../components/FillTable';
+import { useMobileDrawer } from '../../../hooks/useDrawerWidth';
 
 const itemColumns = [
   { title: '服务条目', dataIndex: 'itemName', ellipsis: { showTitle: false }, render: ellipsisCell },
@@ -91,14 +94,14 @@ export default function PoOrdersPage() {
   const user = useAuthStore((s) => s.user);
   const admin = user?.role === 'super_admin';
   const canClear = admin && canUseDangerousClear();
+  const drawerProps = useMobileDrawer(720);
   const [status, setStatus] = useState<'matched' | 'pending'>('matched');
   const [data, setData] = useState<PoOrder[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
   const [keyword, setKeyword] = useState('');
-  const [dateFrom, setDateFrom] = useState('');
-  const [dateTo, setDateTo] = useState('');
+  const [dateRange, setDateRange] = useState<[dayjs.Dayjs, dayjs.Dayjs] | null>(null);
   const [selectedRowKeys, setSelectedRowKeys] = useState<React.Key[]>([]);
   const [loading, setLoading] = useState(false);
   const [clearing, setClearing] = useState(false);
@@ -122,21 +125,21 @@ export default function PoOrdersPage() {
         limit: pageSize,
         matchStatus: status,
         keyword: keyword || undefined,
-        dateFrom: dateFrom || undefined,
-        dateTo: dateTo || undefined,
+        dateFrom: dateRange?.[0]?.format('YYYY-MM-DD') || undefined,
+        dateTo: dateRange?.[1]?.format('YYYY-MM-DD') || undefined,
       });
       setData(r.list);
       setTotal(r.total);
     } finally {
       setLoading(false);
     }
-  }, [page, pageSize, status, keyword, dateFrom, dateTo]);
+  }, [page, pageSize, status, keyword, dateRange]);
   useEffect(() => {
     void load();
   }, [load]);
   useEffect(() => {
     setSelectedRowKeys([]);
-  }, [status, keyword, dateFrom, dateTo, page]);
+  }, [status, keyword, dateRange, page]);
   const openEdit = (order: PoOrder) => {
     setEdit(order);
     editForm.setFieldsValue({
@@ -289,7 +292,7 @@ export default function PoOrdersPage() {
     </div>
   );
   return (
-    <Card className="finance-card admin-fill-page">
+    <Card className="finance-card admin-fill-page po-orders-page">
       <Alert
         type="info"
         showIcon
@@ -302,42 +305,31 @@ export default function PoOrdersPage() {
                 : '仅显示已挂接到本网格案例的 PO。未匹配、未分配网格的由管理员处理。'
             }
           >
-            <span>{admin ? '第二次导入：钉钉 PO 表（单文件，悬停看说明）' : '本网格已匹配 PO（悬停看说明）'}</span>
+            <span>{admin ? '第二次导入：钉钉 PO 表（单文件，点此看说明）' : '本网格已匹配 PO（点此看说明）'}</span>
           </Tooltip>
         }
       />
       {admin && (
-        <div className="finance-toolbar">
-            <Input.Search
-              allowClear
-              placeholder="PO单号/案例号/项目名"
-              style={{ width: 220 }}
-              onSearch={(v) => {
-                setPage(1);
-                setKeyword(v);
-              }}
-            />
-            <Input
-              type="date"
-              value={dateFrom}
-              onChange={(e) => {
-                setPage(1);
-                setDateFrom(e.target.value);
-              }}
-              title="起始日期（需求日/创建）"
-              style={{ width: 150 }}
-            />
-            <span style={{ color: '#888' }}>至</span>
-            <Input
-              type="date"
-              value={dateTo}
-              onChange={(e) => {
-                setPage(1);
-                setDateTo(e.target.value);
-              }}
-              title="结束日期（需求日/创建）"
-              style={{ width: 150 }}
-            />
+        <div className="finance-toolbar po-orders-toolbar">
+          <Input.Search
+            allowClear
+            placeholder="PO单号/案例号/项目名"
+            className="po-orders-toolbar__search"
+            onSearch={(v) => {
+              setPage(1);
+              setKeyword(v);
+            }}
+          />
+          <DatePicker.RangePicker
+            className="po-orders-toolbar__date"
+            value={dateRange}
+            placeholder={['需求日起', '需求日止']}
+            onChange={(v) => {
+              setPage(1);
+              setDateRange(v as [dayjs.Dayjs, dayjs.Dayjs] | null);
+            }}
+          />
+          <div className="po-orders-toolbar__actions">
             <Button
               icon={<DownloadOutlined />}
               loading={exporting}
@@ -352,8 +344,8 @@ export default function PoOrdersPage() {
                         : {
                             matchStatus: status,
                             keyword: keyword || undefined,
-                            dateFrom: dateFrom || undefined,
-                            dateTo: dateTo || undefined,
+                            dateFrom: dateRange?.[0]?.format('YYYY-MM-DD') || undefined,
+                            dateTo: dateRange?.[1]?.format('YYYY-MM-DD') || undefined,
                           },
                     );
                     message.success(ids.length ? `已导出勾选 ${ids.length} 条` : '已按当前筛选导出');
@@ -365,7 +357,7 @@ export default function PoOrdersPage() {
                 })();
               }}
             >
-              {selectedRowKeys.length ? `导出勾选 (${selectedRowKeys.length})` : '导出 Excel'}
+              {selectedRowKeys.length ? `导出勾选 (${selectedRowKeys.length})` : '导出'}
             </Button>
             <Button
               icon={<DownloadOutlined />}
@@ -379,13 +371,14 @@ export default function PoOrdersPage() {
               导入 PO
             </Button>
             <Button icon={<SyncOutlined />} loading={generating} onClick={generateCases}>
-              应急：从 PO 补建案例
+              补建案例
             </Button>
             {canClear && (
               <Button danger icon={<DeleteOutlined />} loading={clearing} onClick={() => void onClear()}>
-                清空全部 PO
+                清空全部
               </Button>
             )}
+          </div>
         </div>
       )}
       <Tabs
@@ -425,6 +418,58 @@ export default function PoOrdersPage() {
           },
         })}
         scroll={{ x: 1600 }}
+        mobileSheetTitle={(r) => r.poNo || 'PO 详情'}
+        mobileCard={(r, _i, { closeSheet }) => (
+          <>
+            <div className="admin-mobile-card__head">
+              <div>
+                <strong>{r.poNo}</strong>
+                <span className="admin-mobile-card__code">{r.gspCaseNo || '未挂案例'}</span>
+              </div>
+              <Tag color={r.matchStatus === 'matched' ? 'success' : 'warning'}>
+                {r.matchStatus === 'matched' ? '已匹配' : '待匹配'}
+              </Tag>
+            </div>
+            <div className="admin-mobile-card__meta">
+              <span className="finance-money">¥ {Number(r.poTotalAmount || 0).toFixed(2)}</span>
+              <span>{displayProjectName(r)}</span>
+              <span>
+                {r.productModel || '-'}
+                {r.productQty != null && r.productQty !== '' ? ` · ${Number(r.productQty)} 台` : ''}
+              </span>
+              <span>
+                专用 {r.specialItemCount ?? itemsOf(r, 'special').length} · 通用{' '}
+                {r.generalItemCount ?? itemsOf(r, 'general').length}
+              </span>
+            </div>
+            <div className="admin-mobile-card__actions">
+              {admin ? (
+                <Button
+                  size="middle"
+                  icon={<EditOutlined />}
+                  onClick={() => {
+                    closeSheet();
+                    openEdit(r);
+                  }}
+                >
+                  编辑
+                </Button>
+              ) : null}
+              {r.matchStatus === 'pending' ? (
+                <Button
+                  size="middle"
+                  icon={<LinkOutlined />}
+                  onClick={() => {
+                    closeSheet();
+                    setMatch(r);
+                  }}
+                >
+                  人工挂接
+                </Button>
+              ) : null}
+            </div>
+          </>
+        )}
         expandable={{
           expandedRowRender: (r) => {
             const special = itemsOf(r, 'special');
@@ -440,7 +485,7 @@ export default function PoOrdersPage() {
                     <Descriptions.Item label="产品线">{dash(linked.productLine)}</Descriptions.Item>
                     <Descriptions.Item label="省份">{dash(linked.province)}</Descriptions.Item>
                     <Descriptions.Item label="城市">{dash(linked.city)}</Descriptions.Item>
-                    <Descriptions.Item label="站点描述" span={3}>
+                    <Descriptions.Item label="站点描述" span={{ xs: 1, sm: 2, md: 3 }}>
                       {dash(linked.siteDesc)}
                     </Descriptions.Item>
                   </Descriptions>
@@ -467,13 +512,13 @@ export default function PoOrdersPage() {
                   <Descriptions.Item label="项目区域">{dash(r.projectRegion)}</Descriptions.Item>
                   <Descriptions.Item label="项目省份">{dash(r.province)}</Descriptions.Item>
                   <Descriptions.Item label="提交人">{dash(r.submitter)}</Descriptions.Item>
-                  <Descriptions.Item label="项目名称" span={3}>
+                  <Descriptions.Item label="项目名称" span={{ xs: 1, sm: 2, md: 3 }}>
                     {dash(r.projectName)}
                   </Descriptions.Item>
-                  <Descriptions.Item label="故障现象" span={3}>
+                  <Descriptions.Item label="故障现象" span={{ xs: 1, sm: 2, md: 3 }}>
                     {dash(r.faultPhenomenon)}
                   </Descriptions.Item>
-                  <Descriptions.Item label="需求描述" span={3}>
+                  <Descriptions.Item label="需求描述" span={{ xs: 1, sm: 2, md: 3 }}>
                     {dash(r.demandDesc)}
                   </Descriptions.Item>
                 </Descriptions>
@@ -623,7 +668,7 @@ export default function PoOrdersPage() {
         </Form>
       </Modal>
       <Drawer
-        width={720}
+        {...drawerProps}
         open={!!edit}
         title={`编辑 PO · ${edit?.poNo || ''}`}
         onClose={() => {
@@ -662,7 +707,7 @@ export default function PoOrdersPage() {
               <Descriptions
                 size="small"
                 bordered
-                column={2}
+                column={{ xs: 1, sm: 2 }}
                 style={{ marginBottom: 16 }}
                 title="关联案例（只读，请到案例管理修改）"
                 extra={

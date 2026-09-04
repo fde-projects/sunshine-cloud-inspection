@@ -34,6 +34,7 @@ import {
 import { formatDateTime } from '../../utils/displayLabels';
 import EntryReviewCard from '../../components/EntryReviewCard';
 import FillTable, { listTablePagination } from '../../components/FillTable';
+import { useMobileDrawer } from '../../hooks/useDrawerWidth';
 
 const STATUS_MAP: Record<string, { color: string; text: string }> = {
   submitted: { color: 'processing', text: '待审核' },
@@ -91,6 +92,9 @@ export default function AuditPage() {
   const [rejectEntryIds, setRejectEntryIds] = useState<string[]>([]);
   const [retryingEntryId, setRetryingEntryId] = useState<string>();
   const [manualBusyKey, setManualBusyKey] = useState<string>();
+
+  const unitsDrawer = useMobileDrawer(860);
+  const detailDrawer = useMobileDrawer(680);
 
   const loadGroups = useCallback(async () => {
     setLoading(true);
@@ -417,7 +421,7 @@ export default function AuditPage() {
         showIcon
         closable
         message={
-          <Tooltip title="本页只审现场照片和 AI 结果，不改金额。网格长可审本网格；结算审核仅管理员。AI 全部合格的报告已自动通过。">
+          <Tooltip title="本页只审现场照片与报告结果，不改金额。含：AI 不合格/异常、整单关闭 AI 需人审等。AI 全部合格的报告会自动通过，不出现在此。">
             <span>验图审核与费用结算相互独立（悬停看说明）</span>
           </Tooltip>
         }
@@ -430,7 +434,7 @@ export default function AuditPage() {
             setPage(1);
           }}
         >
-          待审核（AI 不合格）
+          待人工审核
         </Button>
         <Button
           type={tab === 'rejected' ? 'primary' : 'default'}
@@ -458,6 +462,60 @@ export default function AuditPage() {
             setPageSize(ps);
           },
         })}
+        mobileSheetTitle={(row) => row.gspCaseNo || row.projectName || '审核'}
+        mobileCard={(row, _i, { closeSheet }) => (
+          <>
+            <div className="admin-mobile-card__head">
+              <div>
+                <strong>{row.gspCaseNo || '独立任务'}</strong>
+                {row.projectName ? (
+                  <span className="admin-mobile-card__code">{row.projectName}</span>
+                ) : null}
+              </div>
+              {tab === 'pending' ? (
+                <Tag color="processing">待审 {row.pendingCount || row.recordCount}</Tag>
+              ) : (
+                <Tag color="error">驳回 {row.rejectedCount || row.recordCount}</Tag>
+              )}
+            </div>
+            <div className="admin-mobile-card__meta">
+              <span>
+                进度{' '}
+                {row.plannedUnits != null
+                  ? `${row.completedUnits ?? 0}/${row.plannedUnits}`
+                  : '-'}
+              </span>
+              <span>
+                {row.latestSubmittedAt
+                  ? formatDateTime(row.latestSubmittedAt)
+                  : '暂无提交'}
+              </span>
+            </div>
+            <div className="admin-mobile-card__actions">
+              <Button
+                type="primary"
+                onClick={() => {
+                  closeSheet();
+                  void openGroup(row);
+                }}
+              >
+                查看单元
+              </Button>
+              {row.gspCaseNo ? (
+                <Button
+                  onClick={() => {
+                    closeSheet();
+                    navigate(
+                      `/finance/cases?keyword=${encodeURIComponent(row.gspCaseNo!)}`,
+                    );
+                  }}
+                >
+                  案例
+                </Button>
+              ) : null}
+            </div>
+          </>
+        )}
       />
 
       <Drawer
@@ -466,7 +524,7 @@ export default function AuditPage() {
             ? `${activeGroup.gspCaseNo || '独立任务'} · ${activeGroup.projectName || ''}`
             : '案例单元'
         }
-        width={860}
+        {...unitsDrawer}
         open={unitsOpen}
         onClose={() => {
           setUnitsOpen(false);
@@ -490,12 +548,12 @@ export default function AuditPage() {
             ? `${detail.gspCaseNo ? `${detail.gspCaseNo} · ` : ''}${unitTitle(detail)}`
             : '审核详情'
         }
-        width={680}
+        {...detailDrawer}
         open={drawerOpen}
         onClose={() => setDrawerOpen(false)}
         extra={
           detail?.status === 'submitted' ? (
-            <Space>
+            <Space wrap className="admin-drawer-extra-actions">
               <Button danger onClick={() => setRejectOpen(true)}>
                 驳回
               </Button>

@@ -248,6 +248,513 @@ body:has(.app-shell) {
   background: #f5f8f7 !important;
 }
 
+/* 通用后台工具栏（账号/网格/服务类型等） */
+.admin-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  width: 100%;
+}
+.admin-toolbar__search {
+  width: 240px;
+  max-width: 100%;
+}
+.admin-toolbar__select {
+  width: 160px;
+  max-width: 100%;
+}
+
+/* 历史查询筛选：定宽自动换行，避免单字段拉满整行 */
+.records-page-hint {
+  margin: 0 0 10px;
+  color: #6a7d76;
+  font-size: 12px;
+  line-height: 1.45;
+}
+.records-filter {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+  overflow-x: auto;
+}
+.records-filter__item {
+  flex: 0 0 auto !important;
+  width: 132px !important;
+  max-width: 100%;
+  min-width: 0 !important;
+}
+.records-filter__item.ant-input,
+.records-filter__item.ant-input-affix-wrapper {
+  width: 132px !important;
+}
+.records-filter__item.ant-select {
+  width: 132px !important;
+}
+.records-filter__item--search,
+.records-filter__item--search.ant-input,
+.records-filter__item--search.ant-input-affix-wrapper {
+  width: 200px !important;
+}
+.records-filter__item--date,
+.records-filter__item--date.ant-picker {
+  width: 230px !important;
+}
+.records-filter__actions {
+  display: inline-flex;
+  flex: 0 0 auto;
+  gap: 8px;
+  margin-left: auto;
+}
+.records-filter__actions .ant-btn {
+  min-width: 72px;
+}
+
+@media (max-width: 767px) {
+  .records-filter {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    overflow-x: visible;
+  }
+  .records-filter__item,
+  .records-filter__item.ant-input,
+  .records-filter__item.ant-input-affix-wrapper,
+  .records-filter__item.ant-select,
+  .records-filter__item--search,
+  .records-filter__item--search.ant-input,
+  .records-filter__item--search.ant-input-affix-wrapper,
+  .records-filter__item--date,
+  .records-filter__item--date.ant-picker {
+    width: 100% !important;
+  }
+  .records-filter__item--search,
+  .records-filter__item--date,
+  .records-filter__actions {
+    grid-column: 1 / -1;
+  }
+  .records-filter__actions {
+    margin-left: 0;
+  }
+  .records-filter__actions .ant-btn {
+    flex: 1;
+    min-height: 40px;
+  }
+}
+
+/* 桌面：折叠筛选展开成工具栏的一部分 */
+.admin-filter-more {
+  display: contents;
+}
+.admin-filter-more > summary {
+  display: none;
+}
+.admin-filter-more__body {
+  display: contents;
+}
+
+/* 小屏：紧凑列表 + 底部抽屉操作（数据多时比大卡片好扫） */
+.admin-mobile-list {
+  width: 100%;
+}
+.admin-mobile-list__batch {
+  margin-bottom: 8px;
+  padding: 8px 12px;
+  border-radius: 10px;
+  background: #e8f6f0;
+  color: #0f6b52;
+  font-size: 12px;
+  font-weight: 650;
+}
+.admin-mobile-list__cards {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  overflow: hidden;
+  border: 1px solid rgba(18, 70, 52, 0.1);
+  border-radius: 14px;
+  background: #fff;
+  box-shadow: 0 6px 18px rgba(14, 52, 38, 0.04);
+}
+.admin-mobile-card {
+  display: flex;
+  align-items: stretch;
+  gap: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-bottom: 1px solid rgba(18, 70, 52, 0.07);
+  border-radius: 0;
+  background: #fff;
+  box-shadow: none;
+}
+.admin-mobile-card:last-child {
+  border-bottom: 0;
+}
+.admin-mobile-card.is-selected {
+  background: #f3faf7;
+  box-shadow: none;
+}
+.admin-mobile-card__check {
+  display: grid;
+  place-items: center;
+  flex: 0 0 40px;
+  margin: 0;
+  padding: 0 0 0 6px;
+  color: #4c675c;
+}
+.admin-mobile-card__check input {
+  width: 18px;
+  height: 18px;
+  accent-color: #0f7a58;
+}
+.admin-mobile-card__hit {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  margin: 0;
+  padding: 10px 10px 10px 4px;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.admin-mobile-card__hit:active {
+  background: rgba(15, 122, 88, 0.04);
+}
+.admin-mobile-card__body {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+}
+.admin-mobile-card__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+.admin-mobile-card__head > div:first-child {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+}
+.admin-mobile-card__head .ant-tag {
+  flex-shrink: 0;
+  margin-inline-end: 0;
+}
+.admin-mobile-card__code {
+  display: block;
+  margin-top: 1px;
+  color: #82918c;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.3;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.admin-mobile-card__meta {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  color: #6a7d76;
+  font-size: 12px;
+  line-height: 1.4;
+}
+.admin-mobile-card__chev {
+  flex-shrink: 0;
+  align-self: center;
+  width: 16px;
+  color: #9aaba3;
+  font-size: 18px;
+  line-height: 1;
+  font-weight: 400;
+  text-align: center;
+}
+.admin-mobile-list.is-dense .admin-mobile-card__hit {
+  padding: 11px 8px 11px 12px;
+}
+.admin-mobile-list.is-dense .admin-mobile-card__head {
+  align-items: center;
+  margin-bottom: 2px;
+  gap: 8px;
+}
+.admin-mobile-list.is-dense .admin-mobile-card__head strong {
+  display: block;
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1.3;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.admin-mobile-list.is-dense .admin-mobile-card__code {
+  font-size: 11px;
+}
+.admin-mobile-list.is-dense .admin-mobile-card__meta {
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 0;
+  margin-bottom: 0;
+  max-height: 1.4em;
+  overflow: hidden;
+  padding-right: 2px;
+  color: #6a7d76;
+  font-size: 12px;
+  line-height: 1.35;
+}
+.admin-mobile-list.is-dense .admin-mobile-card__meta > span:not(.admin-mobile-card__tags):not(:last-child)::after {
+  content: "·";
+  margin: 0 6px;
+  color: #c0ccc6;
+}
+.admin-mobile-list.is-dense .admin-mobile-card__tags {
+  display: none !important;
+}
+.admin-mobile-list.is-dense .admin-mobile-card__actions {
+  display: none !important;
+}
+.admin-mobile-card__tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.admin-mobile-card__actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+.admin-mobile-card__actions .ant-btn {
+  width: 100%;
+  min-height: 40px;
+  border-radius: 11px;
+  font-weight: 650;
+}
+.admin-mobile-list__pager {
+  display: flex;
+  justify-content: center;
+  margin-top: 12px;
+  padding-bottom: 4px;
+}
+.admin-mobile-list__empty {
+  padding: 28px 12px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.9);
+}
+.admin-mobile-card__actions.is-case-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.admin-mobile-card__actions.is-case-actions .ant-space {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px !important;
+  width: 100%;
+}
+.admin-mobile-card__actions.is-case-actions .ant-btn-link {
+  min-height: 36px;
+  padding: 6px 10px !important;
+  border: 1px solid rgba(15, 122, 88, 0.18);
+  border-radius: 10px;
+  background: #f7fbf9;
+}
+
+/* 底部操作抽屉：展示完整信息 + 操作按钮 */
+.admin-mobile-sheet .ant-drawer-content {
+  border-radius: 16px 16px 0 0;
+  overflow: hidden;
+}
+.admin-mobile-sheet .ant-drawer-header {
+  padding: 14px 16px;
+}
+.admin-mobile-sheet .ant-drawer-header-title {
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.admin-mobile-sheet .ant-drawer-extra {
+  margin-inline-start: 0;
+}
+.admin-mobile-sheet .ant-drawer-body {
+  padding: 12px 16px 24px;
+}
+.admin-drawer-extra-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+.admin-modal-footer-actions {
+  display: flex !important;
+  flex-wrap: wrap;
+  gap: 8px;
+  width: 100%;
+  justify-content: flex-end;
+}
+
+@media (max-width: 767px) {
+  .admin-drawer-extra-actions {
+    width: 100%;
+  }
+  .admin-drawer-extra-actions .ant-btn {
+    flex: 1 1 calc(50% - 4px);
+    min-height: 40px;
+  }
+  .admin-modal-footer-actions {
+    justify-content: stretch;
+  }
+  .admin-modal-footer-actions .ant-btn {
+    flex: 1 1 calc(50% - 4px);
+    min-height: 40px;
+  }
+  .admin-import-modal .ant-modal {
+    max-width: calc(100vw - 16px);
+    margin: 8px auto;
+  }
+  .admin-mobile-sheet.ant-drawer-content-wrapper,
+  .admin-mobile-sheet.ant-drawer-content-wrapper .ant-drawer-content {
+    border-radius: 16px 16px 0 0;
+  }
+}
+.admin-mobile-sheet__content .admin-mobile-card__head {
+  margin-bottom: 10px;
+}
+.admin-mobile-sheet__content .admin-mobile-card__head strong {
+  font-size: 17px;
+  white-space: normal;
+}
+.admin-mobile-sheet__content .admin-mobile-card__meta {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 14px;
+  max-height: none;
+  overflow: visible;
+  color: #4c675c;
+  font-size: 13px;
+  line-height: 1.45;
+}
+.admin-mobile-sheet__content .admin-mobile-card__meta > span:not(:last-child)::after {
+  content: none;
+  margin: 0;
+}
+.admin-mobile-sheet__content .admin-mobile-card__actions {
+  display: grid !important;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+.admin-mobile-sheet__content .admin-mobile-card__actions.is-case-actions {
+  display: flex !important;
+}
+.admin-mobile-sheet__content .admin-mobile-card__actions .ant-btn {
+  width: 100%;
+  min-height: 42px;
+}
+.admin-mobile-sheet__content .admin-mobile-card__field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  grid-column: span 1;
+}
+.admin-mobile-sheet__content .admin-mobile-card__field.is-full {
+  grid-column: 1 / -1;
+}
+.admin-mobile-sheet__content .admin-mobile-card__field > span {
+  color: #6b7c74;
+  font-size: 12px;
+}
+.admin-mobile-sheet__content .admin-mobile-card__field .ant-input-number,
+.admin-mobile-sheet__content .admin-mobile-card__field .ant-input {
+  width: 100%;
+}
+.admin-mobile-list.is-dense .admin-mobile-card__field {
+  display: none !important;
+}
+
+.finance-toolbar-actions {
+  display: contents;
+}
+
+@media (max-width: 767px) {
+  .finance-toolbar-actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    width: 100%;
+  }
+  .finance-toolbar-actions > .ant-btn-primary,
+  .finance-toolbar-actions > .ant-btn-dangerous,
+  .finance-toolbar-actions > span {
+    grid-column: 1 / -1;
+  }
+  .finance-toolbar-actions .ant-btn {
+    width: 100%;
+    min-height: 42px;
+    border-radius: 11px;
+  }
+  .finance-card .ant-table-wrapper::before {
+    display: none;
+  }
+  .finance-cases-page .admin-mobile-list,
+  .finance-card .admin-mobile-list {
+    margin-top: 4px;
+  }
+}
+
+@media (max-width: 767px) {
+  .admin-filter-more {
+    display: block;
+    width: 100%;
+    border: 1px solid rgba(18, 70, 52, 0.1);
+    border-radius: 12px;
+    background: #fff;
+    overflow: hidden;
+  }
+  .admin-filter-more > summary {
+    display: block;
+    list-style: none;
+    cursor: pointer;
+    padding: 12px 14px;
+    color: #0f6b52;
+    font-size: 14px;
+    font-weight: 700;
+  }
+  .admin-filter-more > summary::-webkit-details-marker {
+    display: none;
+  }
+  .admin-filter-more > summary::after {
+    content: " ›";
+    color: #82918c;
+    font-weight: 500;
+  }
+  .admin-filter-more[open] > summary::after {
+    content: " ˄";
+  }
+  .admin-filter-more__body {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 0 12px 12px;
+  }
+  .admin-filter-more__body > * {
+    width: 100% !important;
+    max-width: 100%;
+  }
+  .admin-page-hint {
+    font-size: 12px !important;
+    line-height: 1.45 !important;
+  }
+}
+
 @media (max-width: 767px) {
   html:has(.app-shell),
   body:has(.app-shell) {
@@ -268,6 +775,111 @@ body:has(.app-shell) {
     overflow: visible !important;
   }
 
+  .app-content__surface {
+    padding: 10px !important;
+    border-radius: 16px !important;
+    background: linear-gradient(180deg, #f7fbf9 0%, #ffffff 48px);
+  }
+
+  .admin-fill-page {
+    gap: 0;
+  }
+
+  .admin-fill-page > .ant-alert {
+    margin-bottom: 10px !important;
+    padding: 10px 12px;
+    border-radius: 12px;
+    font-size: 12px;
+    line-height: 1.45;
+  }
+
+  .admin-fill-page > .ant-alert .ant-alert-message {
+    font-size: 12px;
+  }
+
+  .admin-fill-page > .ant-typography,
+  .admin-fill-page > .ant-typography.ant-typography-secondary {
+    margin-bottom: 10px !important;
+    font-size: 12px !important;
+    line-height: 1.45;
+  }
+
+  .admin-toolbar,
+  .finance-toolbar {
+    width: 100%;
+    margin-bottom: 12px !important;
+    gap: 8px;
+  }
+
+  .admin-toolbar > .ant-space-item,
+  .admin-toolbar > *,
+  .finance-toolbar > * {
+    width: 100% !important;
+    max-width: 100%;
+    min-width: 0 !important;
+  }
+
+  .admin-toolbar__search,
+  .admin-toolbar__select,
+  .admin-toolbar .ant-input-search,
+  .admin-toolbar .ant-select,
+  .admin-toolbar .ant-btn {
+    width: 100% !important;
+  }
+
+  .admin-toolbar .ant-btn-primary,
+  .finance-toolbar > .ant-btn-primary {
+    min-height: 44px;
+    border-radius: 12px;
+    font-weight: 650;
+  }
+
+  .admin-toolbar .ant-input-search .ant-input,
+  .admin-toolbar .ant-input,
+  .finance-toolbar .ant-input,
+  .finance-toolbar .ant-select-selector {
+    min-height: 42px;
+    border-radius: 12px !important;
+  }
+
+  /* 次要操作：两列更省高度（导出/模板等） */
+  .finance-toolbar:has(> .ant-btn:nth-child(4)) {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    align-items: stretch;
+  }
+
+  .finance-toolbar:has(> .ant-btn:nth-child(4)) > .ant-input-search,
+  .finance-toolbar:has(> .ant-btn:nth-child(4)) > .ant-input[type="search"],
+  .finance-toolbar:has(> .ant-btn:nth-child(4)) > .ant-btn-primary,
+  .finance-toolbar:has(> .ant-btn:nth-child(4)) > .ant-select,
+  .finance-toolbar:has(> .ant-btn:nth-child(4)) > .finance-date-range,
+  .finance-toolbar > .admin-filter-more,
+  .finance-toolbar > .finance-toolbar-actions,
+  .finance-cases-toolbar > .ant-input-search,
+  .finance-cases-toolbar > .ant-select,
+  .finance-cases-toolbar > .finance-date-range,
+  .finance-cases-toolbar > .ant-btn-primary {
+    grid-column: 1 / -1;
+  }
+
+  /* 考核/月结：月份与姓名并排，其余全宽 */
+  .finance-toolbar:has(> .ant-input[type="month"]) {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    align-items: stretch;
+  }
+  .finance-toolbar:has(> .ant-input[type="month"]) > .ant-input[type="month"] {
+    grid-column: 1;
+  }
+  .finance-toolbar:has(> .ant-input[type="month"]) > .ant-input[type="month"] + .ant-input,
+  .finance-toolbar:has(> .ant-input[type="month"]) > .ant-input[type="month"] + .admin-toolbar__search {
+    grid-column: 2;
+  }
+  .finance-toolbar:has(> .ant-input[type="month"]) > .ant-btn {
+    grid-column: 1 / -1;
+  }
+
   .admin-fill-page__table,
   .admin-fill-page__table .ant-table-wrapper,
   .admin-fill-page__table .ant-table {
@@ -277,6 +889,30 @@ body:has(.app-shell) {
     overflow: visible;
   }
 
+  .admin-fill-page__table {
+    margin: 0 -2px;
+    padding: 2px;
+    border-radius: 14px;
+  }
+
+  .admin-fill-page__table .ant-table-wrapper {
+    position: relative;
+    border-radius: 14px;
+    border: 1px solid rgba(18, 70, 52, 0.08);
+    background: #fff;
+    box-shadow: 0 8px 24px rgba(14, 52, 38, 0.05);
+    overflow: hidden;
+  }
+
+  .admin-fill-page__table .ant-table-wrapper::before {
+    content: "表格可左右滑动";
+    display: block;
+    padding: 8px 12px 0;
+    color: #7a8f86;
+    font-size: 11px;
+    letter-spacing: 0.02em;
+  }
+
   .admin-fill-page__table .ant-table-container {
     position: static !important;
     height: auto !important;
@@ -284,11 +920,140 @@ body:has(.app-shell) {
 
   .admin-fill-page__table .ant-table-body,
   .admin-fill-page__table .ant-table-content {
-    max-height: min(70dvh, 640px) !important;
+    max-height: none !important;
+    overflow-x: auto !important;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-x: contain;
+  }
+
+  .admin-fill-page__table .ant-table-thead > tr > th {
+    padding: 10px 12px !important;
+    font-size: 12px;
+    background: #f3f8f5 !important;
+  }
+
+  .admin-fill-page__table .ant-table-tbody > tr > td {
+    padding: 12px !important;
+    vertical-align: top;
+  }
+
+  /* 操作列：更大点击热区、自动换行 */
+  .admin-fill-page__table .ant-table-cell .ant-space {
+    gap: 6px 4px !important;
+  }
+
+  .admin-fill-page__table .ant-btn-link {
+    height: auto !important;
+    min-height: 36px;
+    padding: 6px 8px !important;
+    margin: 0 !important;
+    border-radius: 8px;
+    font-size: 13px;
+    font-weight: 650;
+  }
+
+  .admin-fill-page__table .ant-btn-link:active {
+    background: rgba(15, 122, 88, 0.08);
+  }
+
+  .admin-fill-page__table .ant-pagination {
+    margin: 12px 8px 8px !important;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 6px;
+  }
+
+  .admin-fill-page__table .ant-pagination-total-text {
+    width: 100%;
+    margin-inline-end: 0 !important;
+    text-align: center;
+    color: #6a7d76;
+    font-size: 12px;
+  }
+
+  .admin-fill-page__table .ant-pagination-options {
+    display: none !important;
+  }
+
+  .hard-rule-editor-modal .ant-modal,
+  .template-editor-modal .ant-modal {
+    max-width: calc(100vw - 16px);
+  }
+  .hard-rule-editor-modal .ant-modal,
+  .hard-rule-editor-modal .ant-modal-container,
+  .hard-rule-editor-modal .ant-modal-content,
+  .template-editor-modal .ant-modal,
+  .template-editor-modal .ant-modal-container,
+  .template-editor-modal .ant-modal-content {
+    max-height: calc(100dvh - 16px);
+  }
+  .hard-rule-editor-actions,
+  .template-editor-actions {
+    justify-content: stretch;
+  }
+  .hard-rule-editor-actions .ant-btn,
+  .template-editor-actions .ant-btn {
+    flex: 1;
+    min-height: 42px;
+  }
+
+  /* 模板编辑：整表单可滚，底栏只留取消/保存；条目跳转条收进内容区 */
+  .template-editor-modal {
+    z-index: 1100;
+  }
+  .template-editor-modal .ant-modal {
+    margin: 8px auto;
+    top: 0;
+  }
+  .template-editor-modal .ant-modal-body {
+    display: block !important;
+    overflow: auto !important;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
+    padding: 0 !important;
+  }
+  .template-editor-form.ant-form {
+    display: block;
+    height: auto;
+    overflow: visible;
+  }
+  .template-editor-meta {
+    padding: 12px 14px 10px;
+  }
+  .template-editor-entries {
+    overflow: visible;
+    padding: 12px 14px 16px;
+  }
+  .template-editor-entries__head .ant-btn {
+    display: inline-flex;
+  }
+  .template-editor-dock {
+    display: none !important;
+  }
+  .template-editor-chrome {
+    padding: 10px 14px calc(10px + env(safe-area-inset-bottom, 0px));
+  }
+  .template-editor-actions {
+    width: 100%;
+  }
+  .hard-rules-toolbar {
+    width: 100%;
+  }
+  .hard-rules-toolbar__search,
+  .hard-rules-toolbar__status,
+  .hard-rules-toolbar__enforce {
+    width: 100% !important;
+    min-width: 0;
+    max-width: 100%;
+  }
+  .admin-fill-page.ant-card > .ant-card-extra {
+    margin-inline-start: 0;
+  }
+  .admin-fill-page.ant-card > .ant-card-head {
+    flex-wrap: wrap;
+    gap: 8px;
   }
 }
-
-/* AI 硬规则：样张卡片 */
 .hard-rule-sample-block {
   display: flex;
   flex-direction: column;
@@ -413,6 +1178,82 @@ body:has(.app-shell) {
   font-size: 13px;
   font-weight: 650;
   color: #16352d;
+}
+
+/* 网格编辑弹窗：锁在视口内滚，底栏固定取消/保存 */
+.site-form-modal {
+  overflow: hidden !important;
+}
+.site-form-modal .ant-modal {
+  top: 0;
+  padding-bottom: 0;
+  max-width: min(640px, calc(100vw - 32px));
+}
+.site-form-modal .ant-modal,
+.site-form-modal .ant-modal-container,
+.site-form-modal .ant-modal-content {
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100dvh - 32px);
+  overflow: hidden;
+}
+.site-form-modal .ant-modal-content {
+  padding: 0;
+}
+.site-form-modal .ant-modal-header {
+  flex: 0 0 auto;
+  margin: 0;
+  padding: 16px 20px 12px;
+  border-bottom: 1px solid rgba(23, 72, 54, 0.08);
+}
+.site-form-modal .ant-modal-close {
+  top: 14px;
+  inset-inline-end: 16px;
+}
+.site-form-modal .ant-modal-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  padding: 16px 20px 8px;
+}
+.site-form-modal .ant-modal-footer {
+  flex: 0 0 auto;
+  margin: 0;
+  padding: 12px 20px 16px;
+  border-top: 1px solid rgba(23, 72, 54, 0.08);
+  background: #fff;
+}
+
+@media (max-width: 767px) {
+  .site-form-modal .ant-modal {
+    max-width: calc(100vw - 16px);
+    margin: 8px auto;
+  }
+  .site-form-modal .ant-modal,
+  .site-form-modal .ant-modal-container,
+  .site-form-modal .ant-modal-content {
+    max-height: calc(100dvh - 16px);
+  }
+  .site-form-modal .ant-modal-body {
+    padding: 12px 14px 8px;
+  }
+  .site-form-modal .ant-modal-footer {
+    display: flex;
+    gap: 8px;
+    padding: 10px 14px calc(10px + env(safe-area-inset-bottom, 0px));
+  }
+  .site-form-modal .ant-modal-footer .ant-btn {
+    flex: 1;
+    min-height: 42px;
+  }
+  .site-form-modal .ant-modal-footer .ant-btn + .ant-btn {
+    margin-inline-start: 0;
+  }
+  .site-form-modal__map > div {
+    height: 180px !important;
+  }
 }
 
 /* 长表单编辑弹窗：锁在视口内滚，底栏固定操作 */
@@ -559,45 +1400,6 @@ body:has(.app-shell) {
   width: 180px;
 }
 
-@media (max-width: 767px) {
-  .hard-rule-editor-modal .ant-modal,
-  .template-editor-modal .ant-modal {
-    max-width: calc(100vw - 16px);
-  }
-  .hard-rule-editor-modal .ant-modal,
-  .hard-rule-editor-modal .ant-modal-container,
-  .hard-rule-editor-modal .ant-modal-content,
-  .template-editor-modal .ant-modal,
-  .template-editor-modal .ant-modal-container,
-  .template-editor-modal .ant-modal-content {
-    max-height: calc(100dvh - 16px);
-  }
-  .hard-rule-editor-actions,
-  .template-editor-actions {
-    justify-content: stretch;
-  }
-  .hard-rule-editor-actions .ant-btn,
-  .template-editor-actions .ant-btn {
-    flex: 1;
-  }
-  .hard-rules-toolbar {
-    width: 100%;
-  }
-  .hard-rules-toolbar__search,
-  .hard-rules-toolbar__status,
-  .hard-rules-toolbar__enforce {
-    width: 100% !important;
-    min-width: 0;
-    max-width: 100%;
-  }
-  .admin-fill-page.ant-card > .ant-card-extra {
-    margin-inline-start: 0;
-  }
-  .admin-fill-page.ant-card > .ant-card-head {
-    flex-wrap: wrap;
-    gap: 8px;
-  }
-}
 
 .template-editor-form.ant-form {
   display: flex;
@@ -624,6 +1426,16 @@ body:has(.app-shell) {
   overscroll-behavior: contain;
   -webkit-overflow-scrolling: touch;
   padding: 12px 20px 16px;
+}
+.template-editor-entries__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.template-editor-entries__head .ant-btn {
+  display: none;
 }
 .template-entry-card {
   scroll-margin-top: 8px;

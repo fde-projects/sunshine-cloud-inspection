@@ -3,10 +3,14 @@
 import "@ant-design/v5-patch-for-react-19";
 import { App as AntApp, ConfigProvider } from "antd";
 import zhCN from "antd/locale/zh_CN";
+import dayjs from "dayjs";
+import "dayjs/locale/zh-cn";
 import { useEffect } from "react";
 import { useAuthStore } from "@/stores/auth";
 import { useBrandingStore } from "@/stores/branding";
 import BrandingDocumentSync from "@/components/BrandingDocumentSync";
+
+dayjs.locale("zh-cn");
 
 const theme = {
   token: {

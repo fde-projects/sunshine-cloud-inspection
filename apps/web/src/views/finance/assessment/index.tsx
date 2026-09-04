@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from 'react';
-import { Button, Card, Input, InputNumber, Select, Space, Tag, Tooltip, message } from 'antd';
+import { Button, Card, DatePicker, Input, InputNumber, Select, Space, Tag, Tooltip, message } from 'antd';
 import { DeleteOutlined, QuestionCircleOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import {
@@ -176,30 +176,47 @@ export default function FinanceAssessmentPage() {
     return <Tag>{row.siteRankResult}</Tag>;
   };
 
+  const tipFull = isManager
+    ? '本页给本网格已聘工程师打分（含自己兼工程师且已聘网格）。不能改自己的分数，本人考核由管理员录入。点「打分」按规则填分项，总分自动汇总。网格内名次仅参考；全司奖罚：兼岗只进网格长池。'
+    : '点「打分」按规则录入分项，内部考核总分自动计算。网格内名次按各网格；全司工程师优/劣各3±300，网格长优/劣各1±500。';
+  const tipShort = isManager
+    ? '本网格工程师打分；本人由管理员录入（点此看说明）'
+    : '打分后自动汇总总分；可一键全司排名（点此看说明）';
+
   return (
-    <Card className="finance-card admin-fill-page" title="月度考核与补助">
+    <Card className="finance-card admin-fill-page assessment-page" title="月度考核与补助">
       <div className="finance-review-tip">
-        {isManager
-          ? '本页给本网格已聘工程师打分（含自己兼工程师且已聘网格）。不能改自己的分数，本人考核由管理员录入。点「打分」按规则填分项，总分自动汇总。网格内名次仅参考；全司奖罚：兼岗只进网格长池。'
-          : '点「打分」按规则录入分项，内部考核总分自动计算。网格内名次按各网格；全司工程师优/劣各3±300，网格长优/劣各1±500。'}
+        <Tooltip title={tipFull}>
+          <span>{tipShort}</span>
+        </Tooltip>
       </div>
-      <Space className="finance-toolbar" wrap>
-        <Input type="month" value={month} onChange={(event) => setMonth(event.target.value)} />
+      <div className="finance-toolbar assessment-toolbar">
+        <DatePicker
+          picker="month"
+          allowClear={false}
+          className="assessment-toolbar__month"
+          format="YYYY年MM月"
+          value={dayjs(`${month}-01`)}
+          onChange={(v) => {
+            if (v) setMonth(v.format('YYYY-MM'));
+          }}
+        />
         <Input
           allowClear
           placeholder="姓名/账号"
+          className="assessment-toolbar__search"
           value={keyword}
           onChange={(event) => setKeyword(event.target.value)}
-          style={{ width: 160 }}
+          onPressEnter={() => void load()}
         />
-        {isAdmin && (
+        {isAdmin ? (
           <>
             <Select
               allowClear
               placeholder="角色"
+              className="assessment-toolbar__select"
               value={role}
               onChange={setRole}
-              style={{ width: 140 }}
               options={[
                 { value: 'inspector', label: '工程师' },
                 { value: 'site_manager', label: '网格长' },
@@ -210,47 +227,134 @@ export default function FinanceAssessmentPage() {
               showSearch
               optionFilterProp="label"
               placeholder="网格"
+              className="assessment-toolbar__select"
               value={siteId}
               onChange={setSiteId}
-              style={{ width: 180 }}
               options={sites.map((site) => ({ value: site.id, label: site.name }))}
             />
           </>
-        )}
-        <Button onClick={load}>查询</Button>
-        {isManager && (
-          <Button type="primary" onClick={() => void rank('site_preview')}>
-            一键排名本网格工程师
-          </Button>
-        )}
-        {isAdmin && (
-          <>
-            <Button onClick={() => void rank('site_preview')}>按当前网格生成网格内名次</Button>
-            <Button type="primary" onClick={() => void rank('company_inspectors')}>
-              一键排名全公司工程师
+        ) : null}
+        <Button type="primary" onClick={() => void load()}>
+          查询
+        </Button>
+        <div className="assessment-toolbar__actions">
+          {isManager ? (
+            <Button type="primary" onClick={() => void rank('site_preview')}>
+              本网格排名
             </Button>
-            <Button type="primary" onClick={() => void rank('company_managers')}>
-              一键排名全公司网格长
-            </Button>
-            <Button onClick={() => setRuleOpen(true)}>打分规则配置</Button>
-            {canUseDangerousClear() && (
-              <Button
-                danger
-                icon={<DeleteOutlined />}
-                loading={clearing}
-                onClick={() => void onClear()}
-              >
-                清空考核数据
+          ) : null}
+          {isAdmin ? (
+            <>
+              <Button onClick={() => void rank('site_preview')}>网格名次</Button>
+              <Button type="primary" onClick={() => void rank('company_inspectors')}>
+                工程师排名
               </Button>
-            )}
-          </>
-        )}
-      </Space>
+              <Button type="primary" onClick={() => void rank('company_managers')}>
+                网格长排名
+              </Button>
+              <Button onClick={() => setRuleOpen(true)}>打分规则</Button>
+              {canUseDangerousClear() ? (
+                <Button
+                  danger
+                  icon={<DeleteOutlined />}
+                  loading={clearing}
+                  onClick={() => void onClear()}
+                >
+                  清空
+                </Button>
+              ) : null}
+            </>
+          ) : null}
+        </div>
+      </div>
       <FillTable
         rowKey="userId"
         loading={loading}
         dataSource={rows}
         scroll={{ x: 1680 }}
+        mobileSheetTitle={(r) => r.realName || '考核详情'}
+        mobileCard={(row, _i, { closeSheet }) => (
+          <>
+            <div className="admin-mobile-card__head">
+              <div>
+                <strong>{row.realName || '-'}</strong>
+                <span className="admin-mobile-card__code">{roleLabel(row.userRole)}</span>
+              </div>
+              {row.scored ? <Tag color="green">已打分</Tag> : <Tag>未打分</Tag>}
+            </div>
+            <div className="admin-mobile-card__meta">
+              <span>总分 {Number(row.internalScore || row.totalScore || 0).toFixed(2)}</span>
+              <span>网格 {row.siteName || '未挂'}</span>
+              <span>
+                网格内{' '}
+                {row.userRole === 'site_manager'
+                  ? '-'
+                  : row.siteRankResult
+                    ? /^\d+$/.test(row.siteRankResult)
+                      ? `第${row.siteRankResult}名`
+                      : row.siteRankResult
+                    : row.siteName
+                      ? '待排名'
+                      : '未挂网格'}
+              </span>
+              <span>全司 {row.rankResult || '待排名'}</span>
+              <span>奖罚 ¥{Number(row.rewardAmount || 0).toFixed(2)}</span>
+              <span>事件 ¥{Number(row.eventPenalty || 0).toFixed(2)}</span>
+            </div>
+            <div className="admin-mobile-card__actions">
+              {isSelfRow(row) ? (
+                <Tag>管理员录入</Tag>
+              ) : (
+                <>
+                  {isAdmin ? (
+                    <div className="admin-mobile-card__field">
+                      <span>排名奖罚</span>
+                      {input(row, 'rewardAmount')}
+                    </div>
+                  ) : null}
+                  <div className="admin-mobile-card__field">
+                    <span>工具补助</span>
+                    {input(row, 'toolSubsidy', undefined, isSelfRow(row))}
+                  </div>
+                  <div className="admin-mobile-card__field">
+                    <span>其他补助</span>
+                    {input(row, 'otherSubsidy', undefined, isSelfRow(row))}
+                  </div>
+                  <div className="admin-mobile-card__field is-full">
+                    <span>补助说明</span>
+                    <Input
+                      disabled={isSelfRow(row)}
+                      value={row.subsidyRemark}
+                      onChange={(event) => patchRow(row.userId, 'subsidyRemark', event.target.value)}
+                    />
+                  </div>
+                  <Button
+                    size="middle"
+                    type="primary"
+                    onClick={() => {
+                      closeSheet();
+                      setScoreTarget(row);
+                    }}
+                  >
+                    打分
+                  </Button>
+                  <Button size="middle" onClick={() => void save(row)}>
+                    保存
+                  </Button>
+                  <Button
+                    size="middle"
+                    onClick={() => {
+                      closeSheet();
+                      setEventTarget(row);
+                    }}
+                  >
+                    事件明细
+                  </Button>
+                </>
+              )}
+            </div>
+          </>
+        )}
         locale={{
           emptyText: isManager
             ? '本网格暂无已聘工程师。请到「网格管理 → 人员」聘用或「新建并加入」；正网格长若已开通工程师，打开人员页会自动写入编制。'

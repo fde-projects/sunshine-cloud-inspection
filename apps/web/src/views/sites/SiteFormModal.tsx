@@ -2,12 +2,13 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import dynamic from 'next/dynamic';
-import { Button, Form, Input, Modal, Select, Space, Tag, message } from 'antd';
+import { Button, Form, Grid, Input, Modal, Select, Space, Tag, message } from 'antd';
 import { AimOutlined, EnvironmentOutlined, SearchOutlined } from '@ant-design/icons';
 import type { FormInstance } from 'antd';
 import { geocodeAddress, reverseGeocode } from '../../api/geocode';
 import type { SiteItem } from '../../types';
 import { composeFullAddress, parseChineseAddress } from '../../utils/addressParse';
+import { useDrawerWidth } from '../../hooks/useDrawerWidth';
 
 const MapPicker = dynamic(() => import('../../components/MapPicker'), {
   ssr: false,
@@ -67,6 +68,9 @@ export default function SiteFormModal({
   const [geocoding, setGeocoding] = useState(false);
   const [resolvingAddress, setResolvingAddress] = useState(false);
   const regeoTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const modalWidth = useDrawerWidth(640);
+  const screens = Grid.useBreakpoint();
+  const mapHeight = screens.md ? 260 : 180;
 
   useEffect(() => {
     setMounted(true);
@@ -272,7 +276,8 @@ export default function SiteFormModal({
       open={open}
       onCancel={onCancel}
       onOk={handleOk}
-      width={640}
+      width={modalWidth}
+      wrapClassName="site-form-modal"
       destroyOnHidden
       okText={editing ? '保存' : '创建'}
       cancelText="取消"
@@ -367,13 +372,15 @@ export default function SiteFormModal({
           </Space>
 
           {open && (
-            <MapPicker
-              compact
-              latitude={hasCoords ? latNum : 30.5728}
-              longitude={hasCoords ? lngNum : 104.0668}
-              height={260}
-              onChange={onMapChange}
-            />
+            <div className="site-form-modal__map">
+              <MapPicker
+                compact
+                latitude={hasCoords ? latNum : 30.5728}
+                longitude={hasCoords ? lngNum : 104.0668}
+                height={mapHeight}
+                onChange={onMapChange}
+              />
+            </div>
           )}
 
           <div style={{ marginTop: 8, fontSize: 12, color: '#888' }}>

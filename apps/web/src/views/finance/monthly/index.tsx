@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from 'react';
-import { Button, Card, Form, Input, InputNumber, Modal, Select, Space, Table, Tag, message } from 'antd';
+import { Button, Card, DatePicker, Form, Input, InputNumber, Modal, Select, Table, Tag, Tooltip, message } from 'antd';
 import dayjs from 'dayjs';
 import {
   correctMonthlySettlement,
@@ -65,25 +65,45 @@ export default function FinanceMonthlyPage() {
   return (
     <Card className="finance-card admin-fill-page" title="月度结算">
       <div className="finance-review-tip">
-        最终金额 = 已审核计件绩效 + 已通过行程报销 + 排名奖罚 − 事件扣罚 + 补助 + 校正增补。打开本页或结算/报销审核通过时会自动重算。网格长只读本网格；锁定/解锁、校正、导出仅管理员。锁定后该月已通过结算的案例变为「已月结」，不能再改 PO；解锁后回到「已结算」。
+        <Tooltip
+          title={
+            <>
+              最终金额 = 已审核计件绩效 + 已通过行程报销 + 排名奖罚 − 事件扣罚 + 补助 + 校正增补。
+              打开本页或结算/报销审核通过时会自动重算。网格长只读本网格；锁定/解锁、校正、导出仅管理员。
+              锁定后该月已通过结算的案例变为「已月结」，不能再改 PO；解锁后回到「已结算」。
+            </>
+          }
+        >
+          <span>最终金额含绩效、报销、奖罚与补助等（点此看公式）</span>
+        </Tooltip>
       </div>
-      <Space className="finance-toolbar" wrap>
-        <Input type="month" value={month} onChange={(event) => setMonth(event.target.value)} />
+      <div className="finance-toolbar assessment-toolbar">
+        <DatePicker
+          picker="month"
+          allowClear={false}
+          className="assessment-toolbar__month"
+          format="YYYY年MM月"
+          value={dayjs(`${month}-01`)}
+          onChange={(v) => {
+            if (v) setMonth(v.format('YYYY-MM'));
+          }}
+        />
         <Input
           allowClear
           placeholder="姓名/账号"
+          className="assessment-toolbar__search"
           value={keyword}
           onChange={(event) => setKeyword(event.target.value)}
-          style={{ width: 160 }}
+          onPressEnter={() => void load()}
         />
-        {isAdmin && (
+        {isAdmin ? (
           <>
             <Select
               allowClear
               placeholder="角色"
+              className="assessment-toolbar__select"
               value={role}
               onChange={setRole}
-              style={{ width: 120 }}
               options={[
                 { value: 'inspector', label: '工程师' },
                 { value: 'site_manager', label: '网格长' },
@@ -94,16 +114,18 @@ export default function FinanceMonthlyPage() {
               showSearch
               optionFilterProp="label"
               placeholder="网格"
+              className="assessment-toolbar__select"
               value={siteId}
               onChange={setSiteId}
-              style={{ width: 180 }}
               options={sites.map((site) => ({ value: site.id, label: site.name }))}
             />
           </>
-        )}
-        <Button onClick={load}>查询</Button>
-        {isAdmin && (
-          <>
+        ) : null}
+        <Button type="primary" onClick={() => void load()}>
+          查询
+        </Button>
+        {isAdmin ? (
+          <div className="assessment-toolbar__actions">
             <Button disabled={!rows.length} onClick={() => exportMonthlySettlements(month, 'reconcile')}>
               导出对账表
             </Button>
@@ -170,14 +192,56 @@ export default function FinanceMonthlyPage() {
                 解锁本月
               </Button>
             ) : null}
-          </>
-        )}
-      </Space>
+          </div>
+        ) : null}
+      </div>
       <FillTable
         rowKey="id"
         loading={loading}
         dataSource={rows}
         scroll={{ x: 1280 }}
+        mobileSheetTitle={(r) => r.user?.realName || '结算详情'}
+        mobileCard={(row, _i, { closeSheet }) => (
+          <>
+            <div className="admin-mobile-card__head">
+              <div>
+                <strong>{row.user?.realName || '-'}</strong>
+                <span className="admin-mobile-card__code">{row.user?.username || ''}</span>
+              </div>
+              <Tag color={row.status === 'locked' ? 'green' : row.status === 'corrected' ? 'gold' : 'default'}>
+                {row.status === 'locked' ? '已锁定' : row.status === 'corrected' ? '已校正' : '草稿'}
+              </Tag>
+            </div>
+            <div className="admin-mobile-card__meta">
+              <span className="finance-money">{money(row.finalAmount)}</span>
+              <span>绩效 {money(row.perfTotal)}</span>
+              <span>报销 {money(row.expenseTotal)}</span>
+              <span>奖罚 {money(row.rewardTotal)}</span>
+              <span>事件 {money(row.eventPenalty)}</span>
+              <span>补助 {money(row.subsidyTotal)}</span>
+              <span>校正 {money(row.correctionTotal)}</span>
+            </div>
+            <div className="admin-mobile-card__actions">
+              {isAdmin && row.status !== 'locked' ? (
+                <Button
+                  size="middle"
+                  type="primary"
+                  onClick={() => {
+                    closeSheet();
+                    setCurrent(row);
+                    form.setFieldsValue({ amount: Number(row.correctionTotal || 0) });
+                  }}
+                >
+                  校正
+                </Button>
+              ) : (
+                <span style={{ color: '#82918c', fontSize: 13 }}>
+                  {row.status === 'locked' ? '已锁定，不可校正' : '仅查看'}
+                </span>
+              )}
+            </div>
+          </>
+        )}
         summary={(data) => (
           <Table.Summary.Row>
             <Table.Summary.Cell index={0}>合计</Table.Summary.Cell>

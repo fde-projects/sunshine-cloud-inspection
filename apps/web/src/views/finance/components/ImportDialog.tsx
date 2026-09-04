@@ -5,6 +5,7 @@ import { Alert, Button, Modal, Progress, Space, Upload, message } from 'antd';
 import { DownloadOutlined, InboxOutlined } from '@ant-design/icons';
 import { downloadFinanceImportTemplate, uploadFinanceExcel } from '../../../api/finance';
 import type { ImportResult } from '../../../types/finance';
+import { useDrawerWidth } from '../../../hooks/useDrawerWidth';
 
 function KeyList({ items, moreCount }: { items?: string[]; moreCount?: number }) {
   if (!items?.length) return null;
@@ -277,14 +278,17 @@ export default function ImportDialog({
     importStatus.done === false &&
     Number(importStatus.nextOffset || 0) > 0;
 
+  const modalWidth = useDrawerWidth(760);
+
   return (
     <Modal
-      width={760}
+      width={modalWidth}
       open={open}
       title={title}
       onCancel={onClose}
+      className="admin-import-modal"
       footer={
-        <Space>
+        <Space wrap className="admin-modal-footer-actions">
           <Button
             icon={<DownloadOutlined />}
             loading={downloading}

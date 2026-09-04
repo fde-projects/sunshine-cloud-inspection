@@ -54,6 +54,8 @@ import { formatDateTime } from '../../../utils/displayLabels';
 import type { ColumnsType } from 'antd/es/table';
 import RecordDetailDrawer from '../../../components/RecordDetailDrawer';
 import FillTable, { listTablePagination } from '../../../components/FillTable';
+import AdminFilterMore from '../../../components/AdminFilterMore';
+import { useDrawerWidth, useMobileDrawer } from '../../../hooks/useDrawerWidth';
 import { fetchSiteMembers, fetchSites } from '../../../api/site';
 import { fetchTemplates, type TemplateItem } from '../../../api/template';
 import type { FinanceCase, FinanceInspectorOption } from '../../../types/finance';
@@ -213,6 +215,10 @@ export default function FinanceCasesPage() {
   const canClear = admin && canUseDangerousClear();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
+  const profileDrawer = useMobileDrawer(520);
+  const detailDrawer = useMobileDrawer(760);
+  const reportDrawer = useMobileDrawer(920);
+  const batchModalWidth = useDrawerWidth(560);
   const [data, setData] = useState<FinanceCase[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
@@ -539,6 +545,225 @@ export default function FinanceCasesPage() {
     setBatchTaskOpen(true);
   };
 
+  const renderCaseActions = (r: FinanceCase, opts?: { closeSheet?: () => void }) => {
+    const beforeOpen = () => opts?.closeSheet?.();
+    const typeActionNeeded =
+      !hasTaskType(r) ||
+      needsProductLine(r, taskTypes) ||
+      productLineGap(r, taskTypes) === 'unbound_type';
+    return (
+      <Space size={0} style={{ flexWrap: 'nowrap' }}>
+        {admin &&
+          !['finished', 'settle_review', 'settled', 'month_locked'].includes(r.status) && (
+          <Button
+            type="link"
+            style={!r.siteId ? { fontWeight: 600 } : undefined}
+            onClick={() => {
+              beforeOpen();
+              setSiteId(r.siteId || undefined);
+              setSiteModal({ mode: 'single', case: r });
+            }}
+          >
+            {r.siteId ? '改网格' : '分配网格'}
+          </Button>
+        )}
+        {['pending_assign', 'assigned'].includes(r.status) && typeActionNeeded && (
+          <Button
+            type="link"
+            style={isManager && r.siteId ? { fontWeight: 600 } : undefined}
+            disabled={!r.siteId}
+            onClick={() => {
+              beforeOpen();
+              const demand = String(r.serviceType || '').trim();
+              const matched = demand
+                ? taskTypes.find((t) => t.name === demand)
+                : undefined;
+              const tplId = r.taskTemplateId || matched?.id || undefined;
+              setTaskTemplateId(tplId);
+              const tpl = taskTypes.find((t) => t.id === tplId);
+              const prefer = String(r.productLine || '').trim();
+              const lines = tpl?.productLines || [];
+              const matchedPl = prefer
+                ? lines.find((p) => String(p.name || '').trim() === prefer)
+                : undefined;
+              setProductLine(matchedPl?.name || prefer || undefined);
+              setTypeModal(r);
+            }}
+          >
+            {needsProductLine(r, taskTypes) ? '选产品线' : '设类型'}
+          </Button>
+        )}
+        {['pending_assign', 'assigned', 'working'].includes(r.status) && (
+          <Button
+            type="link"
+            style={
+              isManager && r.siteId && hasTaskType(r) && r.status === 'pending_assign'
+                ? { fontWeight: 600 }
+                : undefined
+            }
+            icon={<UserAddOutlined />}
+            loading={assignOpeningId === r.id}
+            disabled={
+              !r.siteId ||
+              !hasTaskType(r) ||
+              needsProductLine(r, taskTypes) ||
+              (!!assignOpeningId && assignOpeningId !== r.id)
+            }
+            onClick={() => {
+              beforeOpen();
+              const seq = ++assignLoadSeq.current;
+              assignModeTouched.current = false;
+              setAssignOpeningId(r.id);
+              void Promise.all([
+                fetchFinanceInspectors(r.id),
+                fetchFinanceCase(r.id).catch(() => null),
+              ])
+                .then(([list, detail]) => {
+                  if (seq !== assignLoadSeq.current) return;
+                  const assigns = (detail?.assignments || []).filter(
+                    (a) => a.status !== 'withdrawn',
+                  );
+                  const active = assigns
+                    .filter((a) => a.inspectorId)
+                    .map((a) => ({
+                      id: a.inspectorId!,
+                      realName: a.inspectorName || a.username || a.inspectorId!,
+                      completedUnits: Number(a.completedUnits || 0),
+                    }));
+                  // 详情无 assignments 时，用列表姓名兜底，避免仍闪空态
+                  const fallbackActive =
+                    active.length > 0
+                      ? active
+                      : String(r.inspectorName || '')
+                          .split(/[、,，]/)
+                          .map((s) => s.trim())
+                          .filter(Boolean)
+                          .map((name, i) => ({
+                            id:
+                              i === 0 && r.inspectorId
+                                ? r.inspectorId
+                                : `name:${name}`,
+                            realName: name,
+                            completedUnits: 0,
+                          }));
+
+                  const mode: 'single' | 'multi' =
+                    r.status === 'pending_assign'
+                      ? 'single'
+                      : detail?.assignMode === 'multi' ||
+                          detail?.assignMode === 'single'
+                        ? detail.assignMode
+                        : r.assignMode === 'multi'
+                          ? 'multi'
+                          : 'single';
+
+                  setAssignMode(mode);
+                  setActiveAssignees(fallbackActive);
+                  setPlannedUnits(
+                    r.status === 'pending_assign'
+                      ? 1
+                      : Math.max(
+                          1,
+                          Number(detail?.plannedUnits ?? r.plannedUnits) || 1,
+                        ),
+                  );
+                  setAssignReason(
+                    String(detail?.assignRemark || r.assignRemark || '').trim(),
+                  );
+                  if (mode === 'single' && fallbackActive[0]) {
+                    setInspectorId(fallbackActive[0].id);
+                    setInspectorIds([fallbackActive[0].id]);
+                  } else {
+                    setInspectorId(undefined);
+                    setInspectorIds([]);
+                  }
+                  const byId = new Map(list.map((item) => [item.id, item]));
+                  for (const a of fallbackActive) {
+                    if (a.id.startsWith('name:') || byId.has(a.id)) continue;
+                    byId.set(a.id, {
+                      id: a.id,
+                      realName: a.realName,
+                      phone: '',
+                      region: '',
+                      available: true,
+                    });
+                  }
+                  setInspectors([...byId.values()]);
+                  setAssigning({
+                    ...r,
+                    ...(detail
+                      ? {
+                          assignMode: detail.assignMode || r.assignMode,
+                          plannedUnits: detail.plannedUnits ?? r.plannedUnits,
+                          inspectorId: detail.inspectorId ?? r.inspectorId,
+                          inspectorName: detail.inspectorName ?? r.inspectorName,
+                          status: detail.status || r.status,
+                        }
+                      : null),
+                  });
+                })
+                .catch(() => {
+                  if (seq !== assignLoadSeq.current) return;
+                  message.error('加载派单信息失败，请重试');
+                })
+                .finally(() => {
+                  if (seq === assignLoadSeq.current) setAssignOpeningId(undefined);
+                });
+            }}
+          >
+            {r.status === 'pending_assign'
+              ? '派单'
+              : r.assignMode === 'multi'
+                ? '加人/撤回'
+                : '换人'}
+          </Button>
+        )}
+        {['assigned', 'working', 'finished', 'settle_review'].includes(r.status) && (
+            <Button
+              type="link"
+              onClick={() => {
+                beforeOpen();
+                setPlanModal(r);
+                setPlanUnits(Math.max(1, Number(r.plannedUnits) || 1));
+              }}
+            >
+              {['finished', 'settle_review'].includes(r.status) ? '增补台数' : '调台数'}
+            </Button>
+          )}
+        {r.status !== 'month_locked' && (
+          <Button
+            type="link"
+            icon={<EditOutlined />}
+            onClick={() => {
+              beforeOpen();
+              setProfileEdit(r);
+              profileForm.setFieldsValue({
+                projectName: r.projectName || '',
+                province: r.province || undefined,
+                city: r.city || undefined,
+                siteDesc: r.siteDesc || '',
+                serviceType: r.serviceType || '',
+                productLine: r.productLine || '',
+              });
+            }}
+          >
+            编辑
+          </Button>
+        )}
+        <Button
+          type="link"
+          icon={<EyeOutlined />}
+          onClick={() => {
+            beforeOpen();
+            void fetchFinanceCase(r.id).then(setDetail);
+          }}
+        >
+          详情
+        </Button>
+      </Space>
+    );
+  };
+
   return (
     <Card className="finance-card finance-cases-page admin-fill-page">
       <Alert
@@ -555,8 +780,8 @@ export default function FinanceCasesPage() {
           >
             <span>
               {admin
-                ? '管理员：分配/改派网格，可协助设服务类型与派单（悬停看流程）'
-                : '网格长：设服务类型、派单与改派工程师（悬停看说明）'}
+                ? '管理员：分配/改派网格，可协助设服务类型与派单（点此看流程）'
+                : '网格长：设服务类型、派单与改派工程师（点此看说明）'}
             </span>
           </Tooltip>
         }
@@ -565,18 +790,19 @@ export default function FinanceCasesPage() {
           <Input.Search
             allowClear
             placeholder="案例号或项目名称"
-            style={{ width: 220 }}
+            className="admin-toolbar__search"
             onSearch={(v) => {
               setPage(1);
               setKeyword(v);
             }}
           />
+          <AdminFilterMore summary="筛选条件">
           <Select
             allowClear
             showSearch
             optionFilterProp="label"
             placeholder="省份"
-            style={{ width: 110 }}
+            className="admin-toolbar__select"
             value={province}
             onChange={(v) => {
               setPage(1);
@@ -592,7 +818,7 @@ export default function FinanceCasesPage() {
             showSearch
             optionFilterProp="label"
             placeholder="城市"
-            style={{ width: 110 }}
+            className="admin-toolbar__select"
             value={city}
             disabled={!province}
             onChange={(v) => {
@@ -607,7 +833,7 @@ export default function FinanceCasesPage() {
             <Select
               allowClear
               placeholder="网格归属"
-              style={{ width: 120 }}
+              className="admin-toolbar__select"
               value={siteBind}
               onChange={(v) => {
                 setPage(1);
@@ -623,7 +849,7 @@ export default function FinanceCasesPage() {
           <Select
             allowClear
             placeholder="派单状态"
-            style={{ width: 120 }}
+            className="admin-toolbar__select"
             value={status}
             onChange={(v) => {
               setPage(1);
@@ -640,7 +866,7 @@ export default function FinanceCasesPage() {
             showSearch
             optionFilterProp="label"
             placeholder="筛选网格"
-            style={{ width: 160 }}
+            className="admin-toolbar__select"
             value={filterSiteId}
             onChange={(v) => {
               setPage(1);
@@ -657,7 +883,7 @@ export default function FinanceCasesPage() {
             showSearch
             optionFilterProp="label"
             placeholder="服务类型"
-            style={{ width: 140 }}
+            className="admin-toolbar__select"
             value={filterTaskType}
             onChange={(v) => {
               setPage(1);
@@ -672,7 +898,7 @@ export default function FinanceCasesPage() {
             showSearch
             optionFilterProp="label"
             placeholder="产品线"
-            style={{ width: 140 }}
+            className="admin-toolbar__select"
             value={filterProductLine}
             disabled={!filterTaskType}
             onChange={(v) => {
@@ -703,6 +929,8 @@ export default function FinanceCasesPage() {
               aria-label="结束日期"
             />
           </div>
+          </AdminFilterMore>
+          <div className="finance-toolbar-actions">
           <Button
             icon={<DownloadOutlined />}
             loading={exporting}
@@ -781,6 +1009,7 @@ export default function FinanceCasesPage() {
               </Button>
             </Tooltip>
           )}
+          </div>
       </div>
       <FillTable
         rowKey="id"
@@ -800,6 +1029,48 @@ export default function FinanceCasesPage() {
           },
         })}
         scroll={{ x: 1180 }}
+        mobileSheetTitle={(r) => r.projectName || r.gspCaseNo || '案例详情'}
+        mobileCard={(r, _i, { closeSheet }) => {
+          const s = dispatchStatus(r);
+          const typeLabel = displayTaskType(r) || String(r.serviceType || '').trim() || '未匹配类型';
+          const pl = String(r.productLine || '').trim();
+          const region = [r.province, r.city].filter(Boolean).join(' · ') || '-';
+          const units =
+            r.assignMode === 'multi' || Number(r.plannedUnits || 1) > 1
+              ? `${r.completedUnits || 0}/${r.plannedUnits || 1}${r.unitLabel || '台'}`
+              : null;
+          return (
+            <>
+              <div className="admin-mobile-card__head">
+                <div>
+                  <strong>{r.projectName || r.gspCaseNo || '未命名案例'}</strong>
+                  {r.gspCaseNo ? (
+                    <div className="admin-mobile-card__code">
+                      <CaseNoCell
+                        no={r.gspCaseNo}
+                        onOpenReports={() => {
+                          closeSheet();
+                          void openCaseReports(r);
+                        }}
+                      />
+                    </div>
+                  ) : null}
+                </div>
+                <Tag color={s.color}>{s.text}</Tag>
+              </div>
+              <div className="admin-mobile-card__meta">
+                <span>{typeLabel}{pl ? ` · ${pl}` : ''}</span>
+                <span>{region}</span>
+                <span>网格：{r.siteName || '未分配'}</span>
+                <span>工程师：{r.inspectorName || '-'}</span>
+                {units ? <span>进度：{units}</span> : null}
+              </div>
+              <div className="admin-mobile-card__actions is-case-actions">
+                {renderCaseActions(r, { closeSheet })}
+              </div>
+            </>
+          );
+        }}
         columns={[
           {
             title: '服务案例号',
@@ -975,215 +1246,7 @@ export default function FinanceCasesPage() {
             title: '操作',
             width: 260,
             fixed: 'right',
-            render: (_, r) => {
-              const typeActionNeeded =
-                !hasTaskType(r) ||
-                needsProductLine(r, taskTypes) ||
-                productLineGap(r, taskTypes) === 'unbound_type';
-              return (
-              <Space size={0} style={{ flexWrap: 'nowrap' }}>
-                {admin &&
-                  !['finished', 'settle_review', 'settled', 'month_locked'].includes(r.status) && (
-                  <Button
-                    type="link"
-                    style={!r.siteId ? { fontWeight: 600 } : undefined}
-                    onClick={() => {
-                      setSiteId(r.siteId || undefined);
-                      setSiteModal({ mode: 'single', case: r });
-                    }}
-                  >
-                    {r.siteId ? '改网格' : '分配网格'}
-                  </Button>
-                )}
-                {['pending_assign', 'assigned'].includes(r.status) && typeActionNeeded && (
-                  <Button
-                    type="link"
-                    style={isManager && r.siteId ? { fontWeight: 600 } : undefined}
-                    disabled={!r.siteId}
-                    onClick={() => {
-                      const demand = String(r.serviceType || '').trim();
-                      const matched = demand
-                        ? taskTypes.find((t) => t.name === demand)
-                        : undefined;
-                      const tplId = r.taskTemplateId || matched?.id || undefined;
-                      setTaskTemplateId(tplId);
-                      const tpl = taskTypes.find((t) => t.id === tplId);
-                      const prefer = String(r.productLine || '').trim();
-                      const lines = tpl?.productLines || [];
-                      const matchedPl = prefer
-                        ? lines.find((p) => String(p.name || '').trim() === prefer)
-                        : undefined;
-                      setProductLine(matchedPl?.name || prefer || undefined);
-                      setTypeModal(r);
-                    }}
-                  >
-                    {needsProductLine(r, taskTypes) ? '选产品线' : '设类型'}
-                  </Button>
-                )}
-                {['pending_assign', 'assigned', 'working'].includes(r.status) && (
-                  <Button
-                    type="link"
-                    style={
-                      isManager && r.siteId && hasTaskType(r) && r.status === 'pending_assign'
-                        ? { fontWeight: 600 }
-                        : undefined
-                    }
-                    icon={<UserAddOutlined />}
-                    loading={assignOpeningId === r.id}
-                    disabled={
-                      !r.siteId ||
-                      !hasTaskType(r) ||
-                      needsProductLine(r, taskTypes) ||
-                      (!!assignOpeningId && assignOpeningId !== r.id)
-                    }
-                    onClick={() => {
-                      const seq = ++assignLoadSeq.current;
-                      assignModeTouched.current = false;
-                      setAssignOpeningId(r.id);
-                      void Promise.all([
-                        fetchFinanceInspectors(r.id),
-                        fetchFinanceCase(r.id).catch(() => null),
-                      ])
-                        .then(([list, detail]) => {
-                          if (seq !== assignLoadSeq.current) return;
-                          const assigns = (detail?.assignments || []).filter(
-                            (a) => a.status !== 'withdrawn',
-                          );
-                          const active = assigns
-                            .filter((a) => a.inspectorId)
-                            .map((a) => ({
-                              id: a.inspectorId!,
-                              realName: a.inspectorName || a.username || a.inspectorId!,
-                              completedUnits: Number(a.completedUnits || 0),
-                            }));
-                          // 详情无 assignments 时，用列表姓名兜底，避免仍闪空态
-                          const fallbackActive =
-                            active.length > 0
-                              ? active
-                              : String(r.inspectorName || '')
-                                  .split(/[、,，]/)
-                                  .map((s) => s.trim())
-                                  .filter(Boolean)
-                                  .map((name, i) => ({
-                                    id:
-                                      i === 0 && r.inspectorId
-                                        ? r.inspectorId
-                                        : `name:${name}`,
-                                    realName: name,
-                                    completedUnits: 0,
-                                  }));
-
-                          const mode: 'single' | 'multi' =
-                            r.status === 'pending_assign'
-                              ? 'single'
-                              : detail?.assignMode === 'multi' ||
-                                  detail?.assignMode === 'single'
-                                ? detail.assignMode
-                                : r.assignMode === 'multi'
-                                  ? 'multi'
-                                  : 'single';
-
-                          setAssignMode(mode);
-                          setActiveAssignees(fallbackActive);
-                          setPlannedUnits(
-                            r.status === 'pending_assign'
-                              ? 1
-                              : Math.max(
-                                  1,
-                                  Number(detail?.plannedUnits ?? r.plannedUnits) || 1,
-                                ),
-                          );
-                          setAssignReason(
-                            String(detail?.assignRemark || r.assignRemark || '').trim(),
-                          );
-                          if (mode === 'single' && fallbackActive[0]) {
-                            setInspectorId(fallbackActive[0].id);
-                            setInspectorIds([fallbackActive[0].id]);
-                          } else {
-                            setInspectorId(undefined);
-                            setInspectorIds([]);
-                          }
-                          const byId = new Map(list.map((item) => [item.id, item]));
-                          for (const a of fallbackActive) {
-                            if (a.id.startsWith('name:') || byId.has(a.id)) continue;
-                            byId.set(a.id, {
-                              id: a.id,
-                              realName: a.realName,
-                              phone: '',
-                              region: '',
-                              available: true,
-                            });
-                          }
-                          setInspectors([...byId.values()]);
-                          setAssigning({
-                            ...r,
-                            ...(detail
-                              ? {
-                                  assignMode: detail.assignMode || r.assignMode,
-                                  plannedUnits: detail.plannedUnits ?? r.plannedUnits,
-                                  inspectorId: detail.inspectorId ?? r.inspectorId,
-                                  inspectorName: detail.inspectorName ?? r.inspectorName,
-                                  status: detail.status || r.status,
-                                }
-                              : null),
-                          });
-                        })
-                        .catch(() => {
-                          if (seq !== assignLoadSeq.current) return;
-                          message.error('加载派单信息失败，请重试');
-                        })
-                        .finally(() => {
-                          if (seq === assignLoadSeq.current) setAssignOpeningId(undefined);
-                        });
-                    }}
-                  >
-                    {r.status === 'pending_assign'
-                      ? '派单'
-                      : r.assignMode === 'multi'
-                        ? '加人/撤回'
-                        : '换人'}
-                  </Button>
-                )}
-                {['assigned', 'working', 'finished', 'settle_review'].includes(r.status) && (
-                    <Button
-                      type="link"
-                      onClick={() => {
-                        setPlanModal(r);
-                        setPlanUnits(Math.max(1, Number(r.plannedUnits) || 1));
-                      }}
-                    >
-                      {['finished', 'settle_review'].includes(r.status) ? '增补台数' : '调台数'}
-                    </Button>
-                  )}
-                {r.status !== 'month_locked' && (
-                  <Button
-                    type="link"
-                    icon={<EditOutlined />}
-                    onClick={() => {
-                      setProfileEdit(r);
-                      profileForm.setFieldsValue({
-                        projectName: r.projectName || '',
-                        province: r.province || undefined,
-                        city: r.city || undefined,
-                        siteDesc: r.siteDesc || '',
-                        serviceType: r.serviceType || '',
-                        productLine: r.productLine || '',
-                      });
-                    }}
-                  >
-                    编辑
-                  </Button>
-                )}
-                <Button
-                  type="link"
-                  icon={<EyeOutlined />}
-                  onClick={() => void fetchFinanceCase(r.id).then(setDetail)}
-                >
-                  详情
-                </Button>
-              </Space>
-              );
-            },
+            render: (_, r) => renderCaseActions(r),
           },
         ]}
       />
@@ -1458,7 +1521,7 @@ export default function FinanceCasesPage() {
         title="按案例批量派单"
         okText="派单"
         cancelText="取消"
-        width={560}
+        width={batchModalWidth}
         onCancel={() => setBatchTaskOpen(false)}
         onOk={async () => {
           if (!batchInspectorId) {
@@ -2082,7 +2145,7 @@ export default function FinanceCasesPage() {
         />
       </Modal>
       <Drawer
-        width={520}
+        {...profileDrawer}
         open={!!profileEdit}
         title={`编辑案例主数据 · ${profileEdit?.gspCaseNo || ''}`}
         onClose={() => {
@@ -2092,7 +2155,7 @@ export default function FinanceCasesPage() {
         }}
         destroyOnHidden
         extra={
-          <Space>
+          <Space wrap className="admin-drawer-extra-actions">
             <Button
               onClick={() => {
                 if (profileSaving) return;
@@ -2181,7 +2244,7 @@ export default function FinanceCasesPage() {
         </Form>
       </Drawer>
       <Drawer
-        width={760}
+        {...detailDrawer}
         open={!!detail}
         title={detail?.projectName || '案例详情'}
         onClose={() => {
@@ -2193,7 +2256,7 @@ export default function FinanceCasesPage() {
           <>
             <Descriptions
               bordered
-              column={2}
+              column={{ xs: 1, sm: 2 }}
               items={[
                 {
                   key: 'no',
@@ -2446,7 +2509,7 @@ export default function FinanceCasesPage() {
           setReportCase(undefined);
           setReportUnits([]);
         }}
-        width={920}
+        {...reportDrawer}
         destroyOnHidden
       >
         <Table

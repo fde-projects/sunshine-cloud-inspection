@@ -29,6 +29,7 @@ import { flattenMenus, getMenusByRole } from "@/router/menus";
 import type { MenuConfig } from "@/types";
 import { canSwitchPortal, normalizeRoles, roleHome } from "@/lib/portal";
 import type { AppRole } from "@/lib/types";
+import AdminMobileGuide from "@/components/AdminMobileGuide";
 import "@/styles/basic-layout.css";
 
 const { Header, Sider, Content } = Layout;
@@ -261,6 +262,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
             className={`app-content__surface${isPageScrollPath(pathname) ? " is-page-scroll" : ""}`}
             hidden={!ready}
           >
+            {ready ? <AdminMobileGuide pathname={pathname} /> : null}
             {children}
           </div>
         </Content>

@@ -444,6 +444,10 @@ async function dispatch(ctx: {
 
   if (path === "records" && method === "GET") return listRecords(query);
   if (path === "records/case-groups" && method === "GET") return recordCaseGroups(query);
+  if (path === "reports/export" && method === "GET") {
+    needFinanceMgr(user);
+    return exportInspectionRecords(query);
+  }
   {
     const m = match(path, "records/by-case/:groupKey");
     if (m && method === "GET") return recordsByCase(m.groupKey, query);
@@ -3258,6 +3262,102 @@ const RECORD_FIELDS = `
   }
 `;
 
+async function exportInspectionRecords(query: URLSearchParams) {
+  const where: Record<string, unknown> = {
+    status: query.get("status")
+      ? { _eq: query.get("status") }
+      : { _in: ["submitted", "approved", "rejected", "archived"] },
+  };
+  const and: Record<string, unknown>[] = [where];
+  if (query.get("siteId")) {
+    and.push({ task: { site_id: { _eq: query.get("siteId") } } });
+  }
+  if (query.get("startDate")) {
+    and.push({ submitted_at: { _gte: `${query.get("startDate")}T00:00:00+08:00` } });
+  }
+  if (query.get("endDate")) {
+    and.push({ submitted_at: { _lte: `${query.get("endDate")}T23:59:59+08:00` } });
+  }
+  const keyword = String(query.get("keyword") || "").trim();
+  if (keyword) {
+    and.push({
+      _or: [
+        { task: { service_case: { gsp_case_no: { _ilike: `%${keyword}%` } } } },
+        { task: { service_case: { project_name: { _ilike: `%${keyword}%` } } } },
+        { task: { task_name: { _ilike: `%${keyword}%` } } },
+      ],
+    });
+  }
+
+  const d = await adminGql<{
+    inspection_records: Array<{
+      id: string;
+      status?: string | null;
+      submitted_at?: string | null;
+      approved_at?: string | null;
+      reject_reason?: string | null;
+      task?: {
+        task_name?: string | null;
+        inspector?: { real_name?: string | null } | null;
+        site?: { name?: string | null } | null;
+        service_case?: { gsp_case_no?: string | null; project_name?: string | null } | null;
+      } | null;
+    }>;
+  }>(
+    `query ($where: inspection_records_bool_exp!) {
+      inspection_records(where: $where, order_by: { submitted_at: desc_nulls_last }, limit: 5000) {
+        id status submitted_at approved_at reject_reason
+        task {
+          task_name
+          inspector { real_name }
+          site { name }
+          service_case { gsp_case_no project_name }
+        }
+      }
+    }`,
+    { where: { _and: and } },
+  );
+
+  const statusLabel: Record<string, string> = {
+    submitted: "待审核",
+    approved: "已通过",
+    rejected: "已驳回",
+    archived: "已归档",
+    draft: "草稿",
+  };
+
+  const ExcelJS = (await import("exceljs")).default;
+  const workbook = new ExcelJS.Workbook();
+  const sheet = workbook.addWorksheet("巡检记录");
+  sheet.columns = [
+    { header: "案例号", key: "gsp", width: 18 },
+    { header: "项目", key: "project", width: 28 },
+    { header: "单元/任务", key: "unit", width: 22 },
+    { header: "网格", key: "site", width: 16 },
+    { header: "工程师", key: "inspector", width: 12 },
+    { header: "状态", key: "status", width: 10 },
+    { header: "提交时间", key: "submitted", width: 20 },
+    { header: "审核时间", key: "approved", width: 20 },
+    { header: "驳回原因", key: "reject", width: 24 },
+  ];
+  for (const row of d.inspection_records || []) {
+    const st = String(row.status || "draft");
+    sheet.addRow({
+      gsp: row.task?.service_case?.gsp_case_no || "",
+      project: row.task?.service_case?.project_name || "",
+      unit: row.task?.task_name || "",
+      site: row.task?.site?.name || "",
+      inspector: row.task?.inspector?.real_name || "",
+      status: statusLabel[st] || st,
+      submitted: row.submitted_at ? String(row.submitted_at).replace("T", " ").slice(0, 19) : "",
+      approved: row.approved_at ? String(row.approved_at).replace("T", " ").slice(0, 19) : "",
+      reject: row.reject_reason || "",
+    });
+  }
+  const buffer = Buffer.from(await workbook.xlsx.writeBuffer());
+  return xlsxResponse(`巡检记录_${new Date().toISOString().slice(0, 10)}.xlsx`, buffer);
+}
+
 async function listRecords(query: URLSearchParams) {
   const page = Number(query.get("page") || 1);
   const limit = Number(query.get("limit") || 20);
@@ -3439,10 +3539,15 @@ async function recordCaseGroups(query: URLSearchParams) {
   const page = Number(query.get("page") || 1);
   const limit = Number(query.get("limit") || 25);
   const where: Record<string, unknown> = {};
-  if (query.get("status")) where.status = { _eq: query.get("status") };
-  // scope=audit：待审；无 status 时历史查询不限
-  if (query.get("scope") === "audit" && !query.get("status")) {
+  const scope = String(query.get("scope") || "").trim();
+  if (query.get("status")) {
+    where.status = { _eq: query.get("status") };
+  } else if (scope === "audit") {
+    // 验图待审：仅 submitted
     where.status = { _eq: "submitted" };
+  } else {
+    // 历史查询：不含草稿/未提交，避免「5/3」把未提交草稿算进进度
+    where.status = { _in: ["submitted", "approved", "rejected", "archived"] };
   }
   const d = await adminGql<{
     inspection_records: Array<{
@@ -3499,6 +3604,7 @@ async function recordCaseGroups(query: URLSearchParams) {
     pendingCount: number;
     approvedCount: number;
     rejectedCount: number;
+    archivedCount: number;
     latestSubmittedAt: string | null;
   };
   const map = new Map<string, Agg>();
@@ -3523,6 +3629,7 @@ async function recordCaseGroups(query: URLSearchParams) {
         pendingCount: 0,
         approvedCount: 0,
         rejectedCount: 0,
+        archivedCount: 0,
         latestSubmittedAt: null,
       };
       map.set(groupKey, row);
@@ -3550,6 +3657,7 @@ async function recordCaseGroups(query: URLSearchParams) {
     if (needsAudit) row.pendingCount += 1;
     if (st === "approved") row.approvedCount += 1;
     if (st === "rejected") row.rejectedCount += 1;
+    if (st === "archived") row.archivedCount += 1;
     const ts = rec.submitted_at || rec.created_at || null;
     if (ts && (!row.latestSubmittedAt || String(ts) > row.latestSubmittedAt)) {
       row.latestSubmittedAt = String(ts);
@@ -3579,9 +3687,13 @@ async function recordsByCase(groupKey: string, query: URLSearchParams = new URLS
     kind === "task"
       ? { task_id: { _eq: id } }
       : { task: { service_case_id: { _eq: id } } };
-  if (query.get("status")) where.status = { _eq: query.get("status") };
-  if (query.get("scope") === "audit" && !query.get("status")) {
+  const scope = String(query.get("scope") || "").trim();
+  if (query.get("status")) {
+    where.status = { _eq: query.get("status") };
+  } else if (scope === "audit") {
     where.status = { _eq: "submitted" };
+  } else if (scope === "history") {
+    where.status = { _in: ["submitted", "approved", "rejected", "archived"] };
   }
   const d = await adminGql<{ inspection_records: Record<string, unknown>[] }>(
     `query ($where: inspection_records_bool_exp!) {

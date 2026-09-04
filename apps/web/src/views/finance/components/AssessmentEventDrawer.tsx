@@ -9,7 +9,7 @@ import {
   fetchAssessmentEvents,
 } from '../../../api/finance';
 import type { AssessmentEventCatalogItem, AssessmentEventRow } from '../../../types/finance';
-import { useDrawerWidth } from '../../../hooks/useDrawerWidth';
+import { useMobileDrawer } from '../../../hooks/useDrawerWidth';
 
 export type AssessmentEventAssignee = {
   id: string;
@@ -54,7 +54,7 @@ export default function AssessmentEventDrawer({
   }, [assignees, userId, userName]);
 
   const multiPerson = people.length > 1;
-  const drawerWidth = useDrawerWidth(720);
+  const drawerProps = useMobileDrawer(720);
   const selectedCatalogId = Form.useWatch('catalogId', form);
   const selectedCatalog = useMemo(
     () => catalog.find((item) => item.id === selectedCatalogId),
@@ -132,7 +132,7 @@ export default function AssessmentEventDrawer({
     : `事件明细 · ${userName || people[0]?.realName || ''}`;
 
   return (
-    <Drawer width={drawerWidth} open={open} onClose={onClose} title={title}>
+    <Drawer {...drawerProps} open={open} onClose={onClose} title={title}>
       {serviceCaseId ? (
         <div style={{ marginBottom: 12, color: '#666' }}>
           {multiPerson

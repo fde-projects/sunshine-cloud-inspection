@@ -8,6 +8,7 @@ import {
   saveItemPriceMapping,
 } from '../../../api/finance';
 import type { ItemPriceMappingRow } from '../../../types/finance';
+import { useDrawerWidth } from '../../../hooks/useDrawerWidth';
 
 interface Props {
   open: boolean;
@@ -83,15 +84,16 @@ export default function ItemMappingDialog({ open, onClose, onChanged }: Props) {
   };
 
   const ignoredRowCount = ignoredList.reduce((sum, row) => sum + Number(row.totalCount || 0), 0);
+  const modalWidth = useDrawerWidth(1050);
 
   return (
     <Modal
-      width={1050}
+      width={modalWidth}
       open={open}
       title="PO 条目映射维护"
       onCancel={onClose}
       footer={
-        <Space>
+        <Space wrap className="admin-modal-footer-actions">
           <Button onClick={onClose}>关闭</Button>
           <Button type="primary" loading={loading} onClick={() => void recalculate()}>
             应用内置规则并重算全部

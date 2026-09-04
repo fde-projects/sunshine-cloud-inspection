@@ -1081,7 +1081,11 @@ export default function HardRulesPage() {
                     {row.code} · v{row.version}
                   </span>
                 </div>
-                <Tag color={row.active ? 'success' : 'default'}>{row.active ? '启用' : '停用'}</Tag>
+                <Tag
+                  color={row.enabled && row.enforceMode !== 'off' ? 'success' : 'default'}
+                >
+                  {row.enabled && row.enforceMode !== 'off' ? '启用' : '停用'}
+                </Tag>
               </div>
               <div className="admin-mobile-card__meta">
                 <span>强度：{ENFORCE_MODE_LABEL[String(row.enforceMode)] || row.enforceMode}</span>

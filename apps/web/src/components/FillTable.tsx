@@ -134,7 +134,7 @@ export default function FillTable<RecordType extends object>(props: FillTablePro
       const nextRecords = rows.filter((row, i) =>
         next.includes(String(resolveRowKey(rowKey, row, i))),
       );
-      selection.onChange(next as Key[], nextRecords as RecordType[]);
+      selection.onChange(next as Key[], nextRecords as RecordType[], { type: 'multiple' });
     };
 
     const sheetTitle =

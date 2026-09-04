@@ -1,7 +1,7 @@
 "use client";
 
-import { useCallback, useMemo } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Empty, PullRefresh, Toast } from '@/m/lib/react-vant';
 import { useAuthStore } from '../../stores/auth';
 import { fetchTasks, type TaskItem } from '../../api/task';
@@ -9,6 +9,13 @@ import { fetchMyFinanceCases, type MobileFinanceCase } from '../../api/finance';
 import { mobileCacheKeys } from '../../utils/mobileCacheKeys';
 import { useCachedResource } from '../../utils/useCachedResource';
 import { useNewOrderNotice, useVisiblePolling } from '../../utils/useVisiblePolling';
+import {
+  clearLayoutPreviewFlag,
+  isMobilePreviewMode,
+  isMobilePreviewQuery,
+  setLayoutPreviewFlag,
+} from '../../utils/mobilePreview';
+import { buildPreviewHomeItems } from '../../utils/mobilePreviewData';
 import type { SiteBrief } from '../../types';
 import './home.css';
 
@@ -56,8 +63,20 @@ function primaryAction(item?: HomeItem) {
 /** 首页：只看当前站待办；其他站有单时提示并一键切换 */
 export default function HomePage() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const [previewMode, setPreviewMode] = useState(false);
   const { currentSite, user, setCurrentSite } = useAuthStore();
   const profileIncomplete = !user?.realName?.trim() || !user?.phone?.trim();
+
+  useEffect(() => {
+    clearLayoutPreviewFlag();
+    setPreviewMode(isMobilePreviewMode(searchParams));
+  }, [searchParams]);
+
+  const closePreview = () => {
+    setLayoutPreviewFlag(false);
+    setPreviewMode(isMobilePreviewQuery(searchParams));
+  };
 
   const siteBriefById = useMemo(() => {
     const map = new Map<string, SiteBrief>();
@@ -68,6 +87,13 @@ export default function HomePage() {
   }, [user?.siteMemberships]);
 
   const loader = useCallback(async () => {
+    if (previewMode) {
+      return {
+        tasks: [] as TaskItem[],
+        financeCases: [],
+        previewItems: buildPreviewHomeItems(30),
+      };
+    }
     const [taskPage, financeCases] = await Promise.all([
       fetchTasks({
         page: 1,
@@ -78,12 +104,13 @@ export default function HomePage() {
       fetchMyFinanceCases().catch(() => [] as MobileFinanceCase[]),
     ]);
     return { tasks: taskPage.list as TaskItem[], financeCases };
-  }, [currentSite?.id]);
+  }, [currentSite?.id, previewMode]);
 
-  const { data, loading, error, reload } = useCachedResource(
-    mobileCacheKeys.homeTasks(user?.id, currentSite?.id) + ':site-scoped-v1',
-    loader,
-  );
+  const cacheKey =
+    mobileCacheKeys.homeTasks(user?.id, currentSite?.id) +
+    (previewMode ? ':preview-home-v2' : ':site-scoped-v1');
+
+  const { data, loading, error, reload } = useCachedResource(cacheKey, loader);
 
   useVisiblePolling({ reload, intervalMs: 30_000 });
 
@@ -101,7 +128,11 @@ export default function HomePage() {
 
   useNewOrderNotice(activeCaseIds, notifyNewOrders, currentSite?.id || 'all');
 
-  const { items, otherSiteTips } = useMemo(() => {
+  const { items, otherSiteTips, previewTotal } = useMemo(() => {
+    if (previewMode && data && 'previewItems' in data && data.previewItems) {
+      const list = data.previewItems;
+      return { items: list, otherSiteTips: [] as OtherSiteTip[], previewTotal: list.length };
+    }
     const allTasks = data?.tasks || [];
     const taskByCaseId = new Map(
       allTasks
@@ -160,8 +191,8 @@ export default function HomePage() {
       .filter((x): x is OtherSiteTip => !!x)
       .sort((a, b) => b.count - a.count);
 
-    return { items: list, otherSiteTips: tips };
-  }, [data, currentSite?.id, siteBriefById]);
+    return { items: list, otherSiteTips: tips, previewTotal: 0 };
+  }, [data, currentSite?.id, siteBriefById, previewMode]);
 
   const stats = useMemo(
     () => ({
@@ -182,7 +213,7 @@ export default function HomePage() {
   };
 
   return (
-    <div className="page-home">
+    <div className={`page-home${previewMode ? ' page-home--preview' : ''} page-home--shell`}>
       <PullRefresh onRefresh={() => void reload()}>
         <header className="home-hero">
           <div className="home-hero__top">
@@ -206,6 +237,14 @@ export default function HomePage() {
         </header>
 
         <main className="home-content">
+          {previewMode ? (
+            <p className="mobile-preview-badge home-preview-badge">
+              <span>排版预览 · 共 {previewTotal || 30} 条待办，首页仅展示 8 条</span>
+              <button type="button" className="mobile-preview-close" onClick={closePreview}>
+                关闭预览
+              </button>
+            </p>
+          ) : null}
           {profileIncomplete && (
             <button type="button" className="home-profile-tip" onClick={() => navigate('/m/settings')}>
               <span>!</span>
@@ -279,6 +318,10 @@ export default function HomePage() {
               type="button"
               className="home-start"
               onClick={() => {
+                if (previewMode && items[0]) {
+                  navigate(items[0].href);
+                  return;
+                }
                 if (!currentSite) {
                   navigate('/m/sites');
                   return;
@@ -289,19 +332,35 @@ export default function HomePage() {
             >
               <span className="home-start__icon">→</span>
               <span>
-                <b>{!currentSite ? '先选择网格' : action.title}</b>
-                <small>{!currentSite ? '选择网格后查看本网格已派工单' : action.hint}</small>
+                <b>{previewMode ? action.title : !currentSite ? '先选择网格' : action.title}</b>
+                <small>
+                  {previewMode
+                    ? action.hint
+                    : !currentSite
+                      ? '选择网格后查看本网格已派工单'
+                      : action.hint}
+                </small>
               </span>
               <i>›</i>
             </button>
           </section>
 
+          <div className="home-scroll-area">
           <div className="home-section-title">
             <div>
               <h3>本网格待办</h3>
-              <span>{currentSite ? `仅显示 ${currentSite.name}` : '请先选择网格'}</span>
+              <span>
+                {previewMode
+                  ? `预览 ${previewTotal || items.length} 条 · 显示前 8 条`
+                  : currentSite
+                    ? `仅显示 ${currentSite.name}`
+                    : '请先选择网格'}
+              </span>
             </div>
-            <button type="button" onClick={() => navigate('/m/tasks')}>
+            <button
+              type="button"
+              onClick={() => navigate('/m/tasks')}
+            >
               全部 ›
             </button>
           </div>
@@ -316,7 +375,7 @@ export default function HomePage() {
             <button type="button" className="mobile-load-error" onClick={() => void reload()}>
               数据暂时没有加载成功，点击重试
             </button>
-          ) : !currentSite ? (
+          ) : !currentSite && !previewMode ? (
             <div className="home-empty">
               <Empty description="请先选择网格" />
             </div>
@@ -350,6 +409,7 @@ export default function HomePage() {
               ))}
             </div>
           )}
+          </div>
         </main>
       </PullRefresh>
     </div>

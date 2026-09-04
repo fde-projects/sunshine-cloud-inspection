@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams, useLocation } from 'react-router-dom';
@@ -13,6 +13,8 @@ import {
 import { fetchTask } from '../../api/task';
 import { useAuthStore } from '../../stores/auth';
 import { resolveWorkTypeLabel, workActionLabel } from '../../utils/workTypeLabels';
+import { isPreviewCaseId } from '../../utils/mobilePreview';
+import { buildPreviewCaseDetail } from '../../utils/mobilePreviewData';
 import './finance.css';
 
 const TASK_STATUS_LABEL: Record<string, string> = {
@@ -50,6 +52,7 @@ export default function FinanceCaseDetailPage() {
   const { id = '' } = useParams();
   const navigate = useNavigate();
   const location = useLocation();
+  const previewMode = isPreviewCaseId(id);
   const userId = useAuthStore((s) => s.user?.id);
   const [item, setItem] = useState<MobileFinanceCase>();
   const [loading, setLoading] = useState(true);
@@ -67,6 +70,15 @@ export default function FinanceCaseDetailPage() {
     setLoading(true);
     setLoadError('');
     try {
+      if (previewMode) {
+        const data = buildPreviewCaseDetail(userId, id);
+        setItem(data);
+        setFocusUnitId(data.activeUnit?.id || null);
+        setUnitFilter(
+          data.assignMode === 'multi' || Number(data.plannedUnits) > 1 ? 'mine' : 'mine',
+        );
+        return;
+      }
       const data = await fetchMyFinanceCase(id);
       setItem(data);
       setFocusUnitId(data.activeUnit?.id || null);
@@ -95,7 +107,7 @@ export default function FinanceCaseDetailPage() {
 
   useEffect(() => {
     void load();
-  }, [id, userId, location.key]);
+  }, [id, userId, location.key, previewMode]);
 
   useEffect(() => {
     setGridLimit(GRID_PAGE);
@@ -560,12 +572,13 @@ export default function FinanceCaseDetailPage() {
   const workType = resolveWorkTypeLabel(item);
   const multiWorking = useUnitFlow && ['assigned', 'working'].includes(item.status);
 
-  const primaryLabel =
-    item.status === 'assigned'
+  const primaryLabel = useUnitFlow && myActive
+    ? `进入当前${unitLabel} #${myActive.seq}`
+    : item.status === 'assigned'
       ? workActionLabel(workType, 'accept_start')
       : item.inspectionTaskStatus === 'rejected'
         ? workActionLabel(workType, 'rework')
-        : item.inspectionTaskStatus === 'in_progress'
+        : item.inspectionTaskStatus === 'in_progress' || item.status === 'working'
           ? workActionLabel(workType, 'continue')
           : workActionLabel(workType, 'start');
 
@@ -592,527 +605,476 @@ export default function FinanceCaseDetailPage() {
     </button>
   );
 
+  const showExpenseDock = ['assigned', 'working', 'finished', 'settle_review', 'settled'].includes(
+    item.status,
+  );
+  const showPrimaryDock =
+    (!useUnitFlow && canInspect) ||
+    (useUnitFlow && multiWorking && canInspect && !!myActive) ||
+    (useUnitFlow && multiWorking && openUnits.length > 0 && !myActive);
+  const showClaimSide =
+    useUnitFlow && multiWorking && openUnits.length > 0 && !!myActive;
+  const showDock = showPrimaryDock || showClaimSide || showExpenseDock;
+  const claimLabel =
+    myUnitList.length > 0 || myInProgress.length > 0
+      ? `认领 #${openUnits[0]?.seq ?? ''}`
+      : `认领 #${openUnits[0]?.seq ?? ''}`;
+  const guardPreview = () => {
+    if (!previewMode) return false;
+    Toast.info('预览数据仅看排版，不会真实提交');
+    return true;
+  };
+  const primaryAction = (() => {
+    if (!useUnitFlow && canInspect) {
+      return {
+        label: primaryLabel,
+        onClick: () => {
+          if (guardPreview()) return;
+          void enterInspection(item.status === 'assigned');
+        },
+      };
+    }
+    if (useUnitFlow && multiWorking && canInspect && myActive) {
+      return {
+        label: primaryLabel,
+        onClick: () => {
+          if (guardPreview()) return;
+          void goInspectUnit(myActive, false);
+        },
+      };
+    }
+    if (useUnitFlow && multiWorking && openUnits.length > 0) {
+      return {
+        label: claimLabel,
+        onClick: () => {
+          if (guardPreview()) return;
+          void claimNext();
+        },
+      };
+    }
+    return null;
+  })();
+
+  const filterTabs = (
+    multiWorking
+      ? ([
+          ['mine', `我的 ${myUnitList.length}`],
+          ['open', `可认领 ${openUnits.length}`],
+          ['all', `全部 ${units.length}`],
+        ] as const)
+      : ([
+          ['mine', `我的 ${myUnitList.length}`],
+          ['all', `全部 ${units.length}`],
+        ] as const)
+  );
+
   return (
-    <div className="mobile-finance-page">
-      <header className="mobile-finance-head">
-        <button type="button" onClick={() => navigate('/m/tasks')}>
-          ← 返回
-        </button>
-        <h1>作业详情</h1>
-      </header>
-
-      <section className="mobile-finance-card">
-        <div className="mobile-finance-row">
-          <h2>{item.projectName || item.gspCaseNo}</h2>
-          <span className="mobile-finance-status">
-            {CASE_STATUS_LABEL[item.status] || item.status}
-            {item.hasPo === false ? ' · 不计件结算' : ''}
-          </span>
+    <div
+      className={`mobile-finance-page case-detail-shell${showDock ? ' has-dock' : ''}${
+        previewMode ? ' is-preview' : ''
+      }`}
+    >
+      <header className="case-chrome">
+        <div className="case-chrome__nav">
+          <button type="button" onClick={() => navigate('/m/tasks')}>
+            ← 返回
+          </button>
+          {previewMode ? <span className="case-chrome__preview">预览</span> : null}
         </div>
-        <dl className="mobile-finance-meta">
-          <div>
-            <dt>案例号</dt>
-            <dd>{item.gspCaseNo}</dd>
-          </div>
-          <div>
-            <dt>地区</dt>
-            <dd>
-              {item.province || '-'}
-              {item.city ? ` · ${item.city}` : ''}
-            </dd>
-          </div>
-          <div>
-            <dt>服务类型</dt>
-            <dd>{item.taskTypeName || item.taskType || '未设置'}</dd>
-          </div>
-          {item.assignRemark?.trim() ? (
-            <div>
-              <dt>派单备注</dt>
-              <dd>{item.assignRemark.trim()}</dd>
-            </div>
-          ) : null}
-          {!useUnitFlow && item.inspectionTaskStatus && (
-            <div>
-              <dt>{workActionLabel(workType, 'progress')}</dt>
-              <dd>
-                {item.inspectionTaskStatus === 'in_progress'
-                  ? workActionLabel(workType, 'doing')
-                  : TASK_STATUS_LABEL[item.inspectionTaskStatus] ||
-                    item.inspectionTaskStatus}
-              </dd>
-            </div>
-          )}
-          {!useUnitFlow && singleUnitSerial && (
-            <div>
-              <dt>序列号</dt>
-              <dd className={singleUnitSerial.serial ? '' : 'mobile-finance-muted'}>
-                {singleUnitSerial.serial || '未识别'}
-              </dd>
-            </div>
-          )}
-        </dl>
-
-        {!useUnitFlow && singleUnitSerial?.serial ? (
-          <div className="single-unit-serial-card">
-            <div className="unit-row-main">
-              <strong>
-                {unitLabel} #{singleUnitSerial.seq}
-              </strong>
-              <span className={`unit-serial ${singleUnitSerial.serial ? '' : 'is-empty'}`}>
-                序列号：{singleUnitSerial.serial || '未识别'}
-              </span>
-            </div>
+        <div className="case-chrome__title">
+          <h1>{item.projectName || item.gspCaseNo}</h1>
+          <span>{CASE_STATUS_LABEL[item.status] || item.status}</span>
+        </div>
+        <p className="case-chrome__meta">
+          <span>{item.gspCaseNo}</span>
+          <span>
+            {item.province || '-'}
+            {item.city ? ` · ${item.city}` : ''}
+          </span>
+          <span>{item.taskTypeName || item.taskType || '未设置'}</span>
+        </p>
+        {useUnitFlow ? (
+          <p className="case-chrome__sub">
+            {completedUnits.length || item.completedUnits || 0}/{item.plannedUnits || 1} 完成
+            {multiWorking
+              ? ` · 可认领 ${openUnits.length} · 进行中 ${myInProgress.length}`
+              : ''}
+            {myActive ? ` · 当前 #${myActive.seq}` : ''}
+          </p>
+        ) : (
+          <p className="case-chrome__sub">
+            {item.inspectionTaskStatus
+              ? item.inspectionTaskStatus === 'in_progress'
+                ? workActionLabel(workType, 'doing')
+                : TASK_STATUS_LABEL[item.inspectionTaskStatus] || item.inspectionTaskStatus
+              : '待开始'}
+          </p>
+        )}
+        {item.assignRemark?.trim() ? (
+          <p className="case-chrome__remark">
+            <b>派单备注</b>
+            {item.assignRemark.trim()}
+          </p>
+        ) : null}
+        {canInspect ? (
+          <details className="case-chrome__tip">
+            <summary>现场说明</summary>
+            <p>
+              {useUnitFlow
+                ? workActionLabel(workType, 'tip_unit')
+                : workActionLabel(workType, 'tip_photo')}
+            </p>
+          </details>
+        ) : null}
+        {useUnitFlow && multiWorking ? (
+          <div className="case-chrome__bar" aria-hidden>
+            <i style={{ width: `${progressPct}%` }} />
           </div>
         ) : null}
 
-        {!useUnitFlow && canInspect && (
-          <>
-            <button
-              type="button"
-              className="mobile-finance-primary"
-              style={{ width: '100%', marginTop: 8 }}
-              disabled={busy}
-              onClick={() => void enterInspection(item.status === 'assigned')}
-            >
-              {primaryLabel}
-            </button>
-          </>
-        )}
+        {useUnitFlow && (multiWorking || (finished && myUnitList.length > 0)) ? (
+          <div className="case-chrome__tools">
+            <div className="case-tabs" role="tablist">
+              {filterTabs.map(([key, label]) => (
+                <button
+                  key={key}
+                  type="button"
+                  role="tab"
+                  className={`case-tab${unitFilter === key ? ' is-active' : ''}`}
+                  onClick={() => setUnitFilter(key)}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            <div className="case-search">
+              <input
+                type="search"
+                value={unitSearch}
+                placeholder={`搜索序列号或${unitLabel}号`}
+                onChange={(e) => setUnitSearch(e.target.value)}
+              />
+              {unitSearch.trim() ? (
+                <button type="button" onClick={() => setUnitSearch('')}>
+                  清除
+                </button>
+              ) : null}
+            </div>
+          </div>
+        ) : null}
+      </header>
 
-        {!useUnitFlow && (item.inspectionDone || finished) && item.inspectionTaskId && (
-          <button
-            type="button"
-            className="mobile-finance-secondary"
-            style={{ width: '100%', marginTop: 12 }}
-            disabled={busy}
-            onClick={() => void viewUnitReport(item.inspectionTaskId)}
-          >
-            {workActionLabel(workType, 'report')}
-          </button>
-        )}
-      </section>
-
-      {useUnitFlow && (multiWorking || (finished && myUnitList.length > 0)) && (
-        <section id="unit-pool-card" className="mobile-finance-card unit-pool-card">
-          <div className="unit-progress-head">
+      <div className="case-scroll">
+        {!useUnitFlow && singleUnitSerial ? (
+          <div className="case-row">
             <div>
               <strong>
-                {completedUnits.length || item.completedUnits || 0}/{item.plannedUnits || 1}
+                {unitLabel} #{singleUnitSerial.seq}
               </strong>
-              <span>
-                {' '}
-                {unitLabel}已完成
-                {multiWorking
-                  ? ` · 可认领 ${openUnits.length}${
-                      myInProgress.length > 0 ? ` · 我进行中 ${myInProgress.length}` : ''
-                    }`
-                  : ''}
-              </span>
+              <small className={singleUnitSerial.serial ? '' : 'is-empty'}>
+                序列号：{singleUnitSerial.serial || '未识别'}
+              </small>
             </div>
-          </div>
-          {multiWorking ? (
-            <div className="unit-progress-bar" aria-hidden>
-              <i style={{ width: `${progressPct}%` }} />
-            </div>
-          ) : null}
-
-          {multiWorking && myActive && (
-            <div className="unit-now">
-              <div className="unit-now-info">
-                <span className="unit-now-label">当前作业</span>
-                <strong>
-                  {unitLabel} #{myActive.seq}
-                </strong>
-                <small>{UNIT_STATUS_LABEL[myActive.status] || myActive.status}</small>
-                {myInProgress.length > 1 && (
-                  <small className="unit-now-extra">共 {myInProgress.length} 台进行中</small>
-                )}
-              </div>
-              {canInspect && (
-                <button
-                  type="button"
-                  className="mobile-finance-primary"
-                  disabled={busy}
-                  onClick={() => void goInspectUnit(myActive, false)}
-                >
-                  {primaryLabel}
-                </button>
-              )}
-            </div>
-          )}
-
-          {multiWorking && openUnits.length > 0 ? (
-            <button
-              type="button"
-              className={`mobile-finance-primary unit-claim-next ${
-                myActive ? 'is-secondary-style' : ''
-              }`}
-              disabled={busy}
-              onClick={() => void claimNext()}
-            >
-              {myUnitList.length > 0 || myInProgress.length > 0
-                ? `认领下一${unitLabel}（#${openUnits[0].seq}）`
-                : `认领第 ${openUnits[0].seq} ${unitLabel}`}
-            </button>
-          ) : multiWorking && !myActive ? (
-            <p className="mobile-finance-muted unit-empty-tip">
-              暂无可认领{unitLabel}
-              {Number(item.plannedUnits) > 0 && !(item.units || []).length
-                ? '（作业台尚未生成，请下拉刷新或请网格长重新派单/调整计划台数）'
-                : '，请等待他人完成或结案。'}
-            </p>
-          ) : null}
-
-          {multiWorking && myActive && openUnits.length > 0 && (
-            <p className="mobile-finance-muted unit-hint">
-              也可先认领下一{unitLabel}；点错可在「我的」取消认领。切换作业请到「我的」。
-            </p>
-          )}
-
-          <div className="unit-filter-row">
-            {(
-              (multiWorking
-                ? ([
-                    ['mine', `我的 ${myUnitList.length}`],
-                    ['open', `可认领 ${openUnits.length}`],
-                    ['all', `全部 ${units.length}`],
-                  ] as const)
-                : ([
-                    ['mine', `我的 ${myUnitList.length}`],
-                    ['all', `全部 ${units.length}`],
-                  ] as const))
-            ).map(([key, label]) => (
-              <button
-                key={key}
-                type="button"
-                className={`unit-filter-chip ${unitFilter === key ? 'is-active' : ''}`}
-                onClick={() => setUnitFilter(key)}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
-
-          <div className="unit-search-row">
-            <input
-              className="unit-search-input"
-              type="search"
-              value={unitSearch}
-              placeholder={`搜索序列号或${unitLabel}号`}
-              onChange={(e) => setUnitSearch(e.target.value)}
-            />
-            {unitSearch.trim() ? (
+            {(item.inspectionDone || finished) && item.inspectionTaskId ? (
               <button
                 type="button"
-                className="unit-search-clear"
-                onClick={() => setUnitSearch('')}
+                className="case-row-btn"
+                disabled={busy}
+                onClick={() => void viewUnitReport(item.inspectionTaskId)}
               >
-                清除
+                报告
               </button>
             ) : null}
           </div>
+        ) : null}
 
-          {unitFilter === 'mine' && (
-            <ul className="unit-mine-list">
-              {filteredMine.length === 0 ? (
-                <li className="mobile-finance-muted">
-                  {myUnitList.length === 0
-                    ? `暂无我的${unitLabel}`
-                    : '没有匹配的序列号'}
-                </li>
-              ) : (
-                filteredMine.map((u) => {
-                  const canEnter = u.status === 'claimed';
-                  const canUnclaim =
-                    u.status === 'claimed' &&
-                    !u.deviceSerial?.trim() &&
-                    !u.serialPhotoUrl?.trim();
-                  const canViewReport =
-                    !!u.inspectionTaskId &&
-                    (u.status === 'submitted' || u.status === 'completed');
-                  const isFocus = u.id === myActive?.id;
-                  return (
-                    <li key={u.id} className={isFocus ? 'is-focus' : ''}>
-                      <span className="unit-mine-meta">
-                        <span>
-                          {unitLabel} #{u.seq}
-                          {isFocus ? ' · 当前' : ''}
+        {useUnitFlow && (multiWorking || (finished && myUnitList.length > 0)) ? (
+          <>
+            {multiWorking && !myActive && openUnits.length === 0 ? (
+              <p className="case-empty">
+                暂无可认领{unitLabel}
+                {Number(item.plannedUnits) > 0 && !(item.units || []).length
+                  ? '，请刷新或联系网格长'
+                  : ''}
+              </p>
+            ) : null}
+
+            {unitFilter === 'mine' && (
+              <ul className="case-list">
+                {filteredMine.length === 0 ? (
+                  <li className="case-empty">
+                    {myUnitList.length === 0 ? `暂无我的${unitLabel}` : '没有匹配'}
+                  </li>
+                ) : (
+                  filteredMine.map((u) => {
+                    const canEnter = u.status === 'claimed';
+                    const canUnclaim =
+                      u.status === 'claimed' &&
+                      !u.deviceSerial?.trim() &&
+                      !u.serialPhotoUrl?.trim();
+                    const canViewReport =
+                      !!u.inspectionTaskId &&
+                      (u.status === 'submitted' || u.status === 'completed');
+                    const isFocus = u.id === myActive?.id;
+                    return (
+                      <li key={u.id} className={isFocus ? 'is-focus' : ''}>
+                        <div className="case-list__main">
+                          <strong>
+                            #{u.seq}
+                            {isFocus ? ' 当前' : ''}
+                          </strong>
+                          <small
+                            className={`${u.deviceSerial ? '' : 'is-empty'}${
+                              duplicateSerials.has(serialKey(u.deviceSerial)) ? ' is-dup' : ''
+                            }`}
+                          >
+                            {u.deviceSerial?.trim() || '未识别序列号'}
+                            {duplicateSerials.has(serialKey(u.deviceSerial)) ? ' · 重复' : ''}
+                          </small>
+                        </div>
+                        <span className="case-list__status">
+                          {UNIT_STATUS_LABEL[u.status] || u.status}
                         </span>
-                        <span
-                          className={`unit-serial ${u.deviceSerial ? '' : 'is-empty'}${
-                            duplicateSerials.has(serialKey(u.deviceSerial)) ? ' is-dup' : ''
-                          }`}
-                        >
-                          序列号：{u.deviceSerial?.trim() || '未识别'}
-                          {duplicateSerials.has(serialKey(u.deviceSerial)) ? ' · 重复' : ''}
-                        </span>
-                      </span>
-                      <span className="unit-mine-actions">
-                        <em>{UNIT_STATUS_LABEL[u.status] || u.status}</em>
-                        {canEnter && (
-                          <button
-                            type="button"
-                            className="unit-enter-btn"
-                            disabled={busy}
-                            onClick={() => void goInspectUnit(u, false)}
-                          >
-                            进入
-                          </button>
-                        )}
-                        {canUnclaim && (
-                          <button
-                            type="button"
-                            className="unit-enter-btn is-muted"
-                            disabled={busy}
-                            onClick={() => void unclaimUnit(u.id)}
-                          >
-                            取消认领
-                          </button>
-                        )}
-                        {canViewReport && (
-                          <button
-                            type="button"
-                            className="unit-enter-btn"
-                            onClick={() => void viewUnitReport(u.inspectionTaskId)}
-                          >
-                            查看报告
-                          </button>
-                        )}
-                      </span>
-                    </li>
-                  );
-                })
-              )}
-            </ul>
-          )}
-
-          {multiWorking && unitFilter === 'open' && (
-            <>
-              {filteredOpen.length === 0 ? (
-                <p className="mobile-finance-muted">
-                  {openUnits.length === 0
-                    ? `没有可认领的${unitLabel}`
-                    : '没有匹配的序列号'}
-                </p>
-              ) : (
-                <>
-                  <p className="mobile-finance-muted unit-hint" style={{ marginTop: 10 }}>
-                    日常点上方「认领下一{unitLabel}」；要指定某台，直接点编号即可。
-                  </p>
-                  <div className="unit-grid">
-                    {filteredOpen.slice(0, gridLimit).map((u) => renderUnitChip(u, true))}
-                  </div>
-                  {filteredOpen.length > gridLimit ? (
-                    <button
-                      type="button"
-                      className="unit-more-btn"
-                      onClick={() => setGridLimit((n) => n + GRID_PAGE)}
-                    >
-                      再显示 {Math.min(GRID_PAGE, filteredOpen.length - gridLimit)} 台（还剩{' '}
-                      {filteredOpen.length - gridLimit}）
-                    </button>
-                  ) : (
-                    <p className="mobile-finance-muted unit-hint" style={{ textAlign: 'center' }}>
-                      共 {filteredOpen.length} 台可认领
-                    </p>
-                  )}
-                </>
-              )}
-            </>
-          )}
-
-          {unitFilter === 'all' && (
-            <div className="unit-all-groups">
-              {openUnits.length > 0 && multiWorking && (
-                <div className="unit-group">
-                  <div className="unit-group-title">可认领 · {openUnits.length}</div>
-                  <p className="mobile-finance-muted unit-hint">
-                    请用上方「认领下一{unitLabel}」，或到「可认领」里点编号选择。
-                  </p>
-                </div>
-              )}
-              {filteredClaimed.length > 0 && (
-                <div className="unit-group">
-                  <div className="unit-group-title">作业中 · {filteredClaimed.length}</div>
-                  <ul className="unit-mine-list">
-                    {filteredClaimed.map((u) => {
-                      const mine = !!userId && u.inspectorId === userId;
-                      const canEnter = mine && u.status === 'claimed';
-                      const canUnclaim =
-                        mine &&
-                        u.status === 'claimed' &&
-                        !u.deviceSerial?.trim() &&
-                        !u.serialPhotoUrl?.trim();
-                      const canViewReport =
-                        mine &&
-                        !!u.inspectionTaskId &&
-                        (u.status === 'submitted' || u.status === 'completed');
-                      return (
-                        <li key={u.id}>
-                          <span className="unit-mine-meta">
-                            <span>
-                              {unitLabel} #{u.seq}
-                              {mine ? ' · 我的' : ''}
-                            </span>
-                            <span
-                              className={`unit-serial ${u.deviceSerial ? '' : 'is-empty'}${
-                                duplicateSerials.has(serialKey(u.deviceSerial)) ? ' is-dup' : ''
-                              }`}
+                        <div className="case-list__actions">
+                          {canEnter ? (
+                            <button
+                              type="button"
+                              className="case-row-btn is-primary"
+                              disabled={busy}
+                              onClick={() => void goInspectUnit(u, false)}
                             >
-                              序列号：{u.deviceSerial?.trim() || '未识别'}
-                              {duplicateSerials.has(serialKey(u.deviceSerial)) ? ' · 重复' : ''}
-                            </span>
-                          </span>
-                          <span className="unit-mine-actions">
-                            <em>{UNIT_STATUS_LABEL[u.status] || u.status}</em>
-                            {canEnter && (
-                              <button
-                                type="button"
-                                className="unit-enter-btn"
-                                disabled={busy}
-                                onClick={() => void goInspectUnit(u, false)}
-                              >
-                                进入
-                              </button>
-                            )}
-                            {canUnclaim && (
-                              <button
-                                type="button"
-                                className="unit-enter-btn is-muted"
-                                disabled={busy}
-                                onClick={() => void unclaimUnit(u.id)}
-                              >
-                                取消认领
-                              </button>
-                            )}
-                            {canViewReport && (
-                              <button
-                                type="button"
-                                className="unit-enter-btn"
-                                onClick={() => void viewUnitReport(u.inspectionTaskId)}
-                              >
-                                查看报告
-                              </button>
-                            )}
-                          </span>
-                        </li>
-                      );
-                    })}
-                  </ul>
-                </div>
-              )}
-              {filteredCompleted.length > 0 && (
-                <div className="unit-group">
-                  <button
-                    type="button"
-                    className="unit-group-title is-btn"
-                    onClick={() => setShowCompletedAll((v) => !v)}
-                  >
-                    已完成 · {filteredCompleted.length}
-                    <span>{showCompletedAll ? '收起' : '展开'}</span>
-                  </button>
-                  {showCompletedAll && (
-                    <ul className="unit-mine-list">
-                      {filteredCompleted.map((u) => {
+                              进入
+                            </button>
+                          ) : null}
+                          {canUnclaim ? (
+                            <button
+                              type="button"
+                              className="case-row-btn"
+                              disabled={busy}
+                              onClick={() => void unclaimUnit(u.id)}
+                            >
+                              取消
+                            </button>
+                          ) : null}
+                          {canViewReport ? (
+                            <button
+                              type="button"
+                              className="case-row-btn"
+                              onClick={() => void viewUnitReport(u.inspectionTaskId)}
+                            >
+                              报告
+                            </button>
+                          ) : null}
+                        </div>
+                      </li>
+                    );
+                  })
+                )}
+              </ul>
+            )}
+
+            {multiWorking && unitFilter === 'open' && (
+              <>
+                {filteredOpen.length === 0 ? (
+                  <p className="case-empty">
+                    {openUnits.length === 0 ? `没有可认领的${unitLabel}` : '没有匹配'}
+                  </p>
+                ) : (
+                  <>
+                    <div className="case-chip-grid">
+                      {filteredOpen.slice(0, gridLimit).map((u) => renderUnitChip(u, true))}
+                    </div>
+                    {filteredOpen.length > gridLimit ? (
+                      <button
+                        type="button"
+                        className="case-more"
+                        onClick={() => setGridLimit((n) => n + GRID_PAGE)}
+                      >
+                        再显示 {Math.min(GRID_PAGE, filteredOpen.length - gridLimit)} 台
+                      </button>
+                    ) : null}
+                  </>
+                )}
+              </>
+            )}
+
+            {unitFilter === 'all' && (
+              <div className="case-all">
+                {filteredClaimed.length > 0 ? (
+                  <>
+                    <div className="case-section-label">作业中 · {filteredClaimed.length}</div>
+                    <ul className="case-list">
+                      {filteredClaimed.map((u) => {
                         const mine = !!userId && u.inspectorId === userId;
-                        const canView = !!u.inspectionTaskId && mine;
+                        const canEnter = mine && u.status === 'claimed';
+                        const canUnclaim =
+                          mine &&
+                          u.status === 'claimed' &&
+                          !u.deviceSerial?.trim() &&
+                          !u.serialPhotoUrl?.trim();
+                        const canViewReport =
+                          mine &&
+                          !!u.inspectionTaskId &&
+                          (u.status === 'submitted' || u.status === 'completed');
                         return (
                           <li key={u.id}>
-                            <span className="unit-mine-meta">
-                              <span>
-                                {unitLabel} #{u.seq}
-                                {mine ? ' · 我的' : ''}
-                              </span>
-                              <span
-                                className={`unit-serial ${u.deviceSerial ? '' : 'is-empty'}${
+                            <div className="case-list__main">
+                              <strong>
+                                #{u.seq}
+                                {mine ? ' 我的' : ''}
+                              </strong>
+                              <small
+                                className={`${u.deviceSerial ? '' : 'is-empty'}${
                                   duplicateSerials.has(serialKey(u.deviceSerial)) ? ' is-dup' : ''
                                 }`}
                               >
-                                序列号：{u.deviceSerial?.trim() || '未识别'}
-                                {duplicateSerials.has(serialKey(u.deviceSerial)) ? ' · 重复' : ''}
-                              </span>
+                                {u.deviceSerial?.trim() || '未识别序列号'}
+                              </small>
+                            </div>
+                            <span className="case-list__status">
+                              {UNIT_STATUS_LABEL[u.status] || u.status}
                             </span>
-                            <span className="unit-mine-actions">
-                              <em>已完成</em>
-                              {canView ? (
+                            <div className="case-list__actions">
+                              {canEnter ? (
                                 <button
                                   type="button"
-                                  className="unit-enter-btn"
-                                  onClick={() => void viewUnitReport(u.inspectionTaskId)}
+                                  className="case-row-btn is-primary"
+                                  disabled={busy}
+                                  onClick={() => void goInspectUnit(u, false)}
                                 >
-                                  查看报告
+                                  进入
                                 </button>
                               ) : null}
-                            </span>
+                              {canUnclaim ? (
+                                <button
+                                  type="button"
+                                  className="case-row-btn"
+                                  disabled={busy}
+                                  onClick={() => void unclaimUnit(u.id)}
+                                >
+                                  取消
+                                </button>
+                              ) : null}
+                              {canViewReport ? (
+                                <button
+                                  type="button"
+                                  className="case-row-btn"
+                                  onClick={() => void viewUnitReport(u.inspectionTaskId)}
+                                >
+                                  报告
+                                </button>
+                              ) : null}
+                            </div>
                           </li>
                         );
                       })}
                     </ul>
-                  )}
-                </div>
-              )}
-              {unitSearch.trim() &&
-              filteredClaimed.length === 0 &&
-              filteredCompleted.length === 0 &&
-              !(openUnits.length > 0 && multiWorking) ? (
-                <p className="mobile-finance-muted">没有匹配的序列号</p>
+                  </>
+                ) : null}
+                {filteredCompleted.length > 0 ? (
+                  <>
+                    <button
+                      type="button"
+                      className="case-section-label is-btn"
+                      onClick={() => setShowCompletedAll((v) => !v)}
+                    >
+                      已完成 · {filteredCompleted.length}
+                      <span>{showCompletedAll ? '收起' : '展开'}</span>
+                    </button>
+                    {showCompletedAll ? (
+                      <ul className="case-list">
+                        {filteredCompleted.map((u) => {
+                          const mine = !!userId && u.inspectorId === userId;
+                          const canView = !!u.inspectionTaskId && mine;
+                          return (
+                            <li key={u.id}>
+                              <div className="case-list__main">
+                                <strong>
+                                  #{u.seq}
+                                  {mine ? ' 我的' : ''}
+                                </strong>
+                                <small>{u.deviceSerial?.trim() || '未识别序列号'}</small>
+                              </div>
+                              <span className="case-list__status">已完成</span>
+                              {canView ? (
+                                <div className="case-list__actions">
+                                  <button
+                                    type="button"
+                                    className="case-row-btn"
+                                    onClick={() => void viewUnitReport(u.inspectionTaskId)}
+                                  >
+                                    报告
+                                  </button>
+                                </div>
+                              ) : null}
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    ) : null}
+                  </>
+                ) : null}
+                {openUnits.length > 0 && multiWorking ? (
+                  <p className="case-empty">可认领 {openUnits.length} 台，请切到「可认领」或底部认领</p>
+                ) : null}
+              </div>
+            )}
+          </>
+        ) : null}
+
+        {finished ? (
+          <p className="case-empty">本单已结束，收入请到「我的」查看</p>
+        ) : null}
+      </div>
+
+      {showDock ? (
+        <footer className="case-dock">
+          {primaryAction ? (
+            <button
+              type="button"
+              className="case-dock__primary"
+              disabled={busy}
+              onClick={primaryAction.onClick}
+            >
+              {primaryAction.label}
+            </button>
+          ) : null}
+          {(showClaimSide || showExpenseDock) && (
+            <div
+              className={`case-dock__secondary${
+                showClaimSide && showExpenseDock ? ' is-split' : ''
+              }`}
+            >
+              {showClaimSide ? (
+                <button
+                  type="button"
+                  className="case-dock__outline"
+                  disabled={busy}
+                  onClick={() => {
+                    if (guardPreview()) return;
+                    void claimNext();
+                  }}
+                >
+                  {claimLabel}
+                </button>
+              ) : null}
+              {showExpenseDock ? (
+                <button
+                  type="button"
+                  className={`case-dock__outline${needsTripEndReminder ? ' is-warn' : ''}`}
+                  onClick={() => {
+                    if (guardPreview()) return;
+                    navigate(`/m/finance-cases/${id}/expense`);
+                  }}
+                >
+                  {expenseButtonLabel}
+                  {needsTripEndReminder ? ' · 未填完' : ''}
+                </button>
               ) : null}
             </div>
           )}
-        </section>
-      )}
-
-      {canInspect && (
-        <section className="mobile-finance-card mobile-finance-tip">
-          <h3>现场说明</h3>
-          <p className="mobile-finance-muted">
-            {useUnitFlow
-              ? workActionLabel(workType, 'tip_unit')
-              : workActionLabel(workType, 'tip_photo')}
-          </p>
-        </section>
-      )}
-
-      {['assigned', 'working', 'finished', 'settle_review', 'settled'].includes(item.status) ? (
-        <section className="mobile-finance-card">
-          <h3>行程与费用（可选）</h3>
-          <p className="mobile-finance-muted">{expenseTip}</p>
-          <p style={{ marginTop: 8, fontSize: 13, color: '#1a2e24' }}>
-            当前：{tripStatusLabel}
-          </p>
-          {needsTripEndReminder ? (
-            <p className="mobile-finance-muted" style={{ marginTop: 6, color: '#d48806' }}>
-              行程明细未填完，记得补齐里程与费用（不拦作业完工）。
-            </p>
-          ) : null}
-          <button
-            type="button"
-            className="mobile-finance-primary"
-            style={{ width: '100%', marginTop: 12 }}
-            onClick={() => navigate(`/m/finance-cases/${id}/expense`)}
-          >
-            {expenseButtonLabel}
-          </button>
-          {expenseLocked ? (
-            <p className="mobile-finance-muted" style={{ marginTop: 8, fontSize: 12 }}>
-              {expenseClaimStatus === 'submitted'
-                ? '审核中不可修改'
-                : '已通过不可修改'}
-            </p>
-          ) : null}
-        </section>
+        </footer>
       ) : null}
-
-      {finished && (
-        <section className="mobile-finance-card mobile-finance-tip">
-          <h3>本单已结束</h3>
-          <p className="mobile-finance-muted">
-            {expenseClaimStatus === 'submitted' || expenseClaimStatus === 'approved'
-              ? '可在「我的收入」查看结算与报销进度。'
-              : '可在「我的收入」查看结算进度；行程报销可在上方补填。'}
-          </p>
-        </section>
-      )}
     </div>
   );
 }

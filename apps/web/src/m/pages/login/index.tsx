@@ -235,6 +235,12 @@ export default function LoginPage() {
             </Button>
           </div>
         </div>
+        <p className="h5-login-alt">
+          管理员 / 网格长请使用{" "}
+          <a href="/login">电脑管理后台</a>
+          {" "}登录，或{" "}
+          <a href="/">返回门户</a>
+        </p>
         <div className="h5-login-trust">
           <i /> 数据安全传输 · 作业记录自动保存
         </div>

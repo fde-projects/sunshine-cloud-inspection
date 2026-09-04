@@ -31,6 +31,15 @@ export const HARD_RULE_FIELD_PHOTO_LIMIT = 4;
 export const HARD_RULE_TRIAL_PHOTO_LIMIT = HARD_RULE_FIELD_PHOTO_LIMIT;
 export const HARD_RULE_REVIEW_WINDOW_DAYS = 30;
 export const HARD_RULE_VIEW_LABEL_MAX = 24;
+
+/** 故障记录类检查项：样张应对上「实时故障 / 历史故障」，不另做页签闸门。 */
+export function looksLikeFaultRecordItem(
+  title?: string | null,
+  extra?: string | null,
+): boolean {
+  return /上传故障|故障记录|实时故障|历史故障/.test(`${title || ""}\n${extra || ""}`);
+}
+
 const MAX_SAMPLE_URL_LEN = 1024;
 
 export type HardRuleMatchContext = {

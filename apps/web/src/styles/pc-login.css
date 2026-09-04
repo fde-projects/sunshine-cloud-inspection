@@ -106,10 +106,17 @@
   text-align: center;
   color: #657a72;
   font-size: 13px;
+  line-height: 1.55;
 }
 
 .pc-login-alt a {
   color: #16835f;
+  font-weight: 650;
+  text-decoration: none;
+}
+
+.pc-login-alt a:hover {
+  text-decoration: underline;
 }
 
 .pc-login-visual__foot { color: rgba(226, 250, 241, .42); font-size: 11px; letter-spacing: .18em; }

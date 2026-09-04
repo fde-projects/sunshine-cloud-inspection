@@ -317,9 +317,11 @@ export default function LoginPage() {
               </Button>
             </Form>
             <p className="pc-login-alt">
-              工程师账号请使用{" "}
+              工程师请用手机打开{" "}
               <a href="/m/login">手机作业端</a>
-              {" "}登录
+              ；管理账号请继续在此登录。也可{" "}
+              <a href="/">返回门户</a>
+              {" "}重新选择入口。
             </p>
           </div>
           <div

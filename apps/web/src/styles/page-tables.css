@@ -549,6 +549,16 @@ body:has(.app-shell) {
     align-items: start;
   }
 }
+.hard-rules-toolbar__search {
+  width: 240px;
+}
+.hard-rules-toolbar__status {
+  width: 120px;
+}
+.hard-rules-toolbar__enforce {
+  width: 180px;
+}
+
 @media (max-width: 767px) {
   .hard-rule-editor-modal .ant-modal,
   .template-editor-modal .ant-modal {
@@ -569,6 +579,23 @@ body:has(.app-shell) {
   .hard-rule-editor-actions .ant-btn,
   .template-editor-actions .ant-btn {
     flex: 1;
+  }
+  .hard-rules-toolbar {
+    width: 100%;
+  }
+  .hard-rules-toolbar__search,
+  .hard-rules-toolbar__status,
+  .hard-rules-toolbar__enforce {
+    width: 100% !important;
+    min-width: 0;
+    max-width: 100%;
+  }
+  .admin-fill-page.ant-card > .ant-card-extra {
+    margin-inline-start: 0;
+  }
+  .admin-fill-page.ant-card > .ant-card-head {
+    flex-wrap: wrap;
+    gap: 8px;
   }
 }
 

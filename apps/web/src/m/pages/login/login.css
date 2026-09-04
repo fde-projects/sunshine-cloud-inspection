@@ -10,6 +10,16 @@
     linear-gradient(165deg, #063d2d 0%, #0f7a58 46%, #e8f1ec 46.05%, #e8f1ec 100%);
 }
 
+@media (min-width: 641px) {
+  .h5-login-page {
+    box-sizing: border-box;
+    min-height: 100%;
+    height: 100%;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+}
+
 .h5-login-page::before,
 .h5-login-page::after {
   content: '';
@@ -218,14 +228,25 @@
 
 .h5-login-alt {
   display: block;
-  margin-top: 14px;
-  width: 100%;
+  margin: 14px 4px 0;
+  width: auto;
   border: 0;
   background: transparent;
   color: #6f8379;
   font-size: 13px;
+  line-height: 1.5;
   text-align: center;
   text-decoration: none;
+}
+
+.h5-login-alt a {
+  color: #0f7a58;
+  font-weight: 650;
+  text-decoration: none;
+}
+
+.h5-login-alt a:hover {
+  text-decoration: underline;
 }
 
 .h5-login-actions {

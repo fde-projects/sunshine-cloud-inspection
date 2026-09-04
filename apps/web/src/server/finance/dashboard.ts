@@ -206,6 +206,8 @@ export async function getFinanceVariance(user: AppUser, query: URLSearchParams) 
         unmatchedPoAmount: 0,
         caseGapCount: 0,
         caseGapAmount: 0,
+        caseShortAmount: 0,
+        caseOverAmount: 0,
       },
       buckets: [],
       cases: [],
@@ -283,18 +285,20 @@ export async function getFinanceVariance(user: AppUser, query: URLSearchParams) 
         reason:
           row.pendingPrice > 0
             ? "存在待定价条目"
-            : row.ignoredCount > 0 && Math.abs(gap) > 0.009
-              ? "含忽略条目或定价未覆盖 PO 总额"
-              : Math.abs(gap) > 0.009
-                ? "核算收入与 PO 总额不一致"
+            : gap > 0.009
+              ? "核算低于 PO 总额"
+              : gap < -0.009
+                ? "核算高于 PO 总额"
                 : "无显著偏差",
       };
     })
-    .filter((row) => Math.abs(row.gap) > 0.009 || row.pendingPrice > 0 || row.ignoredCount > 0)
+    .filter((row) => Math.abs(row.gap) > 0.009 || row.pendingPrice > 0)
     .sort((a, b) => Math.abs(b.gap) - Math.abs(a.gap))
     .slice(0, 100);
 
-  const caseGapAmount = moneyNum(cases.reduce((sum, row) => sum + Math.max(0, row.gap), 0));
+  const caseShortAmount = moneyNum(cases.reduce((sum, row) => sum + Math.max(0, row.gap), 0));
+  const caseOverAmount = moneyNum(cases.reduce((sum, row) => sum + Math.min(0, row.gap), 0));
+  const caseGapAmount = moneyNum(caseShortAmount + caseOverAmount);
 
   return {
     summary: {
@@ -307,8 +311,10 @@ export async function getFinanceVariance(user: AppUser, query: URLSearchParams) 
       okCount: Number(dash.summary.okCount || 0),
       unmatchedPoCount: unmatchedPos.length,
       unmatchedPoAmount,
-      caseGapCount: cases.filter((row) => row.gap > 0.009).length,
+      caseGapCount: cases.filter((row) => Math.abs(row.gap) > 0.009).length,
       caseGapAmount,
+      caseShortAmount,
+      caseOverAmount,
     },
     buckets: [
       {
@@ -319,11 +325,18 @@ export async function getFinanceVariance(user: AppUser, query: URLSearchParams) 
         tip: "PO 已计入总额，但尚未挂到案例，核算收入为 0",
       },
       {
-        key: "case_gap",
-        label: "已匹配案例核算缺口",
-        amount: caseGapAmount,
+        key: "case_short",
+        label: "核算低于 PO",
+        amount: caseShortAmount,
         count: cases.filter((row) => row.gap > 0.009).length,
-        tip: "多为待定价、忽略条目，或条目收入合计对不上 PO 头金额",
+        tip: "已匹配案例的条目收入合计少于 PO 头金额",
+      },
+      {
+        key: "case_over",
+        label: "核算高于 PO",
+        amount: caseOverAmount,
+        count: cases.filter((row) => row.gap < -0.009).length,
+        tip: "已匹配案例的条目收入合计多于 PO 头金额，是总差额的主要来源时请先核这些单",
       },
       {
         key: "pending_price",
@@ -337,7 +350,7 @@ export async function getFinanceVariance(user: AppUser, query: URLSearchParams) 
         label: "忽略条目（条数）",
         amount: 0,
         count: Number(dash.summary.ignoredCount || 0),
-        tip: "名称如「无」「自定义」等不计入核算",
+        tip: "名称如「无」「自定义」等不计入核算；没有钱缺口时不列入下方案例",
       },
     ],
     cases,

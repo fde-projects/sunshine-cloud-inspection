@@ -297,8 +297,14 @@
   }
   .app-page-subtitle, .app-user__meta { display: none; }
   .app-user { flex: 0 0 auto; padding: 4px; }
+  .app-main {
+    min-width: 0;
+    max-width: 100vw;
+    overflow-x: hidden;
+  }
   .app-content { padding: 8px; overflow-x: hidden; }
   .app-content__surface {
+    min-width: 0;
     min-height: calc(100dvh - 76px);
     padding: 12px;
     overflow-x: hidden;

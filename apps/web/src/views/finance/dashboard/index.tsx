@@ -1,18 +1,34 @@
 "use client";
 
 import { useEffect, useState } from 'react';
-import { Alert, Button, Card, Drawer, Space, Table, Tag, message } from 'antd';
+import { Alert, Button, Card, Drawer, Space, Table, Tag, Tooltip, Typography, message } from 'antd';
 import { useNavigate } from 'react-router-dom';
 import { fetchFinanceDashboard, fetchFinanceVarianceDetail } from '../../../api/finance';
 import type { FinanceDashboard, FinanceVarianceDetail } from '../../../types/finance';
 import { useAuthStore } from '../../../stores/auth';
+import { useDrawerWidth } from '../../../hooks/useDrawerWidth';
 
 const moneyText = (value: number) =>
   `¥ ${Number(value || 0).toLocaleString('zh-CN', { minimumFractionDigits: 2 })}`;
 
+const signedMoney = (value: number) => {
+  const n = Number(value || 0);
+  const abs = moneyText(Math.abs(n));
+  if (n > 0.009) return `+${abs}`;
+  if (n < -0.009) return `−${abs}`;
+  return abs;
+};
+
+function varianceHint(amount: number) {
+  const n = Number(amount || 0);
+  if (Math.abs(n) <= 0.009) return '两边对齐';
+  return n > 0 ? `核算比 PO 少 ${moneyText(n)}` : `核算比 PO 多 ${moneyText(Math.abs(n))}`;
+}
+
 export default function FinanceDashboardPage() {
   const navigate = useNavigate();
   const isAdmin = useAuthStore((state) => state.user?.role === 'super_admin');
+  const varianceDrawerWidth = useDrawerWidth(1080);
   const [data, setData] = useState<FinanceDashboard>();
   const [varianceOpen, setVarianceOpen] = useState(false);
   const [varianceLoading, setVarianceLoading] = useState(false);
@@ -128,10 +144,9 @@ export default function FinanceDashboardPage() {
           description={
             <div>
               <p style={{ marginBottom: 8 }}>
-                PO 总额 ¥{poTotalAmount.toLocaleString('zh-CN', { minimumFractionDigits: 2 })} −
-                已定价核算收入 ¥{income.toLocaleString('zh-CN', { minimumFractionDigits: 2 })} ＝ 差额 ¥
-                {Math.abs(varianceAmount).toLocaleString('zh-CN', { minimumFractionDigits: 2 })}（
-                {(varianceRate * 100).toFixed(2)}%）
+                PO 总额 {moneyText(poTotalAmount)} − 已定价核算收入 {moneyText(income)} ＝{' '}
+                {signedMoney(varianceAmount)}（{(varianceRate * 100).toFixed(2)}%）。
+                {varianceHint(varianceAmount)}。
               </p>
               <p style={{ marginBottom: 8 }}>
                 已定价条目 {s?.okCount || 0} 条 · 待定价 {s?.pendingPrice || 0} 条 · 忽略{' '}
@@ -192,12 +207,13 @@ export default function FinanceDashboardPage() {
       </Card>
 
       <Drawer
-        width={920}
+        className="variance-detail-drawer"
+        width={varianceDrawerWidth}
         open={varianceOpen}
         onClose={() => setVarianceOpen(false)}
         title="收入与 PO 偏差明细"
         extra={
-          <Space>
+          <Space wrap size={[6, 6]}>
             {isAdmin && (
               <Button onClick={() => navigate('/finance/prices')}>去价格库定价</Button>
             )}
@@ -214,9 +230,9 @@ export default function FinanceDashboardPage() {
               message="怎么算的"
               description={
                 <div>
-                  PO 总额 {moneyText(vs.poTotalAmount)} − 已定价核算收入 {moneyText(vs.income)} ＝
-                  差额 {moneyText(Math.abs(vs.varianceAmount))}（偏差率{' '}
-                  {(vs.varianceRate * 100).toFixed(2)}%）
+                  PO 总额 {moneyText(vs.poTotalAmount)} − 已定价核算收入 {moneyText(vs.income)} ＝{' '}
+                  {signedMoney(vs.varianceAmount)}（偏差率 {(vs.varianceRate * 100).toFixed(2)}%）。
+                  {varianceHint(vs.varianceAmount)}。正数是核算少了，负数是核算多了。
                   <div style={{ marginTop: 8, color: '#666' }}>
                     已定价 {vs.okCount} 条 · 待定价 {vs.pendingPrice} 条 · 忽略 {vs.ignoredCount} 条 ·
                     未匹配 PO {vs.unmatchedPoCount} 单
@@ -232,7 +248,7 @@ export default function FinanceDashboardPage() {
               style={{ marginBottom: 20 }}
               dataSource={variance?.buckets || []}
               columns={[
-                { title: '偏差构成', dataIndex: 'label', width: 180 },
+                { title: '偏差构成', dataIndex: 'label', width: 160 },
                 {
                   title: '金额',
                   dataIndex: 'amount',
@@ -240,44 +256,63 @@ export default function FinanceDashboardPage() {
                   render: (v, row) =>
                     row.key === 'pending_price' || row.key === 'ignored'
                       ? '-'
-                      : moneyText(Number(v)),
+                      : signedMoney(Number(v)),
                 },
-                { title: '数量', dataIndex: 'count', width: 90 },
+                { title: '数量', dataIndex: 'count', width: 80 },
                 { title: '说明', dataIndex: 'tip' },
               ]}
             />
-            <Card size="small" title="有缺口的案例（按差额从大到小）" style={{ marginBottom: 16 }}>
+            <Card
+              size="small"
+              className="variance-case-card"
+              title="金额对不上的案例（按差额从大到小）"
+              style={{ marginBottom: 16 }}
+            >
               <Table
+                className="variance-case-table"
                 rowKey="caseId"
                 size="small"
                 loading={varianceLoading}
-                pagination={{ pageSize: 8 }}
+                pagination={{ pageSize: 8, size: 'small', showSizeChanger: false }}
+                scroll={{ x: 980, y: 340 }}
                 dataSource={variance?.cases || []}
-                locale={{ emptyText: '暂无案例缺口' }}
+                locale={{ emptyText: '暂无金额对不上的案例' }}
                 columns={[
-                  { title: '案例号', dataIndex: 'gspCaseNo', width: 140 },
-                  { title: '项目', dataIndex: 'projectName', ellipsis: true },
+                  { title: '案例号', dataIndex: 'gspCaseNo', width: 150, fixed: 'left' },
+                  {
+                    title: '项目',
+                    dataIndex: 'projectName',
+                    width: 240,
+                    ellipsis: { showTitle: false },
+                    render: (v) => (
+                      <Tooltip title={v}>
+                        <Typography.Text ellipsis style={{ maxWidth: 220 }}>
+                          {v || '-'}
+                        </Typography.Text>
+                      </Tooltip>
+                    ),
+                  },
                   {
                     title: 'PO 金额',
                     dataIndex: 'poTotalAmount',
-                    width: 110,
+                    width: 120,
                     render: (v) => moneyText(v),
                   },
                   {
                     title: '核算收入',
                     dataIndex: 'caseRevenue',
-                    width: 110,
+                    width: 120,
                     render: (v) => moneyText(v),
                   },
                   {
                     title: '差额',
                     dataIndex: 'gap',
-                    width: 110,
-                    render: (v) => (
-                      <span style={{ color: Number(v) > 0 ? '#cf1322' : undefined }}>
-                        {moneyText(v)}
-                      </span>
-                    ),
+                    width: 130,
+                    render: (v) => {
+                      const n = Number(v || 0);
+                      const color = n > 0.009 ? '#cf1322' : n < -0.009 ? '#1677ff' : undefined;
+                      return <span style={{ color }}>{signedMoney(n)}</span>;
+                    },
                   },
                   {
                     title: '待定价/忽略',
@@ -287,12 +322,15 @@ export default function FinanceDashboardPage() {
                   {
                     title: '原因',
                     dataIndex: 'reason',
-                    width: 160,
-                    render: (v) => <Tag color="orange">{v}</Tag>,
+                    width: 150,
+                    render: (v) => (
+                      <Tag color={String(v).includes('高于') ? 'blue' : 'orange'}>{v}</Tag>
+                    ),
                   },
                   {
                     title: '操作',
                     width: 80,
+                    fixed: 'right',
                     render: (_, row) => (
                       <Button
                         type="link"
@@ -305,18 +343,32 @@ export default function FinanceDashboardPage() {
                 ]}
               />
             </Card>
-            <Card size="small" title="未匹配案例的 PO（全部计入 PO 总额，未进核算收入）">
+            <Card size="small" className="variance-po-card" title="未匹配案例的 PO（全部计入 PO 总额，未进核算收入）">
               <Table
+                className="variance-case-table"
                 rowKey="id"
                 size="small"
                 loading={varianceLoading}
-                pagination={{ pageSize: 8 }}
+                pagination={{ pageSize: 8, size: 'small', showSizeChanger: false }}
+                scroll={{ x: 720 }}
                 dataSource={variance?.unmatchedPos || []}
                 locale={{ emptyText: '暂无未匹配 PO' }}
                 columns={[
                   { title: 'PO 号', dataIndex: 'poNo', width: 140 },
                   { title: 'GSP 案例号', dataIndex: 'gspCaseNo', width: 140 },
-                  { title: '项目', dataIndex: 'projectName', ellipsis: true },
+                  {
+                    title: '项目',
+                    dataIndex: 'projectName',
+                    width: 240,
+                    ellipsis: { showTitle: false },
+                    render: (v) => (
+                      <Tooltip title={v}>
+                        <Typography.Text ellipsis style={{ maxWidth: 220 }}>
+                          {v || '-'}
+                        </Typography.Text>
+                      </Tooltip>
+                    ),
+                  },
                   {
                     title: 'PO 金额',
                     dataIndex: 'poTotalAmount',

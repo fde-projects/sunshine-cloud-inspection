@@ -53,6 +53,7 @@ import {
   HARD_RULE_VIEW_LABEL_MAX,
   bindingLabel,
   catalogEntryKey,
+  looksLikeFaultRecordItem,
   matchHardRule,
   sanitizePassViews,
   sanitizeViewLabel,
@@ -316,7 +317,7 @@ function HardRulePipelineCard({
           children: (
             <>
               <Typography.Paragraph type="secondary" style={{ marginTop: 0, marginBottom: 10, fontSize: 12 }}>
-                上线后能改的是绑定、样张、合格/不合格。标了「代码」的闸门要改程序才动。试跑会标明卡在哪一层。
+                张数在拍照和试跑时对齐示范图。引擎只做视角对号；合格/不合格在上面改。
               </Typography.Paragraph>
               <ol className="hard-rule-pipeline-list">
                 {steps.map((step) => (
@@ -413,8 +414,6 @@ export default function HardRulesPage() {
       keywordFallback: selected ? '' : editing?.matchPattern || '',
       passViews: passSamples,
       failCount: failSampleUrls.length,
-      title: selected?.entryName || editing?.name || '',
-      promptText: generatedPrompt,
     });
   }, [
     catalog,
@@ -424,7 +423,6 @@ export default function HardRulesPage() {
     editing,
     passSamples,
     failSampleUrls.length,
-    generatedPrompt,
   ]);
 
   const filteredList = useMemo(() => {
@@ -778,7 +776,8 @@ export default function HardRulesPage() {
 
   const handleTrialUpload = async (files: File[]) => {
     if (!files.length) return;
-    const room = Math.max(0, HARD_RULE_TRIAL_PHOTO_LIMIT - trialUrls.length);
+    const trialMax = passSamples.length > 0 ? passSamples.length : HARD_RULE_TRIAL_PHOTO_LIMIT;
+    const room = Math.max(0, trialMax - trialUrls.length);
     if (!room) return;
     const gen = ++trialUploadGenRef.current;
     setTrialUploading(true);
@@ -791,7 +790,7 @@ export default function HardRulesPage() {
         urls.push(res.url);
       }
       if (gen !== trialUploadGenRef.current) return;
-      setTrialUrls((prev) => [...prev, ...urls].slice(0, HARD_RULE_TRIAL_PHOTO_LIMIT));
+      setTrialUrls((prev) => [...prev, ...urls].slice(0, trialMax));
       setTrialResult(null);
       message.success(`已上传 ${urls.length} 张`);
     } catch {
@@ -827,7 +826,13 @@ export default function HardRulesPage() {
       return;
     }
     if (!trialUrls.length) {
-      message.error('请先上传 1～4 张照片');
+      message.error('请先上传照片');
+      return;
+    }
+    if (passSamples.length > 0 && trialUrls.length !== passSamples.length) {
+      message.error(
+        `试跑须正好 ${passSamples.length} 张，与合格样种数一致（当前 ${trialUrls.length} 张）`,
+      );
       return;
     }
     if (!String(values.passCriteria || '').trim() && !String(values.failCriteria || '').trim()) {
@@ -914,8 +919,6 @@ export default function HardRulesPage() {
           keywordFallback: bound ? '' : row.matchPattern,
           passViews: row.samples?.pass || [],
           failCount: row.samples?.fail?.length || 0,
-          title: bound?.entryName || row.name,
-          promptText: row.promptText,
         });
         return (
           <Typography.Text type="secondary" style={{ fontSize: 12 }}>
@@ -1029,21 +1032,20 @@ export default function HardRulesPage() {
         }
       >
         <Typography.Paragraph type="secondary" style={{ marginTop: 0, marginBottom: 10 }}>
-          一项一条规则。6 条内置策略可在后台改绑定、样张、合格/不合格；张数/视角/页签闸门写在代码里，编辑时看「判定链路」。
-          改规则只影响<strong>新发起的分析</strong>。日常：改标准 → 试跑看卡在哪一层 → 保存。
+          一项一条规则。张数按示范图在拍照/试跑时对齐；引擎只对号。改标准只影响<strong>新发起的分析</strong>。
         </Typography.Paragraph>
-        <Space className="finance-toolbar" wrap style={{ marginBottom: 10 }}>
+        <Space className="finance-toolbar hard-rules-toolbar" wrap style={{ marginBottom: 10 }}>
           <Input.Search
             allowClear
             placeholder="检查项 / 规则名 / 备注"
             value={keyword}
             onChange={(e) => setKeyword(e.target.value)}
-            style={{ width: 240 }}
+            className="hard-rules-toolbar__search"
           />
           <Select
             value={statusFilter}
             onChange={setStatusFilter}
-            style={{ width: 120 }}
+            className="hard-rules-toolbar__status"
             options={[
               { value: 'all', label: '全部状态' },
               { value: 'on', label: '启用' },
@@ -1055,7 +1057,7 @@ export default function HardRulesPage() {
             placeholder="校验强度"
             value={enforceFilter}
             onChange={setEnforceFilter}
-            style={{ width: 180 }}
+            className="hard-rules-toolbar__enforce"
             options={Object.entries(ENFORCE_MODE_LABEL).map(([value, label]) => ({
               value,
               label,
@@ -1134,7 +1136,10 @@ export default function HardRulesPage() {
                   accept="image/*"
                   multiple
                   showUploadList={false}
-                  disabled={trialUploading || trialUrls.length >= HARD_RULE_TRIAL_PHOTO_LIMIT}
+                  disabled={
+                    trialUploading ||
+                    trialUrls.length >= (passSamples.length > 0 ? passSamples.length : HARD_RULE_TRIAL_PHOTO_LIMIT)
+                  }
                   beforeUpload={(file, fileList) => {
                     if (file !== fileList[fileList.length - 1]) return false;
                     const files = fileList.filter(
@@ -1147,9 +1152,13 @@ export default function HardRulesPage() {
                   <Button
                     icon={<PlusOutlined />}
                     loading={trialUploading}
-                    disabled={trialUrls.length >= HARD_RULE_TRIAL_PHOTO_LIMIT}
+                    disabled={
+                      trialUrls.length >= (passSamples.length > 0 ? passSamples.length : HARD_RULE_TRIAL_PHOTO_LIMIT)
+                    }
                   >
-                    试跑图（最多 {HARD_RULE_TRIAL_PHOTO_LIMIT} 张）
+                    {passSamples.length > 0
+                      ? `试跑图（须正好 ${passSamples.length} 张）`
+                      : `试跑图（最多 ${HARD_RULE_TRIAL_PHOTO_LIMIT} 张）`}
                   </Button>
                 </Upload>
                 <Button disabled={!passSamples.length} onClick={handleUseSamplesAsTrial}>
@@ -1166,7 +1175,9 @@ export default function HardRulesPage() {
                 </Button>
                 <Typography.Text type="secondary" className="hard-rule-editor-dock-hint">
                   {selectedEntry
-                    ? `按「${catalogLabel(selectedEntry)}」试跑，不必先保存`
+                    ? passSamples.length > 0
+                      ? `按「${catalogLabel(selectedEntry)}」试跑，须正好 ${passSamples.length} 张`
+                      : `按「${catalogLabel(selectedEntry)}」试跑，不必先保存`
                     : '请先选择检查项再试跑'}
                 </Typography.Text>
               </div>
@@ -1271,6 +1282,15 @@ export default function HardRulesPage() {
                           type="warning"
                           showIcon
                           message="有两张合格样名字一样，请改成能区分的，否则对号时分不清。"
+                        />
+                      ) : null}
+                      {looksLikeFaultRecordItem(selectedEntry?.entryName || selectedEntry?.name) &&
+                      passSamples.length >= 2 &&
+                      passSamples.every((item) => /^视角\d+$/.test(item.label.trim()) || !item.label.trim()) ? (
+                        <Alert
+                          type="info"
+                          showIcon
+                          message="故障记录的合格样请改成「实时故障」「历史故障」，视角对号才按页签区分。"
                         />
                       ) : null}
                       <PassSampleCards

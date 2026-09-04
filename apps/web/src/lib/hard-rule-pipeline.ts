@@ -1,4 +1,4 @@
-import { ruleNeedsFaultTabs, type HardRulePassView } from "./hard-rule-match";
+import type { HardRulePassView } from "./hard-rule-match";
 
 export type VisionGate =
   | "no_photos"
@@ -11,8 +11,8 @@ export type VisionGate =
   | "model";
 
 export const VISION_GATE_LABEL: Record<VisionGate, string> = {
-  no_photos: "引擎拦截 · 未上传照片",
-  short_of_shots: "引擎拦截 · 张数不足",
+  no_photos: "请先上传照片",
+  short_of_shots: "照片张数与合格样不一致",
   mock: "开发模拟（未配识图密钥）",
   cover_uncovered: "引擎拦截 · 视角未盖全",
   fault_tabs: "引擎拦截 · 故障页签未拍齐",
@@ -43,8 +43,6 @@ export function describeHardRulePipeline(input: {
   keywordFallback?: string;
   passViews?: Array<Pick<HardRulePassView, "label"> | string>;
   failCount?: number;
-  title?: string;
-  promptText?: string;
 }): PipelineStep[] {
   const enabled = input.enabled !== false && input.enforceMode !== "off";
   const passViews = (input.passViews || []).map((item, i) =>
@@ -52,9 +50,6 @@ export function describeHardRulePipeline(input: {
   );
   const kinds = passViews.map((item) => item.label).filter(Boolean);
   const kindCount = kinds.length;
-  const title = String(input.title || "").trim();
-  const promptText = String(input.promptText || "").trim();
-  const faultTabs = ruleNeedsFaultTabs(title, promptText, kinds);
   const coverGate = kindCount >= 2;
   const bound = String(input.boundLabel || "").trim();
   const keyword = String(input.keywordFallback || "").trim();
@@ -77,17 +72,8 @@ export function describeHardRulePipeline(input: {
       active: enabled && kindCount > 0,
       layer: "match",
       detail: kindCount
-        ? `必拍：${kinds.join("、")}。现场要对这些种类，顺序不限。不合格样 ${input.failCount || 0} 张。`
+        ? `拍照和试跑须正好 ${kindCount} 张，与示范图一致。必拍：${kinds.join("、")}。不合格样 ${input.failCount || 0} 张。`
         : "没有合格样时，主要靠下面的合格/不合格文字，误判会更多。",
-    },
-    {
-      id: "short_of_shots",
-      title: "张数闸门",
-      active: enabled && coverGate,
-      layer: "engine",
-      detail: coverGate
-        ? `现场少于 ${kindCount} 张，直接不合格，不进模型。`
-        : "合格样不足 2 种时不启用。",
     },
     {
       id: "cover_match",
@@ -99,15 +85,6 @@ export function describeHardRulePipeline(input: {
         : "合格样不足 2 种时不启用。",
     },
     {
-      id: "fault_tabs",
-      title: "故障页签闸门",
-      active: enabled && faultTabs,
-      layer: "engine",
-      detail: faultTabs
-        ? "两张必须分别是「实时故障」和「历史故障」。同一种页签拍两张不合格。"
-        : "当前名称/正文/样张未同时出现实时与历史故障，不走此闸门。",
-    },
-    {
       id: "model",
       title: "模型判定",
       active: enabled,
@@ -117,15 +94,6 @@ export function describeHardRulePipeline(input: {
             input.enforceMode === "normal" ? "标准" : "严格（拿不准判不合格）"
           }。`
         : "规则已停用，不发给模型。",
-    },
-    {
-      id: "nit_override",
-      title: "误杀纠正",
-      active: enabled && coverGate,
-      layer: "post",
-      detail: coverGate
-        ? "种类已经盖全时，若模型因为「这张看不见另一种的细节」判不合格，代码会改成合格。"
-        : "合格样不足 2 种时不启用。",
     },
     {
       id: "status_reconcile",

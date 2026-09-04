@@ -1,17 +1,15 @@
 import { adminGql } from "./hasura-admin";
 import {
-  failReasonIfShortOfRequiredShots,
   failReasonIfSlotsUncovered,
-  failReasonIfFaultTabsNotDistinct,
   fallbackViewLabel,
   HARD_RULE_FAIL_SAMPLE_LIMIT,
   HARD_RULE_PASS_SAMPLE_LIMIT,
   HARD_RULE_VIEW_LABEL_MAX,
   labeledPassViews,
+  looksLikeFaultRecordItem,
   matchHardRule,
   parseCoverIndexes,
   parseHardRuleSamples,
-  ruleNeedsFaultTabs,
   sanitizePassViews,
   sanitizeSampleUrls,
   sanitizeViewLabel,
@@ -234,16 +232,6 @@ export async function analyzePhotos(input: {
 
   const fieldPhotos = takeLatestPhotos(input.photoUrls);
   const passViews = labeledPassViews(samplePass);
-  const shortReason = failReasonIfShortOfRequiredShots(fieldPhotos.length, passViews.length);
-  if (shortReason) {
-    return visionResult({
-      status: "fail",
-      confidence: 1,
-      reason: shortReason,
-      provider: "rule",
-      gate: "short_of_shots",
-    });
-  }
   if (!apiKey) {
     return visionResult({
       status: "pass",
@@ -264,10 +252,9 @@ export async function analyzePhotos(input: {
     ].join("");
     ruleBlock = ruleBlock ? `${priority}\n${ruleBlock}` : priority;
   }
-  const needFaultTabs = ruleNeedsFaultTabs(
+  const faultRecord = looksLikeFaultRecordItem(
     input.title,
-    ruleBlock,
-    passViews.map((v) => v.label),
+    `${input.description}\n${ruleBlock}\n${passViews.map((v) => v.label).join("\n")}`,
   );
   const slotLine =
     passViews.length >= 2
@@ -284,17 +271,12 @@ export async function analyzePhotos(input: {
           "左/右/背面固定等相近视角：必须仔细区分设备朝向、电杆前后关系、可见面板，禁止图省事全部标成同一种。",
         ].join("")
       : "";
-  const faultLine = needFaultTabs
-    ? `故障页签专项：逐张只认「当前选中」的页签（高亮/下划线/填充色），未选中页签上的标题不算已拍。两张都必须分别是实时故障与历史故障；两张都是历史或都是实时 → fail。evidence.photoTypes 必须与待判定张数相同，取值只能是 realtime / historical / other；也可在 evidence.photoFindings 里写 selectedTab。`
+  const faultLine = faultRecord
+    ? "故障记录：页签标题不等于已拍那一页，只认当前选中的页签。两张应分别对上「实时故障」和「历史故障」合格样。"
     : "";
-  const jsonExtra = [
-    passViews.length >= 2
-      ? `,"covers":[按内容对号的合格样编号，长度=待判定张数，顺序可变]`
-      : "",
-    needFaultTabs
-      ? `,"evidence":{"photoTypes":["realtime或historical或other", "..."],"photoFindings":[{"photoIndex":1,"selectedTab":"实时故障或历史故障","note":"选中态依据"}]}`
-      : "",
-  ].join("");
+  const jsonExtra = passViews.length >= 2
+    ? `,"covers":[按内容对号的合格样编号，长度=待判定张数，顺序可变]`
+    : "";
   const prompt = `你是光伏/储能现场质检员。根据照片判断检查项是否合格。
 检查项：${input.title}
 标准：${input.description}
@@ -305,9 +287,8 @@ ${hasRefs ? "判定步骤：①先给每张待判定填 covers（对上的合格
 ${hasRefs ? "若某张待判定与某张合格样画面实质相同（同场景同角度同内容，即使重新拍照/压缩），必须对上该合格样；整组对齐全部分合格样且未明显更差时必须 pass，不得再用构图重复、缺标识等细则否决。" : ""}
 ${strict ? "判定纪律：相对合格样明显更差、缺某一类必拍视角、或拿不准必须判 fail。不同拍摄类型不算构图重复。" : ""}
 必须看完每一张待判定照片再下结论，禁止只根据第一张判定。
-页签或按钮上的标题不等于已经拍了那一页：必须单独截到点开后的内容。一张图里同时看见「实时故障」和「历史故障」等标题，只算当前选中的那一页，未点开的那一页视为缺失，必须 fail。
-${slotLine}
 ${faultLine}
+${slotLine}
 status 必须与 reason 最后一句一致：理由写不合格则 status 必须是 fail，写合格则必须是 pass。
 只输出 JSON：{"status":"pass 或 fail","confidence":0到1的数字,"reason":"中文理由，最后一句写合格或不合格"${jsonExtra}}`;
 
@@ -398,50 +379,6 @@ status 必须与 reason 最后一句一致：理由写不合格则 status 必须
       });
     }
   }
-  const faultTabs = failReasonIfFaultTabsNotDistinct(parsed, {
-    title: input.title,
-    ruleText: ruleBlock,
-    passLabels: passViews.map((item) => item.label),
-    photoCount: fieldPhotos.length,
-  });
-  if (faultTabs) {
-    return visionResult({
-      status: "fail",
-      confidence: 1,
-      reason: faultTabs,
-      provider: "siliconflow",
-      gate: "fault_tabs",
-    });
-  }
-
-  const usedFailSample = fieldPhotos.some((url) => sampleFail.includes(url));
-  // 种类已盖全时：若模型因「这张没拍到另一种的细节」误杀，纠正为合格，但仍保留模型原话。
-  // 试跑里若夹了不合格样原图，或写了倾斜/开裂/未压实，不纠正。
-  if (passViews.length >= 2 && !uncovered && !usedFailSample) {
-    const filled = new Set(
-      covers.filter((n) => Number.isInteger(n) && n >= 1 && n <= passViews.length),
-    );
-    if (filled.size >= passViews.length) {
-      const hardDefect =
-        /整机倾斜|设备倾斜|支架开裂|支架断裂|脱落|未压实|未压住垫片|未压住横担|相对支架移位|更接近不合格样/.test(
-          reason,
-        );
-      const crossTypeNit =
-        /看不见抱箍|看不清抱箍|未清晰显示固定点|不能看见固定点|至少需要 2 张|A\s*类|B\s*类|multiAngleCoverage/.test(
-          reason,
-        );
-      if (rawStatus === "fail" && !hardDefect && crossTypeNit) {
-        return visionResult({
-          status: "pass",
-          confidence: typeof parsed.confidence === "number" ? parsed.confidence : 0.9,
-          reason,
-          provider: "siliconflow",
-          gate: "nit_override_pass",
-        });
-      }
-    }
-  }
-
   return visionResult({
     status: reconcileStatusWithReason(rawStatus, reason),
     confidence: typeof parsed.confidence === "number" ? parsed.confidence : 0.5,

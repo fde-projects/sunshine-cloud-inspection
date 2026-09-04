@@ -47,6 +47,10 @@ export default function MobileLayout({ children }: { children: React.ReactNode }
 
   return (
     <div className="h5-app">
+      <p className="h5-desktop-hint">
+        <span>手机作业端 · 建议用手机打开</span>
+        <a href="/">返回门户</a>
+      </p>
       <div className="h5-shell">
         <Suspense fallback={<div style={{ padding: 48, textAlign: "center" }}>加载中…</div>}>
           {inner}

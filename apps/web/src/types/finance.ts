@@ -189,6 +189,8 @@ export interface FinanceVarianceDetail {
     unmatchedPoAmount: number;
     caseGapCount: number;
     caseGapAmount: number;
+    caseShortAmount?: number;
+    caseOverAmount?: number;
   };
   buckets: Array<{
     key: string;

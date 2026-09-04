@@ -5,8 +5,9 @@ on:
     types: [published]
 
 env:
-  REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }}
+  REGISTRY: registry.truss3.weweknow.com
+  IMAGE_PREFIX: sunshine-cloud-inspection
+  DEPLOY_DIR: /opt/sunshine-cloud-inspection
 
 jobs:
   detect-services:
@@ -22,29 +23,26 @@ jobs:
       - name: Detect services in apps/
         id: detect
         run: |
-          # Find all directories in apps/ that have a Dockerfile
           services=()
           matrix_json='['
-          
+
           for dir in apps/*/; do
             if [ -f "${dir}Dockerfile" ]; then
               service_name=$(basename "$dir")
               services+=("$service_name")
-              
-              # Build matrix JSON for docker build
+
               if [ ${#matrix_json} -gt 1 ]; then
                 matrix_json+=','
               fi
               matrix_json+="{\"service\":\"$service_name\",\"context\":\"$dir\"}"
             fi
           done
-          
+
           matrix_json+=']'
-          
-          # Output results
+
           echo "services=$(IFS=,; echo "${services[*]}")" >> $GITHUB_OUTPUT
           echo "build-matrix=$matrix_json" >> $GITHUB_OUTPUT
-          
+
           echo "Detected services: ${services[*]}"
           echo "Build matrix: $matrix_json"
 
@@ -55,7 +53,6 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      packages: write
     strategy:
       matrix:
         include: ${{ fromJson(needs.detect-services.outputs.build-matrix) }}
@@ -66,20 +63,13 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Log in to Container Registry
-        uses: docker/login-action@v3
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
       - name: Extract version from release tag
         id: meta
         run: |
           VERSION=${{ github.event.release.tag_name }}
           VERSION_NO_V=${VERSION#v}
           echo "version=$VERSION_NO_V" >> $GITHUB_OUTPUT
-          echo "tags=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/${{ matrix.service }}:$VERSION_NO_V,${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/${{ matrix.service }}:latest" >> $GITHUB_OUTPUT
+          echo "tags=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/${{ matrix.service }}:$VERSION_NO_V,${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/${{ matrix.service }}:latest" >> $GITHUB_OUTPUT
 
       - name: Build and push Docker image
         uses: docker/build-push-action@v5
@@ -96,5 +86,53 @@ jobs:
 
       - name: Image digest
         run: |
-          echo "✅ ${{ matrix.service }} image pushed successfully"
+          echo "${{ matrix.service }} image pushed successfully"
           echo "Tags: ${{ steps.meta.outputs.tags }}"
+
+  deploy:
+    name: Deploy to server
+    needs: [detect-services, build-and-push]
+    if: needs.detect-services.outputs.services != ''
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Extract version from release tag
+        id: meta
+        run: |
+          VERSION=${{ github.event.release.tag_name }}
+          VERSION_NO_V=${VERSION#v}
+          echo "version=$VERSION_NO_V" >> $GITHUB_OUTPUT
+
+      - name: Copy compose file to server
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          source: deploy/docker-compose.yml
+          target: ${{ env.DEPLOY_DIR }}
+          strip_components: 1
+
+      - name: Pull and restart
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          script: |
+            set -euo pipefail
+            cd "${{ env.DEPLOY_DIR }}"
+
+            if [ ! -f .env ]; then
+              echo "ERROR: ${{ env.DEPLOY_DIR }}/.env is missing."
+              echo "Place a production .env on the server (same keys as .env.example) then re-run the release workflow."
+              exit 1
+            fi
+
+            export IMAGE_TAG="${{ steps.meta.outputs.version }}"
+            docker compose pull
+            docker compose up -d
+            docker image prune -f
+            docker compose ps

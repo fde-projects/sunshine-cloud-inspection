@@ -1,5 +1,5 @@
 version: 3
-endpoint: https://hs-kofdlduv.jzsdqp.weweknow.com
+endpoint: http://121.229.113.196:19211
 admin_secret: ${HASURA_GRAPHQL_ADMIN_SECRET}
 metadata_directory: metadata
 migrations_directory: migrations

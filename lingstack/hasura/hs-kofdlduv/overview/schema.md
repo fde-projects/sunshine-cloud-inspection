@@ -121,6 +121,6 @@ erDiagram
 
 ## GraphQL
 
-- `https://hs-kofdlduv.jzsdqp.weweknow.com/v1/graphql`
+- `http://121.229.113.196:19211/v1/graphql`
 - 浏览器：`Authorization: Bearer <jwt>`
 - 默认复数：`service_cases` / `insert_service_cases_one`

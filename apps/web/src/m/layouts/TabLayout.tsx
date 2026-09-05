@@ -9,7 +9,7 @@ import { fetchTasks } from '../api/task';
 import { fetchInspectorSummary } from '../api/stats';
 import { mobileCacheKeys } from '../utils/mobileCacheKeys';
 import { prefetchResource } from '../utils/useCachedResource';
-import AddToHomePrompt from '../components/AddToHomePrompt';
+import { initAddToHomeRuntime } from '../utils/addToHome';
 
 // @react-vant/icons 的旧类型声明与当前 React 类型不兼容，运行时组件正常。
 const HomeIcon = HomeO as unknown as ComponentType;
@@ -26,6 +26,10 @@ export default function TabLayout({ children }: { children?: ReactNode }) {
   useLayoutEffect(() => {
     window.scrollTo({ top: 0, left: 0, behavior: 'auto' });
   }, [location.pathname]);
+
+  useEffect(() => {
+    initAddToHomeRuntime();
+  }, []);
 
   useEffect(() => {
     const siteId = currentSite?.id;
@@ -77,12 +81,10 @@ export default function TabLayout({ children }: { children?: ReactNode }) {
       <div className="tab-layout__content">
         {children ?? <Outlet />}
       </div>
-      <AddToHomePrompt />
       {!hideTab && (
         <Tabbar
           value={active}
           onChange={(v) => navigate(String(v))}
-          safeAreaInsetBottom
           fixed
           placeholder
         >

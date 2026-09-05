@@ -9,7 +9,7 @@ import type { AppRole } from '@/lib/types';
 import { fetchInspectorSummary, type InspectorSummary } from '../../api/stats';
 import { mobileCacheKeys } from '../../utils/mobileCacheKeys';
 import { useCachedResource } from '../../utils/useCachedResource';
-import { clearDismiss, isStandaloneDisplay } from '../../utils/addToHome';
+import { isStandaloneDisplay, tryNativeInstall } from '../../utils/addToHome';
 import AddToHomePrompt from '../../components/AddToHomePrompt';
 import './my.css';
 
@@ -108,8 +108,10 @@ export default function MyPage() {
               label="下次点图标直接进入作业端"
               isLink
               onClick={() => {
-                clearDismiss();
-                setShowA2hs(true);
+                void (async () => {
+                  const installed = await tryNativeInstall();
+                  if (!installed) setShowA2hs(true);
+                })();
               }}
             />
           ) : null}
@@ -127,9 +129,7 @@ export default function MyPage() {
           ) : null}
         </Cell.Group>
 
-        {showA2hs ? (
-          <AddToHomePrompt forceOpen onClose={() => setShowA2hs(false)} />
-        ) : null}
+        {showA2hs ? <AddToHomePrompt onClose={() => setShowA2hs(false)} /> : null}
 
         <div className="my-logout">
           <Button block round type="danger" plain onClick={onLogout}>

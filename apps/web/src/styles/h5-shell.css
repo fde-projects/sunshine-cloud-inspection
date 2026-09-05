@@ -107,6 +107,7 @@
   overflow: hidden;
   display: flex;
   flex-direction: column;
+  padding-bottom: 0;
 }
 .tab-layout--no-tab:has(.case-detail-shell) .tab-layout__content {
   padding-bottom: 0;

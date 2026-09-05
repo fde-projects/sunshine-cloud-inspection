@@ -1,10 +1,29 @@
-const DISMISS_KEY = "m-a2hs-dismiss-until";
-const DISMISS_DAYS = 14;
-
 export type BeforeInstallPromptEvent = Event & {
   prompt: () => Promise<void>;
   userChoice: Promise<{ outcome: "accepted" | "dismissed" }>;
 };
+
+type Listener = (event: BeforeInstallPromptEvent | null) => void;
+
+let deferredPrompt: BeforeInstallPromptEvent | null = null;
+let runtimeReady = false;
+const listeners = new Set<Listener>();
+
+function notify() {
+  listeners.forEach((fn) => fn(deferredPrompt));
+}
+
+export function getDeferredInstall(): BeforeInstallPromptEvent | null {
+  return deferredPrompt;
+}
+
+export function subscribeInstallPrompt(fn: Listener): () => void {
+  listeners.add(fn);
+  fn(deferredPrompt);
+  return () => {
+    listeners.delete(fn);
+  };
+}
 
 export function isStandaloneDisplay(): boolean {
   if (typeof window === "undefined") return true;
@@ -17,28 +36,42 @@ export function isIosDevice(): boolean {
   if (typeof navigator === "undefined") return false;
   const ua = navigator.userAgent || "";
   const iPadOs =
-    navigator.platform === "MacIntel" && (navigator as Navigator & { maxTouchPoints?: number }).maxTouchPoints! > 1;
+    navigator.platform === "MacIntel" &&
+    (navigator as Navigator & { maxTouchPoints?: number }).maxTouchPoints! > 1;
   return /iPhone|iPad|iPod/i.test(ua) || iPadOs;
 }
 
-export function isDismissed(): boolean {
-  if (typeof window === "undefined") return true;
-  const raw = window.localStorage.getItem(DISMISS_KEY);
-  if (!raw) return false;
-  const until = Number(raw);
-  if (!Number.isFinite(until)) return false;
-  return Date.now() < until;
+export function isSecureInstallContext(): boolean {
+  if (typeof window === "undefined") return false;
+  return window.isSecureContext || window.location.hostname === "localhost";
 }
 
-export function dismissForWeeks(): void {
-  if (typeof window === "undefined") return;
-  const until = Date.now() + DISMISS_DAYS * 24 * 60 * 60 * 1000;
-  window.localStorage.setItem(DISMISS_KEY, String(until));
+/** 有系统安装能力时直接弹出；否则返回 false，由页面展示操作说明。 */
+export async function tryNativeInstall(): Promise<boolean> {
+  const event = deferredPrompt;
+  if (!event) return false;
+  await event.prompt();
+  await event.userChoice;
+  deferredPrompt = null;
+  notify();
+  return true;
 }
 
-export function clearDismiss(): void {
-  if (typeof window === "undefined") return;
-  window.localStorage.removeItem(DISMISS_KEY);
+export function initAddToHomeRuntime(): void {
+  if (typeof window === "undefined" || runtimeReady) return;
+  runtimeReady = true;
+  ensureMobileManifestLink();
+  registerMobileServiceWorker();
+
+  window.addEventListener("beforeinstallprompt", (event) => {
+    event.preventDefault();
+    deferredPrompt = event as BeforeInstallPromptEvent;
+    notify();
+  });
+  window.addEventListener("appinstalled", () => {
+    deferredPrompt = null;
+    notify();
+  });
 }
 
 export function registerMobileServiceWorker(): void {
@@ -50,18 +83,16 @@ export function registerMobileServiceWorker(): void {
 
 export function ensureMobileManifestLink(): void {
   if (typeof document === "undefined") return;
-  const rel = "manifest";
-  let link = document.querySelector<HTMLLinkElement>(`link[rel="${rel}"][data-m-pwa="1"]`);
+  let link = document.querySelector<HTMLLinkElement>('link[rel="manifest"][data-m-pwa="1"]');
   if (!link) {
     link = document.createElement("link");
-    link.rel = rel;
+    link.rel = "manifest";
     link.setAttribute("data-m-pwa", "1");
     document.head.appendChild(link);
   }
   link.href = "/m/manifest.json";
 
-  const appleCapable = ensureMeta("apple-mobile-web-app-capable", "yes");
-  appleCapable?.setAttribute("content", "yes");
+  ensureMeta("apple-mobile-web-app-capable", "yes");
   ensureMeta("apple-mobile-web-app-status-bar-style", "default");
   ensureMeta("apple-mobile-web-app-title", "现场作业");
   ensureMeta("mobile-web-app-capable", "yes");

@@ -538,27 +538,22 @@
 }
 
 .page-home--shell {
-  display: flex;
-  flex-direction: column;
-  flex: 1;
+  display: block;
+  height: auto;
   min-height: 0;
-  height: 100%;
-  overflow: hidden;
+  overflow: visible;
 }
 .page-home--shell .home-content {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
+  display: block;
+  height: auto;
   min-height: 0;
-  padding-bottom: 12px;
+  overflow: visible;
+  padding-bottom: 28px;
 }
 .home-preview-badge {
   margin-bottom: 12px;
 }
 .home-scroll-area {
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
-  -webkit-overflow-scrolling: touch;
+  overflow: visible;
   padding-bottom: 8px;
 }

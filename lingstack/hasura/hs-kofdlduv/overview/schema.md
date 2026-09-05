@@ -1,6 +1,6 @@
 # Schema 鸟瞰图
 
-> 最后更新：2026-08-28 20:20  
+> 最后更新：2026-09-05  
 > Hasura CLI：v2.49.5  
 > 数据源：`default`（Postgres `public`）  
 > 状态：已 track 26 张业务表；关系均来自 FK（`foreign_key_constraint_on`）
@@ -68,20 +68,20 @@ erDiagram
     text username UK "登录名"
     text password "bcrypt，GraphQL 不可读"
     text real_name "姓名"
-    text role "主角色"
-    jsonb roles "多角色"
+    text role "super_admin / user"
   }
   sites {
     uuid id PK
     text name "网格名"
     text code UK
-    uuid manager_id FK
+    uuid manager_id FK "正长缓存，供列表 join / 旧 RLS"
   }
   site_members {
     uuid id PK
     uuid site_id FK
     uuid user_id FK
-    text member_role "副网格长/工程师"
+    text[] member_roles "正长/副长/工程师，一人一站可多选"
+    text status
   }
   service_cases {
     uuid id PK

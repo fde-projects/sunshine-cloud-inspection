@@ -30,7 +30,7 @@ export const menuConfig: MenuConfig[] = [
     path: '/users',
     label: '账号管理',
     icon: 'TeamOutlined',
-    roles: ['super_admin', 'site_manager'],
+    roles: ['super_admin'],
   },
   {
     key: 'sites',

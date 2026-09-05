@@ -28,6 +28,14 @@ export function aiErrorResult(reason: string, attempts?: number): StoredAiResult
   };
 }
 
+export function emptyPendingAiResult(): StoredAiResult {
+  return {
+    status: "pending",
+    confidence: 0,
+    reason: "",
+  };
+}
+
 export function isLiveAnalyzing(
   ai?: { status?: string; startedAt?: string } | null,
   now = Date.now(),
@@ -37,26 +45,52 @@ export function isLiveAnalyzing(
   return !Number.isNaN(started) && now - started < AI_STALE_MS;
 }
 
+/**
+ * 写入/清空条目 AI 结论。
+ * - `ifStartedAt`：仅当库里当前 startedAt 一致时才写入（防止旧分析覆盖新分析）
+ * - `aiResult === null`：作废结论，回到空 pending，并清掉 finalResult
+ */
 export async function patchEntryAiResult(
   recordId: string,
   entryId: string,
-  aiResult: StoredAiResult,
-) {
+  aiResult: StoredAiResult | null,
+  opts?: { ifStartedAt?: string },
+): Promise<{ applied: boolean }> {
   const rec = await adminGql<{
     inspection_records_by_pk: { entries: Array<Record<string, unknown>> } | null;
   }>(`query ($id: uuid!) { inspection_records_by_pk(id: $id) { entries } }`, {
     id: recordId,
   });
   const entries = rec.inspection_records_by_pk?.entries || [];
-  const next = entries.map((entry) =>
-    String(entry.templateEntryId || "") === entryId ? { ...entry, aiResult } : entry,
-  );
+  const current = entries.find((entry) => String(entry.templateEntryId || "") === entryId);
+  if (!current) return { applied: false };
+
+  const currentAi = (current.aiResult || null) as StoredAiResult | null;
+  if (opts?.ifStartedAt) {
+    if (String(currentAi?.startedAt || "") !== opts.ifStartedAt) {
+      return { applied: false };
+    }
+  }
+
+  const next = entries.map((entry) => {
+    if (String(entry.templateEntryId || "") !== entryId) return entry;
+    if (aiResult === null) {
+      return {
+        ...entry,
+        aiResult: emptyPendingAiResult(),
+        finalResult: null,
+      };
+    }
+    return { ...entry, aiResult };
+  });
+
   await adminGql(
     `mutation ($id: uuid!, $entries: jsonb!) {
       update_inspection_records_by_pk(pk_columns: { id: $id }, _set: { entries: $entries }) { id }
     }`,
     { id: recordId, entries: next },
   );
+  return { applied: true };
 }
 
 export function finalizeStaleAiEntries(

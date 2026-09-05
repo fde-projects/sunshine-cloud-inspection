@@ -91,6 +91,8 @@ export function chineseErrorMessage(value: unknown, fallback = '操作失败，�
   }
   if (/uniqueness|duplicate key|unique constraint/i.test(raw)) {
     if (/sites_code|code_key/i.test(raw)) return '该网格编码已存在，请换一个';
+    if (/username/i.test(raw)) return '该用户名已被使用，请换一个';
+    if (/employee_no/i.test(raw)) return '该工号已被使用，请换一个';
     return '该记录已存在，请勿重复提交';
   }
   if (/unauthorized|invalid token|jwt/i.test(raw)) return '登录已过期，请重新登录';

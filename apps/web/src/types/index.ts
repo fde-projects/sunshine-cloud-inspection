@@ -32,6 +32,7 @@ export interface UserInfo {
   avatar?: string;
   role: UserRole;
   roles?: UserRole[];
+  duties?: { primary: boolean; deputy: boolean; inspector: boolean };
   status: string;
   region?: string;
   orgUnit?: string;

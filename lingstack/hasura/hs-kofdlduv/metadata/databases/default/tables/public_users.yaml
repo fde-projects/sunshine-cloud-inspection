@@ -234,7 +234,6 @@ insert_permissions:
         - real_name
         - region
         - role
-        - roles
         - status
         - updated_at
         - username
@@ -274,7 +273,6 @@ insert_permissions:
         - email
         - avatar
         - role
-        - roles
         - status
         - region
         - org_unit
@@ -294,7 +292,6 @@ insert_permissions:
         - email
         - avatar
         - role
-        - roles
         - status
         - region
         - org_unit
@@ -317,7 +314,6 @@ select_permissions:
         - real_name
         - region
         - role
-        - roles
         - status
         - updated_at
         - username
@@ -339,7 +335,6 @@ select_permissions:
         - real_name
         - region
         - role
-        - roles
         - status
         - updated_at
         - username
@@ -383,7 +378,6 @@ select_permissions:
         - real_name
         - region
         - role
-        - roles
         - status
         - updated_at
         - username
@@ -404,7 +398,6 @@ update_permissions:
         - real_name
         - region
         - role
-        - roles
         - status
         - updated_at
         - username
@@ -425,7 +418,6 @@ update_permissions:
         - email
         - avatar
         - role
-        - roles
         - status
         - region
         - org_unit
@@ -494,7 +486,6 @@ update_permissions:
         - email
         - avatar
         - role
-        - roles
         - status
         - region
         - org_unit

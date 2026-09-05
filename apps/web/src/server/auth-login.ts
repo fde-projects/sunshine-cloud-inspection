@@ -1,7 +1,8 @@
 import bcrypt from "bcryptjs";
+import { loginRolesFromDuties } from "@/lib/account";
 import { adminGql } from "@/lib/hasura-admin";
 import { signHasuraUserJwt, type AppRole } from "@/lib/jwt";
-import { normalizeRoles, parseRoleInput, roleForPortal } from "@/lib/portal";
+import { parseRoleInput, roleForPortal } from "@/lib/portal";
 import { HttpError } from "./http";
 
 export type LoginRow = {
@@ -10,8 +11,7 @@ export type LoginRow = {
   password: string;
   real_name: string;
   phone: string;
-  role: AppRole;
-  roles: AppRole[];
+  role: string;
   status: string;
 };
 
@@ -47,7 +47,7 @@ export async function issueRoleSession(input: {
   roles: AppRole[] | null | undefined;
   activeRole: AppRole;
 }): Promise<AuthSession> {
-  const roles = normalizeRoles(input.roles, input.role);
+  const roles = input.roles?.length ? [...new Set(input.roles)] : [input.role];
   if (!roles.includes(input.activeRole)) {
     throw new HttpError(403, "该账号没有此身份", { code: "ROLE_DENIED" });
   }
@@ -73,10 +73,12 @@ export async function loginWithPassword(
   portal?: unknown,
 ): Promise<AuthSession> {
   if (!username || !password) throw new HttpError(400, "请输入用户名和密码");
-  const data = await adminGql<{ users: LoginRow[] }>(
+  const data = await adminGql<{
+    users: LoginRow[];
+  }>(
     `query ($username: String!) {
       users(where: { username: { _eq: $username } }, limit: 1) {
-        id username password real_name phone role roles status
+        id username password real_name phone role status
       }
     }`,
     { username },
@@ -85,7 +87,16 @@ export async function loginWithPassword(
   if (!row || row.status !== "active") throw new HttpError(401, "用户名或密码错误");
   const pass = await bcrypt.compare(password, row.password);
   if (!pass) throw new HttpError(401, "用户名或密码错误");
-  const roles = normalizeRoles(row.roles, row.role);
+  const mem = await adminGql<{ site_members: Array<{ member_roles: string[] | null }> }>(
+    `query ($uid: uuid!) {
+      site_members(where: { user_id: { _eq: $uid }, status: { _eq: "active" } }) { member_roles }
+    }`,
+    { uid: row.id },
+  );
+  const roles = loginRolesFromDuties(
+    row.role,
+    mem.site_members.flatMap((m) => m.member_roles || []),
+  );
   const hinted = portal != null && String(portal).trim() !== "" ? roleForPortal(portal, roles) : null;
   if (portal != null && String(portal).trim() !== "" && !hinted) {
     const v = String(portal).toLowerCase();
@@ -94,14 +105,14 @@ export async function loginWithPassword(
     }
     throw new HttpError(403, "此账号没有管理端身份，请从手机作业端登录");
   }
-  const activeRole = hinted || (roles.includes(row.role) ? row.role : roles[0]);
+  const activeRole = hinted || roles[0];
   return issueRoleSession({
     id: row.id,
     username: row.username,
     realName: row.real_name,
     phone: row.phone,
     status: row.status,
-    role: row.role,
+    role: roles[0],
     roles,
     activeRole,
   });

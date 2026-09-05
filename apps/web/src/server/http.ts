@@ -1,8 +1,8 @@
 import { jwtVerify, type JWTPayload } from "jose";
 import { NextResponse } from "next/server";
+import { loginRolesFromDuties } from "@/lib/account";
 import { adminGql } from "@/lib/hasura-admin";
 import { roleFromJwtPayload, type AppRole } from "@/lib/jwt";
-import { normalizeRoles } from "@/lib/portal";
 
 export class HttpError extends Error {
   constructor(
@@ -63,29 +63,31 @@ export async function requireUser(req: Request): Promise<AppUser> {
       email?: string | null;
       avatar?: string | null;
       employee_no?: string | null;
-      role: AppRole;
-      roles: AppRole[];
+      role: string;
       status: string;
       region?: string | null;
       org_unit?: string | null;
     } | null;
     sites: { id: string }[];
-    site_members: { site_id: string }[];
+    site_members: { site_id: string; member_roles: string[] | null }[];
   }>(
     `query ($id: uuid!) {
       users_by_pk(id: $id) {
-        id username real_name phone email avatar employee_no role roles status region org_unit
+        id username real_name phone email avatar employee_no role status region org_unit
       }
       sites(where: { manager_id: { _eq: $id }, deleted_at: { _is_null: true } }) { id }
-      site_members(where: { user_id: { _eq: $id }, status: { _eq: "active" } }) { site_id }
+      site_members(where: { user_id: { _eq: $id }, status: { _eq: "active" } }) { site_id member_roles }
     }`,
     { id: userId },
   );
   const row = data.users_by_pk;
   if (!row || row.status !== "active") throw new HttpError(401, "账号不可用");
-  const roles = normalizeRoles(row.roles, row.role);
+  const roles = loginRolesFromDuties(
+    row.role,
+    data.site_members.flatMap((m) => m.member_roles || []),
+  );
   const jwtRole = payload ? roleFromJwtPayload(payload) : null;
-  const role = jwtRole && roles.includes(jwtRole) ? jwtRole : row.role;
+  const role = jwtRole && roles.includes(jwtRole) ? jwtRole : roles[0];
   const managed = new Set<string>([
     ...data.sites.map((s) => s.id),
     ...data.site_members.map((m) => m.site_id),

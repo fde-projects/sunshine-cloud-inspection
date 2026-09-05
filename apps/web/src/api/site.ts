@@ -1,6 +1,7 @@
 import { gql } from "@/lib/gql";
-import { getStoredUser } from "@/lib/session";
-import type { Paginated, SiteItem } from "@/types";
+import { dutiesOf, type SiteDuty } from "@/lib/site-duties";
+import request from "@/utils/request";
+import type { ApiResponse, Paginated, SiteItem } from "@/types";
 
 export interface SiteQuery {
   province?: string;
@@ -12,13 +13,14 @@ export interface SiteQuery {
   limit?: number;
 }
 
-export type SiteMemberRole = "deputy_manager" | "inspector";
+export type SiteMemberRole = SiteDuty;
 
 export interface SiteMemberItem {
   id: string;
   siteId: string;
   userId: string;
   memberRole: SiteMemberRole;
+  roles: SiteDuty[];
   status: string;
   joinedAt: string;
   user: {
@@ -65,7 +67,7 @@ const SITE_FIELDS = `
   manager { id username real_name phone }
 `;
 
-/** 当前用户可编制人员的电站：正网格长（manager_id）或副网格长（site_members.deputy_manager） */
+/** 当前用户可编制人员的电站：正网格长（manager_id）或副网格长 */
 export async function fetchMyStaffSites(userId: string): Promise<{
   list: SiteItem[];
   isPrimary: boolean;
@@ -86,8 +88,7 @@ export async function fetchMyStaffSites(userId: string): Promise<{
       as_deputy: site_members(
         where: {
           user_id: { _eq: $uid }
-          member_role: { _eq: "deputy_manager" }
-          status: { _eq: "active" }
+          member_roles: { _contains: ["deputy_manager"] }
           site: { deleted_at: { _is_null: true }, status: { _eq: "active" } }
         }
       ) {
@@ -113,12 +114,21 @@ export async function fetchSites(params: SiteQuery = {}): Promise<Paginated<Site
   const page = params.page || 1;
   const limit = params.limit || 50;
   const where: Record<string, unknown> = { deleted_at: { _is_null: true } };
-  if (params.keyword) {
+  const keyword = params.keyword?.trim();
+  if (keyword) {
     where._or = [
-      { name: { _ilike: `%${params.keyword}%` } },
-      { code: { _ilike: `%${params.keyword}%` } },
+      { name: { _ilike: `%${keyword}%` } },
+      { code: { _ilike: `%${keyword}%` } },
+      { province: { _ilike: `%${keyword}%` } },
+      { city: { _ilike: `%${keyword}%` } },
+      { district: { _ilike: `%${keyword}%` } },
+      { address: { _ilike: `%${keyword}%` } },
     ];
   }
+  const province = params.province?.trim();
+  if (province) where.province = { _ilike: `%${province}%` };
+  const city = params.city?.trim();
+  if (city) where.city = { _ilike: `%${city}%` };
   if (params.status) where.status = { _eq: params.status };
   const data = await gql<{
     sites: Record<string, unknown>[];
@@ -199,70 +209,94 @@ export async function deleteSite(id: string) {
   return { success: true };
 }
 
+type StaffPayload = {
+  site: SiteItem & { managerId: string | null };
+  members: SiteMemberItem[];
+};
+
+function mapStaffMember(m: Record<string, unknown>): SiteMemberItem {
+  const u = m.user as Record<string, unknown> | null;
+  const roles = dutiesOf(m.roles, String(m.memberRole || m.member_role || ""));
+  return {
+    id: String(m.id),
+    siteId: String(m.siteId || m.site_id),
+    userId: String(m.userId || m.user_id),
+    roles,
+    memberRole: (m.memberRole || m.member_role || roles[0] || "inspector") as SiteMemberRole,
+    status: String(m.status),
+    joinedAt: String(m.joinedAt || m.joined_at || ""),
+    user: u
+      ? {
+          id: String(u.id),
+          username: String(u.username),
+          realName: String(u.realName || u.real_name || ""),
+          phone: String(u.phone || ""),
+          role: String(u.role || ""),
+          status: String(u.status || ""),
+          avatar: (u.avatar as string | undefined) || undefined,
+        }
+      : null,
+  };
+}
+
+export async function fetchSiteStaff(siteId: string) {
+  const { data } = await request.get<ApiResponse<StaffPayload>>("/staffing/members", {
+    params: { siteId },
+  });
+  return {
+    site: data.data.site,
+    members: (data.data.members || []).map((m) => mapStaffMember(m as unknown as Record<string, unknown>)),
+  };
+}
+
+export async function upsertSiteStaff(siteId: string, userId: string, roles: SiteDuty[]) {
+  const { data } = await request.put<ApiResponse<StaffPayload>>("/staffing/members", {
+    siteId,
+    userId,
+    roles,
+  });
+  return {
+    site: data.data.site,
+    members: (data.data.members || []).map((m) => mapStaffMember(m as unknown as Record<string, unknown>)),
+  };
+}
+
 export async function appointManager(id: string, userId: string) {
-  return updateSite(id, { managerId: userId });
+  const { data } = await request.post<ApiResponse<StaffPayload>>("/staffing/appoint-primary", {
+    siteId: id,
+    userId,
+  });
+  return data.data;
 }
 
 export async function fetchSiteMembers(id: string, memberRole?: SiteMemberRole): Promise<SiteMemberItem[]> {
-  const where: Record<string, unknown> = { site_id: { _eq: id } };
-  if (memberRole) where.member_role = { _eq: memberRole };
-  const data = await gql<{ site_members: Record<string, unknown>[] }>(
-    `query ($where: site_members_bool_exp!) {
-      site_members(where: $where) {
-        id site_id user_id member_role status joined_at
-        user { id username real_name phone role status avatar }
-      }
-    }`,
-    { where },
-  );
-  return data.site_members.map((m) => {
-    const u = m.user as Record<string, unknown> | null;
-    return {
-      id: String(m.id),
-      siteId: String(m.site_id),
-      userId: String(m.user_id),
-      memberRole: m.member_role as SiteMemberRole,
-      status: String(m.status),
-      joinedAt: String(m.joined_at),
-      user: u
-        ? {
-            id: String(u.id),
-            username: String(u.username),
-            realName: String(u.real_name),
-            phone: String(u.phone),
-            role: String(u.role),
-            status: String(u.status),
-            avatar: u.avatar as string | undefined,
-          }
-        : null,
-    };
-  });
+  const { members } = await fetchSiteStaff(id);
+  if (!memberRole) return members;
+  return members.filter((m) => m.roles.includes(memberRole) || m.memberRole === memberRole);
 }
 
 export async function addSiteMember(siteId: string, userId: string, memberRole: SiteMemberRole = "inspector") {
-  const data = await gql<{ insert_site_members_one: { id: string } }>(
-    `mutation ($obj: site_members_insert_input!) {
-      insert_site_members_one(object: $obj) { id }
-    }`,
-    { obj: { site_id: siteId, user_id: userId, member_role: memberRole } },
-  );
-  return data.insert_site_members_one;
+  const { members } = await fetchSiteStaff(siteId);
+  const current = members.find((m) => m.userId === userId)?.roles || [];
+  const next = [...new Set<SiteDuty>([...current, memberRole])].filter((r) => {
+    if (memberRole === "primary_manager") return r !== "deputy_manager";
+    if (memberRole === "deputy_manager") return r !== "primary_manager";
+    return true;
+  });
+  return upsertSiteStaff(siteId, userId, next);
 }
 
-/** 正网格长兼工程师：写入本站工程师编制（已是副网格长则跳过，避免 UNIQUE 冲突） */
 export async function ensureSiteInspector(
   siteId: string,
   userId: string,
 ): Promise<"created" | "exists" | "skipped_deputy"> {
   const members = await fetchSiteMembers(siteId);
-  const mine = members.filter((m) => m.userId === userId && m.status === "active");
-  if (mine.some((m) => m.memberRole === "inspector")) return "exists";
-  if (mine.some((m) => m.memberRole === "deputy_manager")) return "skipped_deputy";
+  const mine = members.find((m) => m.userId === userId && m.status === "active");
+  if (mine?.roles.includes("inspector")) return "exists";
   await addSiteMember(siteId, userId, "inspector");
   return "created";
 }
 
-/** 任命/开通工程师后：把正网格长同步进该站工程师编制 */
 export async function syncPrimaryManagerInspector(
   siteId: string,
   managerUserId: string,
@@ -273,41 +307,20 @@ export async function syncPrimaryManagerInspector(
 }
 
 export async function removeSiteMember(siteId: string, userId: string) {
-  await gql(
-    `mutation ($siteId: uuid!, $userId: uuid!) {
-      delete_site_members(where: { site_id: { _eq: $siteId }, user_id: { _eq: $userId } }) { affected_rows }
-    }`,
-    { siteId, userId },
-  );
+  await upsertSiteStaff(siteId, userId, []);
   return { success: true };
 }
 
 export async function appointDeputy(siteId: string, userId: string) {
-  const me = getStoredUser();
-  if (!me) throw new Error("未登录");
-  if (me.role !== "super_admin") {
-    const data = await gql<{ sites_by_pk: { manager_id: string | null } | null }>(
-      `query ($id: uuid!) { sites_by_pk(id: $id) { manager_id } }`,
-      { id: siteId },
-    );
-    if (data.sites_by_pk?.manager_id !== me.id) {
-      throw new Error("仅正网格长或管理员可设置副网格长");
-    }
-  }
   return addSiteMember(siteId, userId, "deputy_manager");
 }
 
 export async function removeDeputy(siteId: string, userId: string) {
-  const me = getStoredUser();
-  if (!me) throw new Error("未登录");
-  if (me.role !== "super_admin") {
-    const data = await gql<{ sites_by_pk: { manager_id: string | null } | null }>(
-      `query ($id: uuid!) { sites_by_pk(id: $id) { manager_id } }`,
-      { id: siteId },
-    );
-    if (data.sites_by_pk?.manager_id !== me.id) {
-      throw new Error("仅正网格长或管理员可移除副网格长");
-    }
-  }
-  return removeSiteMember(siteId, userId);
+  const { members } = await fetchSiteStaff(siteId);
+  const current = members.find((m) => m.userId === userId)?.roles || [];
+  return upsertSiteStaff(
+    siteId,
+    userId,
+    current.filter((r) => r !== "deputy_manager"),
+  );
 }

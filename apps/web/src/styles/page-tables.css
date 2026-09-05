@@ -260,6 +260,10 @@ body:has(.app-shell) {
   width: 240px;
   max-width: 100%;
 }
+.admin-toolbar__region {
+  width: 120px;
+  max-width: 100%;
+}
 .admin-toolbar__select {
   width: 160px;
   max-width: 100%;
@@ -820,6 +824,7 @@ body:has(.app-shell) {
   }
 
   .admin-toolbar__search,
+  .admin-toolbar__region,
   .admin-toolbar__select,
   .admin-toolbar .ant-input-search,
   .admin-toolbar .ant-select,

@@ -23,6 +23,7 @@ import {
   submitRecord,
   uploadPhoto,
   analyzeAi,
+  invalidateAi,
   fetchAiResult,
   fetchRecord,
   checkTaskLocation,
@@ -643,16 +644,22 @@ export default function InspectionPage() {
     }
   };
 
-  const startPoll = (recordId: string, templateEntryId: string) => {
+  const stopAiPoll = useCallback((templateEntryId: string) => {
     const previous = pollRefs.current[templateEntryId];
-    if (previous) window.clearInterval(previous);
+    if (previous) {
+      window.clearInterval(previous);
+      delete pollRefs.current[templateEntryId];
+    }
+    setAnalyzingIds((ids) => ids.filter((id) => id !== templateEntryId));
+  }, []);
+
+  const startPoll = useCallback((recordId: string, templateEntryId: string) => {
+    stopAiPoll(templateEntryId);
     let tries = 0;
     pollRefs.current[templateEntryId] = window.setInterval(async () => {
       tries += 1;
       if (tries > 48) {
-        window.clearInterval(pollRefs.current[templateEntryId]);
-        delete pollRefs.current[templateEntryId];
-        setAnalyzingIds((ids) => ids.filter((id) => id !== templateEntryId));
+        stopAiPoll(templateEntryId);
         try {
           const fresh = await fetchRecord(recordId);
           setRecord(fresh);
@@ -681,22 +688,74 @@ export default function InspectionPage() {
       try {
         const res = await fetchAiResult(templateEntryId, recordId);
         if (res.aiResult && res.aiResult.status !== 'pending') {
-          window.clearInterval(pollRefs.current[templateEntryId]);
-          delete pollRefs.current[templateEntryId];
-          setAnalyzingIds((ids) => ids.filter((id) => id !== templateEntryId));
+          stopAiPoll(templateEntryId);
           const fresh = await fetchRecord(recordId);
           setRecord(fresh);
-          const st = res.aiResult.status;
-          // 静默回写，不打断现场操作；结果可在报告页查看
-          if (st === 'error') {
-            /* 失败也不弹窗打断 */
-          }
         }
       } catch {
         /* ignore */
       }
     }, 1500);
-  };
+  }, [stopAiPoll]);
+
+  /** 素材变了：停旧分析、作废旧结论；若仍有图则按新图重跑 */
+  const refreshEntryAi = useCallback(
+    async (opts: {
+      recordId: string;
+      templateEntryId: string;
+      photos: string[];
+      samplePhotoUrls?: string[];
+      tpl: { id: string } | null | undefined;
+      aiEnabled: boolean;
+    }) => {
+      const { recordId, templateEntryId, photos, samplePhotoUrls, tpl, aiEnabled } = opts;
+      stopAiPoll(templateEntryId);
+      try {
+        const cleared = await invalidateAi({ recordId, templateEntryId });
+        setRecord(cleared);
+      } catch {
+        setRecord((prev) => {
+          if (!prev) return prev;
+          return {
+            ...prev,
+            entries: prev.entries.map((e) =>
+              e.templateEntryId === templateEntryId
+                ? {
+                    ...e,
+                    aiResult: { status: 'pending', confidence: 0, reason: '' },
+                    finalResult: null,
+                  }
+                : e,
+            ),
+          };
+        });
+      }
+
+      if (!aiEnabled || !tpl || !photos.length) return;
+
+      setAnalyzingIds((ids) =>
+        ids.includes(templateEntryId) ? ids : [...ids, templateEntryId],
+      );
+      try {
+        await analyzeAi({
+          recordId,
+          templateEntryId,
+          photoUrls: photos,
+          samplePhotoUrls,
+        });
+        startPoll(recordId, templateEntryId);
+      } catch {
+        stopAiPoll(templateEntryId);
+        try {
+          const fresh = await fetchRecord(recordId);
+          setRecord(fresh);
+        } catch {
+          /* ignore */
+        }
+      }
+    },
+    [startPoll, stopAiPoll],
+  );
 
   const persistPhotos = async (photos: string[]) => {
     if (!record || !currentTpl) return;
@@ -720,13 +779,23 @@ export default function InspectionPage() {
   const handleRemovePhoto = (url: string) => {
     Dialog.confirm({
       title: '删除照片',
-      message: '确认删除这张现场照片？',
+      message: '确认删除这张现场照片？删除后将作废本项已有 AI 结论。',
     })
       .then(async () => {
+        if (!record || !currentTpl) return;
         const photos = (currentEntry?.photos || []).filter((u) => u !== url);
         try {
           await persistPhotos(photos);
           Toast.success('已删除');
+          void refreshEntryAi({
+            recordId: record.id,
+            templateEntryId: currentTpl.id,
+            photos,
+            samplePhotoUrls: currentTpl.samplePhotos || [],
+            tpl: currentTpl,
+            aiEnabled:
+              task?.aiEnabled !== false && resolveEntryAiEnabled(currentTpl),
+          });
         } catch {
           /* 拦截器 */
         }
@@ -875,32 +944,18 @@ export default function InspectionPage() {
             );
           }
 
-          if (
-            task?.aiEnabled !== false &&
-            currentTpl &&
-            resolveEntryAiEnabled(currentTpl) &&
-            photos.length
-          ) {
-            setAnalyzingIds((ids) =>
-              ids.includes(capturedEntryId) ? ids : [...ids, capturedEntryId],
-            );
-            try {
-              await analyzeAi({
-                recordId: capturedRecordId,
-                templateEntryId: capturedEntryId,
-                photoUrls: photos,
-                samplePhotoUrls: capturedSamplePhotos,
-              });
-              startPoll(capturedRecordId, capturedEntryId);
-            } catch {
-              setAnalyzingIds((ids) => ids.filter((id) => id !== capturedEntryId));
-              try {
-                const fresh = await fetchRecord(capturedRecordId);
-                setRecord(fresh);
-              } catch {
-                // 服务端会写异常，这里只同步屏幕
-              }
-            }
+          if (currentTpl) {
+            void refreshEntryAi({
+              recordId: capturedRecordId,
+              templateEntryId: capturedEntryId,
+              photos,
+              samplePhotoUrls: capturedSamplePhotos,
+              tpl: currentTpl,
+              aiEnabled:
+                task?.aiEnabled !== false &&
+                resolveEntryAiEnabled(currentTpl) &&
+                photos.length > 0,
+            });
           }
         } catch {
           if (activeEntryRef.current === capturedEntryId) {
@@ -1698,7 +1753,7 @@ export default function InspectionPage() {
                     ? 'AI 后台分析中，无需等待，直接点「下一步」即可。'
                     : currentEntry?.aiResult && aiStatus !== 'pending'
                       ? `智能分析：${RESULT_LABEL[aiStatus] || '待人工判断'}（稍后可在报告中查看详情）`
-                      : '上传照片后 AI 将后台对比样本；全部拍完再提交，做完其他作业可回来看报告。'}
+                      : '上传或删改照片后会重新分析；可直接点「下一步」，全部拍完再提交。'}
                 </div>
               ) : (
                 <div

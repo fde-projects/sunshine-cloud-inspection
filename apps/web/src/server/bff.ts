@@ -70,6 +70,13 @@ import { getFinanceDashboard, getFinanceVariance } from "./finance/dashboard";
 import { listPriceMappings, recalculate, recalculateLedgers, repriceByPoIds, savePriceMapping } from "./finance/price-mapping";
 import { DEFAULT_ASSESSMENT_SCORE_RULES } from "./finance/assessment-score-rule.catalog";
 import { ASSESSMENT_EVENT_CATALOG, rankRewardAmount } from "./finance/assessment-event.catalog";
+import {
+  appointPrimary,
+  createPlatformAccount,
+  listPlatformAccounts,
+  listSiteStaff,
+  upsertSiteStaff,
+} from "./staffing";
 
 type Handler = (args: {
   req: Request;
@@ -162,6 +169,33 @@ async function dispatch(ctx: {
   if (method === "POST" && path === "auth/logout") return ok({ success: true });
   if (method === "PUT" && path === "auth/profile") return updateProfile(need(user), body);
   if (method === "PUT" && path === "auth/change-password") return changePassword(need(user), body);
+
+  if (method === "GET" && path === "staffing/accounts") {
+    return ok(await listPlatformAccounts(need(user), {
+      keyword: query.get("keyword") || undefined,
+      page: Number(query.get("page") || 1),
+      limit: Number(query.get("limit") || 50),
+    }));
+  }
+  if (method === "POST" && path === "staffing/accounts") {
+    return ok(await createPlatformAccount(need(user), body));
+  }
+  if (method === "GET" && path === "staffing/members") {
+    return ok(await listSiteStaff(need(user), String(query.get("siteId") || "")));
+  }
+  if (method === "PUT" && path === "staffing/members") {
+    return ok(
+      await upsertSiteStaff(
+        need(user),
+        String(body.siteId || ""),
+        String(body.userId || ""),
+        body.roles,
+      ),
+    );
+  }
+  if (method === "POST" && path === "staffing/appoint-primary") {
+    return ok(await appointPrimary(need(user), String(body.siteId || ""), String(body.userId || "")));
+  }
 
   if (method === "GET" && path === "geocode") {
     const url = new URL(ctx.req.url);
@@ -337,8 +371,8 @@ async function dispatch(ctx: {
   }
 
   if (path === "dashboard/admin" || path === "dashboard/site") return dashboard(need(user));
-  if (path === "stats/completion") return completionStats();
-  if (path === "stats/defects") return defectStats();
+  if (path === "stats/completion") return completionStats(query);
+  if (path === "stats/defects") return defectStats(query);
   if (path === "stats/inspector/me") return inspectorSummary(need(user), query);
 
   if (path === "devices" && method === "GET") return listDevices(query);
@@ -472,6 +506,7 @@ async function dispatch(ctx: {
     if (man && method === "PUT") return setManualResult(need(user), man.id, man.entryId, body);
   }
   if (path === "ai/analyze" && method === "POST") return runAnalyze(need(user), body);
+  if (path === "ai/invalidate" && method === "POST") return invalidateAi(need(user), body);
   {
     const m = match(path, "ai/result/:entryId");
     if (m && method === "GET") return aiResult(m.entryId, query.get("recordId"));
@@ -746,7 +781,6 @@ async function getMe(user: AppUser) {
       id: string;
       site_id: string;
       status: string;
-      member_role: string;
       site: {
         id: string;
         name: string;
@@ -768,10 +802,11 @@ async function getMe(user: AppUser) {
         where: {
           user_id: { _eq: $uid }
           status: { _eq: "active" }
+          member_roles: { _contains: ["inspector"] }
           site: { deleted_at: { _is_null: true }, status: { _eq: "active" } }
         }
       ) {
-        id site_id status member_role
+        id site_id status
         site { id name code province city }
       }
       as_manager: sites(
@@ -801,10 +836,8 @@ async function getMe(user: AppUser) {
     }
   >();
 
-  // 工程师编制优先；副网格长若无工程师行则不进作业站列表
   for (const m of data.site_members) {
     if (!m.site) continue;
-    if (m.member_role !== "inspector") continue;
     bySiteId.set(m.site_id, {
       id: m.id,
       siteId: m.site_id,
@@ -891,7 +924,7 @@ async function updateProfile(user: AppUser, body: Record<string, unknown>) {
   const d = await adminGql<{ update_users_by_pk: Record<string, unknown> }>(
     `mutation ($id: uuid!, $set: users_set_input!) {
       update_users_by_pk(pk_columns: { id: $id }, _set: $set) {
-        id username real_name phone email avatar role roles status region org_unit created_at
+        id username real_name phone email avatar role status region org_unit created_at
       }
     }`,
     {
@@ -1440,35 +1473,273 @@ async function dashboard(user: AppUser) {
   });
 }
 
-async function completionStats() {
-  const d = await adminGql<{ inspection_tasks: { status: string }[] }>(`query { inspection_tasks { status } }`);
-  const total = d.inspection_tasks.length;
-  const completed = d.inspection_tasks.filter((t) => t.status === "approved").length;
-  const submitted = d.inspection_tasks.filter((t) => t.status === "submitted").length;
-  const inProgress = d.inspection_tasks.filter((t) => t.status === "in_progress").length;
+/** 数据分析：任务侧筛选（网格 / 工程师 / 设备类型 / 区域 / 日期） */
+function taskStatsWhere(query: URLSearchParams, opts?: { includeDates?: boolean }): Record<string, unknown> {
+  const includeDates = opts?.includeDates !== false;
+  const and: Record<string, unknown>[] = [];
+  if (query.get("siteId")) and.push({ site_id: { _eq: query.get("siteId") } });
+  if (query.get("inspectorId")) and.push({ inspector_id: { _eq: query.get("inspectorId") } });
+  if (query.get("deviceType")) {
+    and.push({ device: { device_type: { _eq: query.get("deviceType") } } });
+  }
+  if (includeDates && query.get("startDate")) {
+    and.push({ created_at: { _gte: `${query.get("startDate")}T00:00:00+08:00` } });
+  }
+  if (includeDates && query.get("endDate")) {
+    and.push({ created_at: { _lte: `${query.get("endDate")}T23:59:59+08:00` } });
+  }
+  const region = String(query.get("region") || "").trim();
+  if (region) {
+    and.push({
+      site: {
+        _or: [
+          { province: { _ilike: `%${region}%` } },
+          { city: { _ilike: `%${region}%` } },
+          { district: { _ilike: `%${region}%` } },
+          { name: { _ilike: `%${region}%` } },
+          { address: { _ilike: `%${region}%` } },
+        ],
+      },
+    });
+  }
+  return and.length ? { _and: and } : {};
+}
+
+function entryPassFail(entry: {
+  title?: string | null;
+  name?: string | null;
+  finalResult?: string | null;
+  manualResult?: string | null;
+  aiResult?: { status?: string } | null;
+}): "pass" | "fail" | null {
+  const raw = String(entry.finalResult || entry.manualResult || entry.aiResult?.status || "").toLowerCase();
+  if (raw === "fail" || raw === "failed" || raw === "不合格") return "fail";
+  if (raw === "pass" || raw === "passed" || raw === "合格") return "pass";
+  return null;
+}
+
+async function completionStats(query: URLSearchParams) {
+  const where = taskStatsWhere(query);
+  const d = await adminGql<{
+    inspection_tasks: Array<{
+      status: string;
+      created_at?: string | null;
+      completed_at?: string | null;
+      site_id?: string | null;
+      site?: { id?: string; name?: string } | null;
+    }>;
+  }>(
+    `query ($where: inspection_tasks_bool_exp!) {
+      inspection_tasks(where: $where, limit: 5000) {
+        status created_at completed_at site_id
+        site { id name }
+      }
+    }`,
+    { where },
+  );
+  const tasks = d.inspection_tasks || [];
+  const total = tasks.length;
+  const completed = tasks.filter((t) => t.status === "approved").length;
+  const submitted = tasks.filter((t) => t.status === "submitted").length;
+  const inProgress = tasks.filter((t) => t.status === "in_progress").length;
+
+  const byDateMap = new Map<string, { date: string; total: number; completed: number }>();
+  const bySiteMap = new Map<
+    string,
+    { siteId: string; siteName: string; total: number; completed: number }
+  >();
+  for (const t of tasks) {
+    const date = String(t.created_at || t.completed_at || "").slice(0, 10);
+    if (date) {
+      const row = byDateMap.get(date) || { date, total: 0, completed: 0 };
+      row.total += 1;
+      if (t.status === "approved") row.completed += 1;
+      byDateMap.set(date, row);
+    }
+    const siteId = t.site?.id || t.site_id || "";
+    if (siteId) {
+      const row = bySiteMap.get(siteId) || {
+        siteId,
+        siteName: t.site?.name || "未命名网格",
+        total: 0,
+        completed: 0,
+      };
+      row.total += 1;
+      if (t.status === "approved") row.completed += 1;
+      bySiteMap.set(siteId, row);
+    }
+  }
+
   return ok({
     totalTasks: total,
     completedTasks: completed,
     submittedTasks: submitted,
     inProgressTasks: inProgress,
     completionRate: total ? Math.round((completed / total) * 100) : 0,
-    byDate: [],
-    bySite: [],
+    byDate: [...byDateMap.values()].sort((a, b) => a.date.localeCompare(b.date)),
+    bySite: [...bySiteMap.values()]
+      .map((r) => ({
+        ...r,
+        completionRate: r.total ? Math.round((r.completed / r.total) * 100) : 0,
+      }))
+      .sort((a, b) => b.total - a.total),
   });
 }
 
-async function defectStats() {
+async function defectStats(query: URLSearchParams) {
+  const taskWhere = taskStatsWhere(query, { includeDates: false });
+  const and: Record<string, unknown>[] = [
+    { status: { _in: ["submitted", "approved", "rejected", "archived"] } },
+  ];
+  if (Object.keys(taskWhere).length) and.push({ task: taskWhere });
+  if (query.get("startDate")) {
+    and.push({ submitted_at: { _gte: `${query.get("startDate")}T00:00:00+08:00` } });
+  }
+  if (query.get("endDate")) {
+    and.push({ submitted_at: { _lte: `${query.get("endDate")}T23:59:59+08:00` } });
+  }
+
+  const d = await adminGql<{
+    inspection_records: Array<{
+      status?: string | null;
+      submitted_at?: string | null;
+      device_type?: string | null;
+      entries?: unknown;
+      task?: {
+        site_id?: string | null;
+        site?: { id?: string; name?: string } | null;
+        inspector?: { id?: string; real_name?: string | null } | null;
+        device?: { device_type?: string | null } | null;
+      } | null;
+    }>;
+  }>(
+    `query ($where: inspection_records_bool_exp!) {
+      inspection_records(where: $where, limit: 5000, order_by: { submitted_at: desc_nulls_last }) {
+        status submitted_at device_type entries
+        task {
+          site_id
+          site { id name }
+          inspector { id real_name }
+          device { device_type }
+        }
+      }
+    }`,
+    { where: { _and: and } },
+  );
+
+  const records = d.inspection_records || [];
+  let totalEntries = 0;
+  let failCount = 0;
+  let passCount = 0;
+  const byDateMap = new Map<string, { date: string; total: number; pass: number; fail: number }>();
+  const bySiteMap = new Map<
+    string,
+    { siteId: string; siteName: string; total: number; pass: number; fail: number }
+  >();
+  const byDeviceMap = new Map<string, { deviceType: string; total: number; fail: number }>();
+  const byEntryMap = new Map<string, number>();
+  const byInspectorMap = new Map<
+    string,
+    { inspectorId: string; realName: string; total: number; pass: number; fail: number }
+  >();
+
+  for (const rec of records) {
+    const entries = Array.isArray(rec.entries) ? rec.entries : [];
+    const date = String(rec.submitted_at || "").slice(0, 10);
+    const siteId = rec.task?.site?.id || rec.task?.site_id || "";
+    const siteName = rec.task?.site?.name || "未命名网格";
+    const deviceType = rec.task?.device?.device_type || rec.device_type || "unknown";
+    const inspectorId = rec.task?.inspector?.id || "";
+    const realName = rec.task?.inspector?.real_name || "未知";
+
+    for (const raw of entries) {
+      const entry = (raw || {}) as {
+        title?: string | null;
+        name?: string | null;
+        finalResult?: string | null;
+        manualResult?: string | null;
+        aiResult?: { status?: string } | null;
+      };
+      const verdict = entryPassFail(entry);
+      if (!verdict) continue;
+      totalEntries += 1;
+      if (verdict === "fail") failCount += 1;
+      else passCount += 1;
+
+      if (date) {
+        const row = byDateMap.get(date) || { date, total: 0, pass: 0, fail: 0 };
+        row.total += 1;
+        if (verdict === "pass") row.pass += 1;
+        else row.fail += 1;
+        byDateMap.set(date, row);
+      }
+      if (siteId) {
+        const row = bySiteMap.get(siteId) || { siteId, siteName, total: 0, pass: 0, fail: 0 };
+        row.total += 1;
+        if (verdict === "pass") row.pass += 1;
+        else row.fail += 1;
+        bySiteMap.set(siteId, row);
+      }
+      {
+        const row = byDeviceMap.get(deviceType) || { deviceType, total: 0, fail: 0 };
+        row.total += 1;
+        if (verdict === "fail") row.fail += 1;
+        byDeviceMap.set(deviceType, row);
+      }
+      if (verdict === "fail") {
+        const name = String(entry.title || entry.name || "未命名检查项").trim() || "未命名检查项";
+        byEntryMap.set(name, (byEntryMap.get(name) || 0) + 1);
+      }
+      if (inspectorId) {
+        const row = byInspectorMap.get(inspectorId) || {
+          inspectorId,
+          realName,
+          total: 0,
+          pass: 0,
+          fail: 0,
+        };
+        row.total += 1;
+        if (verdict === "pass") row.pass += 1;
+        else row.fail += 1;
+        byInspectorMap.set(inspectorId, row);
+      }
+    }
+  }
+
   return ok({
-    totalInspections: 0,
-    totalEntries: 0,
-    failCount: 0,
-    failRate: 0,
-    passRate: 0,
-    byDate: [],
-    bySite: [],
-    byDeviceType: [],
-    byEntry: [],
-    inspectorRanking: [],
+    totalInspections: records.length,
+    totalEntries,
+    failCount,
+    failRate: totalEntries ? Math.round((failCount / totalEntries) * 100) : 0,
+    passRate: totalEntries ? Math.round((passCount / totalEntries) * 100) : 0,
+    byDate: [...byDateMap.values()]
+      .map((r) => ({
+        ...r,
+        passRate: r.total ? Math.round((r.pass / r.total) * 100) : 0,
+      }))
+      .sort((a, b) => a.date.localeCompare(b.date)),
+    bySite: [...bySiteMap.values()]
+      .map((r) => ({
+        ...r,
+        passRate: r.total ? Math.round((r.pass / r.total) * 100) : 0,
+      }))
+      .sort((a, b) => b.total - a.total),
+    byDeviceType: [...byDeviceMap.values()]
+      .map((r) => ({
+        ...r,
+        failRate: r.total ? Math.round((r.fail / r.total) * 100) : 0,
+      }))
+      .sort((a, b) => b.fail - a.fail),
+    byEntry: [...byEntryMap.entries()]
+      .map(([name, count]) => ({ name, failCount: count }))
+      .sort((a, b) => b.failCount - a.failCount)
+      .slice(0, 20),
+    inspectorRanking: [...byInspectorMap.values()]
+      .map((r) => ({
+        ...r,
+        passRate: r.total ? Math.round((r.pass / r.total) * 100) : 0,
+      }))
+      .sort((a, b) => b.passRate - a.passRate || b.total - a.total),
   });
 }
 
@@ -1605,6 +1876,10 @@ async function listDevices(query: URLSearchParams) {
   const limit = Number(query.get("limit") || 20);
   const where: Record<string, unknown> = {};
   if (query.get("siteId")) where.site_id = { _eq: query.get("siteId") };
+  if (query.get("deviceType")) where.device_type = { _eq: query.get("deviceType") };
+  const serial = String(query.get("serialNumber") || "").trim();
+  if (serial) where.serial_number = { _ilike: `%${serial}%` };
+  if (query.get("status")) where.status = { _eq: query.get("status") };
   const d = await adminGql<{ devices: Record<string, unknown>[]; devices_aggregate: { aggregate: { count: number } } }>(
     `query ($where: devices_bool_exp!, $limit: Int!, $offset: Int!) {
       devices(where: $where, limit: $limit, offset: $offset, order_by: { created_at: desc }) {
@@ -2101,7 +2376,7 @@ async function caseInspectors(caseId: string) {
     }>;
   }>(
     `query ($sid: uuid!) {
-      site_members(where: { site_id: { _eq: $sid }, status: { _eq: "active" } }) {
+      site_members(where: { site_id: { _eq: $sid }, status: { _eq: "active" }, member_roles: { _contains: ["inspector"] } }) {
         user { id real_name username phone }
       }
     }`,
@@ -2142,7 +2417,7 @@ async function assignCase(user: AppUser, caseId: string, body: Record<string, un
       `query ($sid: uuid!, $uid: uuid!) {
         sites(where: { id: { _eq: $sid }, manager_id: { _eq: $uid } }, limit: 1) { id }
         site_members(
-          where: { site_id: { _eq: $sid }, user_id: { _eq: $uid }, member_role: { _eq: "deputy_manager" }, status: { _eq: "active" } }
+          where: { site_id: { _eq: $sid }, user_id: { _eq: $uid }, member_roles: { _contains: ["deputy_manager"] } }
           limit: 1
         ) { id }
       }`,
@@ -2151,19 +2426,20 @@ async function assignCase(user: AppUser, caseId: string, body: Record<string, un
     if (!manages.sites.length && !manages.site_members.length) {
       throw new HttpError(403, "只能给本人管理的网格派单");
     }
-    // 越权防护：被指派的工程师必须在本网格编制内（含正网格长兼任工程师场景）
     const memberRows = await adminGql<{ site_members: Array<{ user_id: string }> }>(
       `query ($sid: uuid!, $uids: [uuid!]!) {
-        site_members(where: { site_id: { _eq: $sid }, user_id: { _in: $uids }, status: { _eq: "active" } }) { user_id }
+        site_members(
+          where: {
+            site_id: { _eq: $sid }
+            user_id: { _in: $uids }
+            status: { _eq: "active" }
+            member_roles: { _contains: ["inspector"] }
+          }
+        ) { user_id }
       }`,
       { sid: row.site_id, uids: ids },
     );
     const memberSet = new Set(memberRows.site_members.map((m) => m.user_id));
-    const siteRow = await adminGql<{ sites_by_pk: { manager_id: string | null } | null }>(
-      `query ($id: uuid!) { sites_by_pk(id: $id) { manager_id } }`,
-      { id: row.site_id },
-    );
-    if (siteRow.sites_by_pk?.manager_id) memberSet.add(siteRow.sites_by_pk.manager_id);
     const outsiders = ids.filter((id) => !memberSet.has(id));
     if (outsiders.length) throw new HttpError(400, "所选工程师不在本网格编制内");
   }
@@ -3370,8 +3646,26 @@ async function exportInspectionRecords(query: URLSearchParams) {
 async function listRecords(query: URLSearchParams) {
   const page = Number(query.get("page") || 1);
   const limit = Number(query.get("limit") || 20);
-  const where: Record<string, unknown> = {};
-  if (query.get("status")) where.status = { _eq: query.get("status") };
+  const and: Record<string, unknown>[] = [];
+  if (query.get("status")) and.push({ status: { _eq: query.get("status") } });
+  if (query.get("siteId")) and.push({ task: { site_id: { _eq: query.get("siteId") } } });
+  if (query.get("startDate")) {
+    and.push({ submitted_at: { _gte: `${query.get("startDate")}T00:00:00+08:00` } });
+  }
+  if (query.get("endDate")) {
+    and.push({ submitted_at: { _lte: `${query.get("endDate")}T23:59:59+08:00` } });
+  }
+  const keyword = String(query.get("keyword") || "").trim();
+  if (keyword) {
+    and.push({
+      _or: [
+        { task: { service_case: { gsp_case_no: { _ilike: `%${keyword}%` } } } },
+        { task: { service_case: { project_name: { _ilike: `%${keyword}%` } } } },
+        { task: { task_name: { _ilike: `%${keyword}%` } } },
+      ],
+    });
+  }
+  const where = and.length ? { _and: and } : {};
   const d = await adminGql<{
     inspection_records: Record<string, unknown>[];
     inspection_records_aggregate: { aggregate: { count: number } };
@@ -3609,17 +3903,37 @@ async function rejectRecord(user: AppUser, id: string, body: Record<string, unkn
 async function recordCaseGroups(query: URLSearchParams) {
   const page = Number(query.get("page") || 1);
   const limit = Number(query.get("limit") || 25);
-  const where: Record<string, unknown> = {};
   const scope = String(query.get("scope") || "").trim();
+  const and: Record<string, unknown>[] = [];
   if (query.get("status")) {
-    where.status = { _eq: query.get("status") };
+    and.push({ status: { _eq: query.get("status") } });
   } else if (scope === "audit") {
     // 验图待审：仅 submitted
-    where.status = { _eq: "submitted" };
+    and.push({ status: { _eq: "submitted" } });
   } else {
     // 历史查询：不含草稿/未提交，避免「5/3」把未提交草稿算进进度
-    where.status = { _in: ["submitted", "approved", "rejected", "archived"] };
+    and.push({ status: { _in: ["submitted", "approved", "rejected", "archived"] } });
   }
+  if (query.get("siteId")) {
+    and.push({ task: { site_id: { _eq: query.get("siteId") } } });
+  }
+  if (query.get("startDate")) {
+    and.push({ submitted_at: { _gte: `${query.get("startDate")}T00:00:00+08:00` } });
+  }
+  if (query.get("endDate")) {
+    and.push({ submitted_at: { _lte: `${query.get("endDate")}T23:59:59+08:00` } });
+  }
+  const keyword = String(query.get("keyword") || "").trim();
+  if (keyword) {
+    and.push({
+      _or: [
+        { task: { service_case: { gsp_case_no: { _ilike: `%${keyword}%` } } } },
+        { task: { service_case: { project_name: { _ilike: `%${keyword}%` } } } },
+        { task: { task_name: { _ilike: `%${keyword}%` } } },
+      ],
+    });
+  }
+  const where = { _and: and };
   const d = await adminGql<{
     inspection_records: Array<{
       id: string;
@@ -3802,6 +4116,15 @@ async function recordsByCase(groupKey: string, query: URLSearchParams = new URLS
   return ok({ list, total: list.length, groupKey: raw });
 }
 
+async function invalidateAi(_user: AppUser, body: Record<string, unknown>) {
+  const recordId = String(body.recordId || "").trim();
+  const entryId = String(body.templateEntryId || "").trim();
+  if (!recordId || !entryId) throw new HttpError(400, "缺少记录或检查项");
+  await patchEntryAiResult(recordId, entryId, null);
+  await routeRecordAudit(recordId).catch(() => null);
+  return getRecord(recordId);
+}
+
 async function runAnalyze(user: AppUser, body: Record<string, unknown>) {
   const recordId = body.recordId as string | undefined;
   const entryId = body.templateEntryId as string | undefined;
@@ -3859,12 +4182,20 @@ async function runAnalyze(user: AppUser, body: Record<string, unknown>) {
       });
       if (isPassOrFail(result.status)) {
         if (recordId && entryId) {
-          await patchEntryAiResult(recordId, entryId, {
-            ...result,
-            startedAt,
-            attempts: attempt,
-          });
-          await routeRecordAudit(recordId).catch(() => null);
+          const wrote = await patchEntryAiResult(
+            recordId,
+            entryId,
+            {
+              ...result,
+              startedAt,
+              attempts: attempt,
+            },
+            { ifStartedAt: startedAt },
+          );
+          if (wrote.applied) await routeRecordAudit(recordId).catch(() => null);
+          if (!wrote.applied) {
+            return ok({ queued: false, completed: false, stale: true, aiResult: result });
+          }
         }
         return ok({ queued: false, completed: true, ...result, aiResult: result });
       }
@@ -3880,8 +4211,16 @@ async function runAnalyze(user: AppUser, body: Record<string, unknown>) {
     ...aiErrorResult(`已自动分析 ${AI_ANALYZE_ATTEMPTS} 次仍无合格/不合格：${lastReason}`, AI_ANALYZE_ATTEMPTS),
   };
   if (recordId && entryId) {
-    await patchEntryAiResult(recordId, entryId, { ...failed, startedAt }).catch(() => null);
-    await routeRecordAudit(recordId).catch(() => null);
+    const wrote = await patchEntryAiResult(
+      recordId,
+      entryId,
+      { ...failed, startedAt },
+      { ifStartedAt: startedAt },
+    ).catch(() => ({ applied: false }));
+    if (wrote.applied) await routeRecordAudit(recordId).catch(() => null);
+    if (!wrote.applied) {
+      return ok({ queued: false, completed: false, stale: true, aiResult: failed });
+    }
   }
   return ok({ queued: false, completed: true, ...failed, aiResult: failed });
 }
@@ -4399,6 +4738,45 @@ async function reviewApprove(user: AppUser, caseId: string, body: Record<string,
   return ok({ success: true, comment: comment || undefined, reviewStatus: pass ? "approved" : "rejected" });
 }
 
+async function leadDutyUserIds(userIds: string[]) {
+  const ids = [...new Set(userIds.filter(Boolean))];
+  if (!ids.length) return new Set<string>();
+  const d = await adminGql<{ site_members: { user_id: string }[] }>(
+    `query ($ids: [uuid!]!) {
+      site_members(
+        where: {
+          user_id: { _in: $ids }
+          status: { _eq: "active" }
+          _or: [
+            { member_roles: { _contains: ["primary_manager"] } }
+            { member_roles: { _contains: ["deputy_manager"] } }
+          ]
+        }
+      ) { user_id }
+    }`,
+    { ids },
+  );
+  return new Set(d.site_members.map((m) => m.user_id));
+}
+
+async function inspectorDutyUserIds(userIds: string[]) {
+  const ids = [...new Set(userIds.filter(Boolean))];
+  if (!ids.length) return new Set<string>();
+  const d = await adminGql<{ site_members: { user_id: string }[] }>(
+    `query ($ids: [uuid!]!) {
+      site_members(
+        where: {
+          user_id: { _in: $ids }
+          status: { _eq: "active" }
+          member_roles: { _contains: ["inspector"] }
+        }
+      ) { user_id }
+    }`,
+    { ids },
+  );
+  return new Set(d.site_members.map((m) => m.user_id));
+}
+
 async function listAssessments(user: AppUser, query: URLSearchParams) {
   const month = query.get("month") || new Date().toISOString().slice(0, 7);
   const keyword = (query.get("keyword") || "").trim().toLowerCase();
@@ -4423,8 +4801,7 @@ async function listAssessments(user: AppUser, query: URLSearchParams) {
         site_members(
           where: {
             user_id: { _eq: $uid }
-            status: { _eq: "active" }
-            member_role: { _eq: "deputy_manager" }
+            member_roles: { _contains: ["deputy_manager"] }
             site: { deleted_at: { _is_null: true }, status: { _eq: "active" } }
           }
         ) { site_id }
@@ -4454,7 +4831,6 @@ async function listAssessments(user: AppUser, query: URLSearchParams) {
       username: string;
       real_name: string;
       role: string;
-      roles: string[] | null;
       status: string;
     } | null;
   };
@@ -4492,25 +4868,25 @@ async function listAssessments(user: AppUser, query: URLSearchParams) {
   if (wantInspectors) {
     const d = await adminGql<{ site_members: MemberRow[] }>(
       `query ($where: site_members_bool_exp!) {
-        site_members(where: $where, order_by: [{ site: { name: asc } }, { joined_at: asc }]) {
+        site_members(where: $where, order_by: { joined_at: asc }) {
           user_id site_id
           site { id name }
-          user { id username real_name role roles status }
+          user { id username real_name role status }
         }
       }`,
       {
         where: {
+          member_roles: { _contains: ["inspector"] },
           status: { _eq: "active" },
-          member_role: { _eq: "inspector" },
           ...(siteIds ? { site_id: { _in: siteIds } } : {}),
           user: { status: { _eq: "active" } },
         },
       },
     );
+    const leadIds = await leadDutyUserIds(d.site_members.map((m) => m.user_id));
     for (const m of d.site_members) {
       if (!m.user) continue;
-      const roles = m.user.roles || [];
-      const isMgr = roles.includes("site_manager") || m.user.role === "site_manager";
+      const isMgr = leadIds.has(m.user_id);
       let row = roster.get(m.user_id);
       if (!row) {
         row = {
@@ -4538,7 +4914,6 @@ async function listAssessments(user: AppUser, query: URLSearchParams) {
           username: string;
           real_name: string;
           role: string;
-          roles: string[] | null;
           status: string;
         } | null;
       }>;
@@ -4546,7 +4921,7 @@ async function listAssessments(user: AppUser, query: URLSearchParams) {
       `query ($where: sites_bool_exp!) {
         sites(where: $where, order_by: { name: asc }) {
           id name
-          manager { id username real_name role roles status }
+          manager { id username real_name role status }
         }
       }`,
       {
@@ -4659,13 +5034,12 @@ async function saveAssessment(user: AppUser, body: Record<string, unknown>) {
     throw new HttpError(403, "不能修改本人考核补助，请由管理员录入");
   }
 
-  const target = await adminGql<{ users_by_pk: { id: string; role: string; roles: string[] | null } | null }>(
-    `query ($id: uuid!) { users_by_pk(id: $id) { id role roles } }`,
+  const target = await adminGql<{ users_by_pk: { id: string } | null }>(
+    `query ($id: uuid!) { users_by_pk(id: $id) { id } }`,
     { id: userId },
   );
   if (!target.users_by_pk) throw new HttpError(404, "考核人员不存在");
-  const roles = target.users_by_pk.roles || [];
-  const isManager = roles.includes("site_manager") || target.users_by_pk.role === "site_manager";
+  const isManager = (await leadDutyUserIds([userId])).has(userId);
 
   const patch: Record<string, unknown> = {
     user_role: body.role || (isManager ? "site_manager" : "inspector"),
@@ -4772,13 +5146,12 @@ async function saveAssessmentScore(user: AppUser, body: Record<string, unknown>)
   if (user.role === "site_manager" && userId === user.id) {
     throw new HttpError(403, "不能给自己打分，请由管理员录入本人考核");
   }
-  const target = await adminGql<{ users_by_pk: { id: string; role: string; roles: string[] | null } | null }>(
-    `query ($id: uuid!) { users_by_pk(id: $id) { id role roles } }`,
+  const target = await adminGql<{ users_by_pk: { id: string } | null }>(
+    `query ($id: uuid!) { users_by_pk(id: $id) { id } }`,
     { id: userId },
   );
   if (!target.users_by_pk) throw new HttpError(404, "考核人员不存在");
-  const roles = target.users_by_pk.roles || [];
-  const isManager = roles.includes("site_manager") || target.users_by_pk.role === "site_manager";
+  const isManager = (await leadDutyUserIds([userId])).has(userId);
   const rankGroup = isManager ? "station_manager" : "inspector";
   const items = Array.isArray(body.items) ? (body.items as Array<{ ruleItemId?: string; score?: number; remark?: string }>) : [];
   const total = items.reduce((n, it) => n + Number(it.score || 0), 0);
@@ -4930,31 +5303,30 @@ async function loadScoredAssessmentRows(
         username: string;
         real_name: string;
         role: string;
-        roles: string[] | null;
         status: string;
       } | null;
     };
     const d = await adminGql<{ site_members: RankMemberRow[] }>(
       `query ($where: site_members_bool_exp!) {
-        site_members(where: $where, order_by: [{ site: { name: asc } }, { joined_at: asc }]) {
+        site_members(where: $where, order_by: { joined_at: asc }) {
           user_id site_id
           site { id name }
-          user { id username real_name role roles status }
+          user { id username real_name role status }
         }
       }`,
       {
         where: {
+          member_roles: { _contains: ["inspector"] },
           status: { _eq: "active" },
-          member_role: { _eq: "inspector" },
           ...(siteId ? { site_id: { _eq: siteId } } : {}),
           user: { status: { _eq: "active" } },
         },
       },
     );
+    const leadIds = await leadDutyUserIds(d.site_members.map((m) => m.user_id));
     for (const m of d.site_members) {
       if (!m.user) continue;
-      const roles = m.user.roles || [];
-      const isMgr = roles.includes("site_manager") || m.user.role === "site_manager";
+      const isMgr = leadIds.has(m.user_id);
       push({
         userId: m.user_id,
         realName: m.user.real_name,
@@ -4972,7 +5344,6 @@ async function loadScoredAssessmentRows(
           id: string;
           real_name: string;
           role: string;
-          roles: string[] | null;
           status: string;
         } | null;
       }>;
@@ -4983,15 +5354,16 @@ async function loadScoredAssessmentRows(
           order_by: { name: asc }
         ) {
           id
-          manager { id real_name role roles status }
+          manager { id real_name role status }
         }
       }`,
     );
+    const mgrIds = d.sites.map((s) => s.manager?.id).filter((id): id is string => Boolean(id));
+    const inspectorIds = await inspectorDutyUserIds(mgrIds);
     for (const s of d.sites) {
       const mgr = s.manager;
       if (!mgr || mgr.status !== "active") continue;
-      const roles = mgr.roles || [];
-      const isDual = roles.includes("inspector") || mgr.role === "inspector";
+      const isDual = inspectorIds.has(mgr.id);
       push({
         userId: mgr.id,
         realName: mgr.real_name,
@@ -5329,7 +5701,7 @@ async function listMonthly(user: AppUser, query: URLSearchParams) {
     }>(
       `query ($uid: uuid!) {
         sites(where: { manager_id: { _eq: $uid }, deleted_at: { _is_null: true } }) { id }
-        deputy: site_members(where: { user_id: { _eq: $uid }, member_role: { _eq: "deputy_manager" }, status: { _eq: "active" } }) { site_id }
+        deputy: site_members(where: { user_id: { _eq: $uid }, member_roles: { _contains: ["deputy_manager"] } }) { site_id }
       }`,
       { uid: user.id },
     );
@@ -5352,7 +5724,7 @@ async function listMonthly(user: AppUser, query: URLSearchParams) {
     `query ($m: String!) {
       monthly_settlements(where: { month: { _eq: $m } }) {
         id user_id month perf_total expense_total reward_total event_penalty subsidy_total correction_total final_amount status
-        user { real_name username role roles }
+        user { real_name username role }
       }
     }`,
     { m: month },
@@ -5365,6 +5737,9 @@ async function listMonthly(user: AppUser, query: URLSearchParams) {
   const roleFilter = (query.get("role") || "").trim();
   const siteIdQ = (query.get("siteId") || "").trim();
   if (keyword || roleFilter || siteIdQ) {
+    const monthlyLeadIds = roleFilter
+      ? await leadDutyUserIds(rows.map((r) => String(r.user_id)))
+      : new Set<string>();
     let siteUserIds: Set<string> | null = null;
     if (siteIdQ) {
       const members = await adminGql<{ site_members: Array<{ user_id: string }> }>(
@@ -5376,14 +5751,12 @@ async function listMonthly(user: AppUser, query: URLSearchParams) {
       siteUserIds = new Set(members.site_members.map((m) => m.user_id));
     }
     rows = rows.filter((r) => {
-      const u = r.user as { real_name?: string; username?: string; role?: string; roles?: string[] } | undefined;
+      const u = r.user as { real_name?: string; username?: string; role?: string } | undefined;
       if (siteUserIds && !siteUserIds.has(String(r.user_id))) return false;
       if (roleFilter) {
-        const roles = u?.roles || [];
-        const primary = u?.role || "";
-        const isMgr = primary === "site_manager" || roles.includes("site_manager");
+        const isMgr = monthlyLeadIds.has(String(r.user_id));
         if (roleFilter === "site_manager" && !isMgr) return false;
-        if (roleFilter === "inspector" && isMgr && primary !== "inspector") return false;
+        if (roleFilter === "inspector" && isMgr) return false;
       }
       if (keyword) {
         const name = `${u?.real_name || ""} ${u?.username || ""}`.toLowerCase();
@@ -5465,13 +5838,12 @@ async function correctMonthly(user: AppUser, month: string, body: Record<string,
   if (!reason) throw new HttpError(400, "请填写校正原因");
   if (!Number.isFinite(amount)) throw new HttpError(400, "校正金额无效");
 
-  const target = await adminGql<{ users_by_pk: { id: string; role: string; roles: string[] | null } | null }>(
-    `query ($id: uuid!) { users_by_pk(id: $id) { id role roles } }`,
+  const target = await adminGql<{ users_by_pk: { id: string } | null }>(
+    `query ($id: uuid!) { users_by_pk(id: $id) { id } }`,
     { id: userId },
   );
   if (!target.users_by_pk) throw new HttpError(404, "结算人员不存在");
-  const roles = target.users_by_pk.roles || [];
-  const isManager = roles.includes("site_manager") || target.users_by_pk.role === "site_manager";
+  const isManager = (await leadDutyUserIds([userId])).has(userId);
 
   const existing = await adminGql<{ assessments: { id: string }[] }>(
     `query ($m: String!, $uid: uuid!) {

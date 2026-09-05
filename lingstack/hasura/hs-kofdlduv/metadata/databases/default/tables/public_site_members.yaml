@@ -9,52 +9,13 @@ object_relationships:
     using:
       foreign_key_constraint_on: user_id
 insert_permissions:
-  - role: inspector
-    permission:
-      check:
-        user_id:
-          _eq: X-Hasura-User-Id
-      columns:
-        - id
-        - joined_at
-        - member_role
-        - site_id
-        - status
-        - user_id
-  - role: site_manager
-    permission:
-      check:
-        _or:
-          # 正网格长：可加人（副长或工程师）
-          - site:
-              manager_id:
-                _eq: X-Hasura-User-Id
-          # 副网格长：只能加工程师
-          - _and:
-              - member_role:
-                  _eq: inspector
-              - site:
-                  site_members:
-                    status:
-                      _eq: active
-                    member_role:
-                      _eq: deputy_manager
-                    user_id:
-                      _eq: X-Hasura-User-Id
-      columns:
-        - id
-        - joined_at
-        - member_role
-        - site_id
-        - status
-        - user_id
   - role: super_admin
     permission:
       check: {}
       columns:
         - id
         - joined_at
-        - member_role
+        - member_roles
         - site_id
         - status
         - user_id
@@ -64,7 +25,7 @@ select_permissions:
       columns:
         - id
         - joined_at
-        - member_role
+        - member_roles
         - site_id
         - status
         - user_id
@@ -77,114 +38,42 @@ select_permissions:
       columns:
         - id
         - joined_at
-        - member_role
+        - member_roles
         - site_id
         - status
         - user_id
       filter:
-        site:
-          _or:
-            - manager_id:
+        _or:
+          - user_id:
+              _eq: X-Hasura-User-Id
+          - site:
+              manager_id:
                 _eq: X-Hasura-User-Id
-            - site_members:
-                status:
-                  _eq: active
-                user_id:
-                  _eq: X-Hasura-User-Id
       allow_aggregations: true
   - role: super_admin
     permission:
       columns:
         - id
         - joined_at
-        - member_role
+        - member_roles
         - site_id
         - status
         - user_id
       filter: {}
       allow_aggregations: true
 update_permissions:
-  - role: inspector
-    permission:
-      columns:
-        - id
-        - joined_at
-        - member_role
-        - site_id
-        - status
-        - user_id
-      filter:
-        user_id:
-          _eq: X-Hasura-User-Id
-      check:
-        user_id:
-          _eq: X-Hasura-User-Id
-  - role: site_manager
-    permission:
-      columns:
-        - id
-        - joined_at
-        - member_role
-        - site_id
-        - status
-        - user_id
-      filter:
-        site:
-          _or:
-            - manager_id:
-                _eq: X-Hasura-User-Id
-            - site_members:
-                status:
-                  _eq: active
-                user_id:
-                  _eq: X-Hasura-User-Id
-      check:
-        site:
-          _or:
-            - manager_id:
-                _eq: X-Hasura-User-Id
-            - site_members:
-                status:
-                  _eq: active
-                user_id:
-                  _eq: X-Hasura-User-Id
   - role: super_admin
     permission:
       columns:
         - id
         - joined_at
-        - member_role
+        - member_roles
         - site_id
         - status
         - user_id
       filter: {}
       check: {}
 delete_permissions:
-  - role: inspector
-    permission:
-      filter:
-        user_id:
-          _eq: X-Hasura-User-Id
-  - role: site_manager
-    permission:
-      filter:
-        _or:
-          # 正网格长可删本站任意编制
-          - site:
-              manager_id:
-                _eq: X-Hasura-User-Id
-          # 副网格长只能解聘工程师
-          - _and:
-              - member_role:
-                  _eq: inspector
-              - site:
-                  site_members:
-                    status:
-                      _eq: active
-                    member_role:
-                      _eq: deputy_manager
-                    user_id:
-                      _eq: X-Hasura-User-Id
   - role: super_admin
     permission:
       filter: {}

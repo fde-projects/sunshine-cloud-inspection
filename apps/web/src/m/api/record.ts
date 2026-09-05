@@ -255,8 +255,17 @@ export async function analyzeAi(payload: {
   samplePhotoUrls?: string[];
 }) {
   const { data } = await request.post<
-    ApiResponse<{ queued: boolean; completed?: boolean }>
+    ApiResponse<{ queued: boolean; completed?: boolean; stale?: boolean }>
   >('/ai/analyze', payload, { timeout: 180_000 });
+  return data.data;
+}
+
+/** 素材变更后作废旧 AI 结论，避免图与结果不一致 */
+export async function invalidateAi(payload: {
+  recordId: string;
+  templateEntryId: string;
+}) {
+  const { data } = await request.post<ApiResponse<RecordItem>>('/ai/invalidate', payload);
   return data.data;
 }
 

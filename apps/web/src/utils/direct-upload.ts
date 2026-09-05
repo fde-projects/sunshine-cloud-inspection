@@ -172,7 +172,7 @@ async function uploadViaServer(
     headers: { "Content-Type": "multipart/form-data" },
     timeout: 180_000,
     ...(opts?.skipErrorToast ? { skipErrorToast: true } : {}),
-    onUploadProgress: (event) => {
+    onUploadProgress: (event: { loaded: number; total?: number }) => {
       if (!event.total) return;
       opts?.onProgress?.(Math.min(99, Math.round((event.loaded / event.total) * 100)));
     },
@@ -183,7 +183,7 @@ async function uploadViaServer(
   opts?.onProgress?.(100);
   return {
     url: data.data.url,
-    original: data.data.original ?? true,
+    original: true,
     key: data.data.objectName,
   };
 }

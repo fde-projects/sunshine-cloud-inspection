@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback } from 'react';
+import { useCallback, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Cell, Button, Dialog, Empty } from '@/m/lib/react-vant';
 import { useAuthStore } from '../../stores/auth';
@@ -9,12 +9,15 @@ import type { AppRole } from '@/lib/types';
 import { fetchInspectorSummary, type InspectorSummary } from '../../api/stats';
 import { mobileCacheKeys } from '../../utils/mobileCacheKeys';
 import { useCachedResource } from '../../utils/useCachedResource';
+import { clearDismiss, isStandaloneDisplay } from '../../utils/addToHome';
+import AddToHomePrompt from '../../components/AddToHomePrompt';
 import './my.css';
 
 /** 我的：头像、网格、统计、设置 */
 export default function MyPage() {
   const navigate = useNavigate();
   const { user, currentSite, logout } = useAuthStore();
+  const [showA2hs, setShowA2hs] = useState(false);
 
   const loader = useCallback(
     () => fetchInspectorSummary(currentSite?.id),
@@ -99,6 +102,17 @@ export default function MyPage() {
         <Cell.Group inset>
           <Cell title="我的收入" label="每单绩效与审核状态" isLink onClick={() => navigate('/m/income')} />
           <Cell title="个人资料" isLink onClick={() => navigate('/m/settings')} />
+          {!isStandaloneDisplay() ? (
+            <Cell
+              title="添加到手机桌面"
+              label="下次点图标直接进入作业端"
+              isLink
+              onClick={() => {
+                clearDismiss();
+                setShowA2hs(true);
+              }}
+            />
+          ) : null}
           {canSwitchPortal(
             normalizeRoles(user?.roles as AppRole[] | undefined, (user?.role as AppRole) || 'inspector'),
           ) ? (
@@ -112,6 +126,10 @@ export default function MyPage() {
             />
           ) : null}
         </Cell.Group>
+
+        {showA2hs ? (
+          <AddToHomePrompt forceOpen onClose={() => setShowA2hs(false)} />
+        ) : null}
 
         <div className="my-logout">
           <Button block round type="danger" plain onClick={onLogout}>

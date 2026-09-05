@@ -1,0 +1,34 @@
+{
+  "id": "/m",
+  "name": "阳光运维·现场作业",
+  "short_name": "现场作业",
+  "description": "工程师现场作业端：任务、拍照、提交报告",
+  "start_url": "/m",
+  "scope": "/m",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#e6efe9",
+  "theme_color": "#0f7a58",
+  "lang": "zh-CN",
+  "dir": "ltr",
+  "icons": [
+    {
+      "src": "/brand-favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "/api/system/favicon",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/api/system/favicon",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}

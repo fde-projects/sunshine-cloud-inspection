@@ -10,7 +10,7 @@ import {
   lockMonthlySettlements,
   unlockMonthlySettlements,
 } from '../../../api/finance';
-import { fetchSites } from '../../../api/site';
+import { fetchActiveSitesCached } from '../../../api/option-cache';
 import type { FinanceMonthlySettlement } from '../../../types/finance';
 import type { SiteItem } from '../../../types';
 import { useAuthStore } from '../../../stores/auth';
@@ -20,6 +20,7 @@ export default function FinanceMonthlyPage() {
   const isAdmin = useAuthStore((state) => state.user?.role === 'super_admin');
   const [month, setMonth] = useState(dayjs().format('YYYY-MM'));
   const [keyword, setKeyword] = useState('');
+  const [appliedKeyword, setAppliedKeyword] = useState('');
   const [role, setRole] = useState<string>();
   const [siteId, setSiteId] = useState<string>();
   const [sites, setSites] = useState<SiteItem[]>([]);
@@ -33,8 +34,8 @@ export default function FinanceMonthlyPage() {
 
   useEffect(() => {
     if (!isAdmin) return;
-    void fetchSites({ page: 1, limit: 100 })
-      .then((res) => setSites(res.list || []))
+    void fetchActiveSitesCached()
+      .then(setSites)
       .catch(() => setSites([]));
   }, [isAdmin]);
 
@@ -44,7 +45,7 @@ export default function FinanceMonthlyPage() {
       setRows(
         await fetchMonthlySettlements({
           month,
-          keyword: keyword || undefined,
+          keyword: appliedKeyword || undefined,
           siteId: isAdmin ? siteId : undefined,
           role: isAdmin ? role : undefined,
         }),
@@ -52,7 +53,7 @@ export default function FinanceMonthlyPage() {
     } finally {
       setLoading(false);
     }
-  }, [month, keyword, siteId, role, isAdmin]);
+  }, [month, appliedKeyword, siteId, role, isAdmin]);
 
   useEffect(() => {
     void load();
@@ -94,7 +95,11 @@ export default function FinanceMonthlyPage() {
           className="assessment-toolbar__search"
           value={keyword}
           onChange={(event) => setKeyword(event.target.value)}
-          onPressEnter={() => void load()}
+          onPressEnter={() => setAppliedKeyword(keyword.trim())}
+          onClear={() => {
+            setKeyword('');
+            setAppliedKeyword('');
+          }}
         />
         {isAdmin ? (
           <>
@@ -121,7 +126,7 @@ export default function FinanceMonthlyPage() {
             />
           </>
         ) : null}
-        <Button type="primary" onClick={() => void load()}>
+        <Button type="primary" onClick={() => setAppliedKeyword(keyword.trim())}>
           查询
         </Button>
         {isAdmin ? (

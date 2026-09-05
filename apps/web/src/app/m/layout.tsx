@@ -1,59 +1,59 @@
 "use client";
 
 import "@/m/lib/patch-react-dom";
-import { useEffect, useState, Suspense } from "react";
+import { Suspense, useLayoutEffect } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import TabLayout from "@/m/layouts/TabLayout";
 import { nextPathAfterAuth, useAuthStore } from "@/stores/auth";
 import "react-vant/lib/index.css";
 import "@/styles/h5-shell.css";
 
+/**
+ * 理想路径：始终挂真壳 TabLayout（结构先出），
+ * 鉴权在 layoutEffect 完成；各页只在「要填数的区域」出骨架，数据到立刻替换。
+ * 不再用整页 BootShell 挡住真页面。
+ */
 export default function MobileLayout({ children }: { children: React.ReactNode }) {
   const { user, hydrated, hydrate } = useAuthStore();
   const router = useRouter();
-  const pathname = usePathname();
+  const pathname = usePathname() || "/m";
   const isLogin = pathname === "/m/login";
-  const [ready, setReady] = useState(isLogin);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     hydrate();
   }, [hydrate]);
 
-  useEffect(() => {
-    if (!hydrated) return;
-    if (isLogin) {
-      setReady(true);
-      return;
-    }
+  useLayoutEffect(() => {
+    if (!hydrated || isLogin) return;
     if (!user) {
       router.replace("/m/login");
       return;
     }
     if (user.role !== "inspector") {
       router.replace(nextPathAfterAuth(user));
-      return;
     }
-    setReady(true);
   }, [hydrated, user, pathname, router, isLogin]);
 
-  const inner = (() => {
-    if (isLogin) return <>{children}</>;
-    if (!hydrated) return <div style={{ padding: 48, textAlign: "center" }}>加载中…</div>;
-    if (!user || !ready) {
-      return <div style={{ padding: 48, textAlign: "center" }}>正在进入作业端…</div>;
-    }
-    return <TabLayout>{children}</TabLayout>;
-  })();
+  if (isLogin) {
+    return (
+      <div className="h5-app">
+        <div className="h5-shell">
+          <Suspense fallback={null}>{children}</Suspense>
+        </div>
+      </div>
+    );
+  }
 
   return (
-    <div className="h5-app">
-      <p className="h5-desktop-hint">
+    <div className="h5-app" suppressHydrationWarning>
+      <div className="h5-desktop-hint">
         <span>手机作业端 · 建议用手机打开</span>
         <a href="/">返回门户</a>
-      </p>
+      </div>
       <div className="h5-shell">
-        <Suspense fallback={<div style={{ padding: 48, textAlign: "center" }}>加载中…</div>}>
-          {inner}
+        {/* 未登录会被上面 effect 踢回登录；此处先出真壳，避免整页启动骨架 */}
+        <Suspense fallback={null}>
+          <TabLayout>{children}</TabLayout>
         </Suspense>
       </div>
     </div>

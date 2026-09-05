@@ -132,7 +132,15 @@ export default function TaskDetailPage() {
     <div>
       <NavBar title="作业信息" leftText="返回" onClickLeft={() => navigate(-1)} />
       {loading || !task ? (
-        <Empty description={loading ? '加载中...' : '作业不存在'} />
+        loading ? (
+          <div className="mobile-list-skeleton" style={{ padding: '12px 16px' }} aria-busy aria-label="正在加载作业">
+            <i />
+            <i />
+            <i />
+          </div>
+        ) : (
+          <Empty description="作业不存在" />
+        )
       ) : (
         <>
           <Cell.Group inset title="基本信息">

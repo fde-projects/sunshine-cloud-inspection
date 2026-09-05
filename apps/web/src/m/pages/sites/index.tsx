@@ -5,6 +5,7 @@ import { useNavigate } from 'react-router-dom';
 import { NavBar, Cell, Empty, Toast, Button, Tag } from '@/m/lib/react-vant';
 import { useAuthStore } from '../../stores/auth';
 import { fetchMyFinanceCases } from '../../api/finance';
+import { prefetchMobileTabAssets, prefetchMobileTabData } from '../../utils/prefetchMobileTabs';
 
 /** 网格选择页：展示各网格待办数，方便切到有单的站 */
 export default function SitesPage() {
@@ -56,6 +57,8 @@ export default function SitesPage() {
     if (!site) return;
     setCurrentSite(site);
     Toast.success(`已选择：${site.name}`);
+    prefetchMobileTabAssets();
+    prefetchMobileTabData(user?.id, site.id);
     navigate('/m', { replace: true });
   };
 

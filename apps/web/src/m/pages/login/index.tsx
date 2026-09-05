@@ -13,6 +13,7 @@ import {
   type SavedAccount,
 } from "@/lib/remember-login";
 import { LoginAccountMenu, LoginIconBtn, IconClear, IconChevron, IconEye } from "@/components/login-account-menu";
+import { prefetchMobileTabAssets, prefetchMobileTabData } from "@/m/utils/prefetchMobileTabs";
 import "./login.css";
 
 export default function LoginPage() {
@@ -92,6 +93,10 @@ export default function LoginPage() {
       }
       const fresh = useAuthStore.getState().user || loggedUser;
       Toast.success(`登录成功（${fresh.realName}）`);
+      // 进首页前先预热 Tab 资源，减轻首次切「作业/我的」卡顿
+      prefetchMobileTabAssets();
+      const siteId = useAuthStore.getState().currentSite?.id;
+      prefetchMobileTabData(fresh.id, siteId);
       redirectAfterLogin(fresh);
     } catch (e) {
       Toast.fail(e instanceof Error ? e.message : "登录失败");

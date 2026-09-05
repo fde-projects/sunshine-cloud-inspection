@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Button,
+  DatePicker,
   Descriptions,
   Form,
   Image,
@@ -17,10 +18,10 @@ import {
   message,
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
-import { fetchPendingExpenses, reviewExpense } from '../../../api/finance';
+import type { Dayjs } from 'dayjs';
+import { exportPendingExpenses, fetchPendingExpenses, reviewExpense } from '../../../api/finance';
 import { displayPhotoUrl } from '../../../utils/photo-url';
 import { useDrawerWidth } from '../../../hooks/useDrawerWidth';
-import DayDatePicker from '../../../components/DayDatePicker';
 import FillTable from '../../../components/FillTable';
 
 export type ExpenseReviewItem = {
@@ -315,13 +316,17 @@ type Props = {
 export default function ExpenseReviewPanel({ onChanged }: Props) {
   const [tab, setTab] = useState<ExpenseTab>('pending');
   const [keyword, setKeyword] = useState('');
-  const [month, setMonth] = useState<string>();
+  const [dateRange, setDateRange] = useState<[Dayjs | null, Dayjs | null] | null>(null);
   const [rows, setRows] = useState<ExpenseReviewItem[]>([]);
   const [loading, setLoading] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const [current, setCurrent] = useState<ExpenseReviewItem>();
   const [action, setAction] = useState<'approve' | 'reject' | 'view'>();
   const [form] = Form.useForm();
   const modalWidth = useDrawerWidth(720);
+
+  const dateFrom = dateRange?.[0]?.format('YYYY-MM-DD');
+  const dateTo = dateRange?.[1]?.format('YYYY-MM-DD');
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -329,17 +334,48 @@ export default function ExpenseReviewPanel({ onChanged }: Props) {
       const list = (await fetchPendingExpenses({
         status: tab,
         keyword: keyword.trim() || undefined,
-        month: month || undefined,
+        dateFrom,
+        dateTo,
       })) as ExpenseReviewItem[];
       setRows(list);
     } finally {
       setLoading(false);
     }
-  }, [tab, keyword, month]);
+  }, [tab, keyword, dateFrom, dateTo]);
 
   useEffect(() => {
     void load();
   }, [load]);
+
+  useEffect(() => {
+    if (!current || !action || action === 'view') return;
+    if (action === 'approve') {
+      form.setFieldsValue({
+        approvedAmount: Number(current.claimAmount ?? current.amount ?? 0),
+        note: undefined,
+        reason: undefined,
+      });
+    } else if (action === 'reject') {
+      form.resetFields();
+    }
+  }, [current, action, form]);
+
+  const onExport = async () => {
+    setExporting(true);
+    try {
+      await exportPendingExpenses({
+        status: tab,
+        keyword: keyword.trim() || undefined,
+        dateFrom,
+        dateTo,
+      });
+      message.success('已开始下载导出文件');
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : '导出失败');
+    } finally {
+      setExporting(false);
+    }
+  };
 
   const submit = async () => {
     if (!current || (action !== 'approve' && action !== 'reject')) return;
@@ -463,10 +499,6 @@ export default function ExpenseReviewPanel({ onChanged }: Props) {
                 onClick={() => {
                   setCurrent(r);
                   setAction('approve');
-                  form.setFieldsValue({
-                    approvedAmount: Number(r.claimAmount ?? r.amount ?? 0),
-                    note: undefined,
-                  });
                 }}
               >
                 核定通过
@@ -477,7 +509,6 @@ export default function ExpenseReviewPanel({ onChanged }: Props) {
                 onClick={() => {
                   setCurrent(r);
                   setAction('reject');
-                  form.resetFields();
                 }}
               >
                 驳回
@@ -532,14 +563,16 @@ export default function ExpenseReviewPanel({ onChanged }: Props) {
             if (!e.target.value) setKeyword('');
           }}
         />
-        <DayDatePicker
+        <DatePicker.RangePicker
           allowClear
-          value={month}
-          onChange={setMonth}
-          placeholder="完工日期"
-          title="完工日期"
-          style={{ width: 160 }}
+          value={dateRange}
+          onChange={(next) => setDateRange(next)}
+          placeholder={['完工开始', '完工结束']}
+          style={{ width: 260 }}
         />
+        <Button loading={exporting} disabled={loading} onClick={() => void onExport()}>
+          导出
+        </Button>
       </Space>
       <FillTable
         rowKey="id"
@@ -593,10 +626,6 @@ export default function ExpenseReviewPanel({ onChanged }: Props) {
                         closeSheet();
                         setCurrent(r);
                         setAction('approve');
-                        form.setFieldsValue({
-                          approvedAmount: Number(r.claimAmount ?? r.amount ?? 0),
-                          note: undefined,
-                        });
                       }}
                     >
                       核定通过
@@ -608,7 +637,6 @@ export default function ExpenseReviewPanel({ onChanged }: Props) {
                         closeSheet();
                         setCurrent(r);
                         setAction('reject');
-                        form.resetFields();
                       }}
                     >
                       驳回
@@ -632,8 +660,9 @@ export default function ExpenseReviewPanel({ onChanged }: Props) {
         }}
       />
 
+      {current && action ? (
       <Modal
-        open={!!current && !!action}
+        open
             title={
           action === 'approve'
             ? '核定通过本报销'
@@ -644,6 +673,7 @@ export default function ExpenseReviewPanel({ onChanged }: Props) {
         onCancel={() => {
           setCurrent(undefined);
           setAction(undefined);
+          form.resetFields();
         }}
         onOk={action === 'view' ? undefined : () => void submit()}
         footer={
@@ -655,6 +685,7 @@ export default function ExpenseReviewPanel({ onChanged }: Props) {
                   onClick={() => {
                     setCurrent(undefined);
                     setAction(undefined);
+                    form.resetFields();
                   }}
                 >
                   关闭
@@ -665,7 +696,6 @@ export default function ExpenseReviewPanel({ onChanged }: Props) {
         okText={action === 'approve' ? '确认核定通过' : '确认驳回'}
         okButtonProps={{ danger: action === 'reject' }}
         width={modalWidth}
-        destroyOnHidden
       >
         {current && (() => {
           const summary = tripMileageSummary(current);
@@ -868,6 +898,7 @@ export default function ExpenseReviewPanel({ onChanged }: Props) {
           );
         })()}
       </Modal>
+      ) : null}
     </div>
   );
 }

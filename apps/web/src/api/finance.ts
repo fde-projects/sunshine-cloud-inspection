@@ -111,8 +111,12 @@ export async function fetchAssessmentEvents(
 export async function createAssessmentEvent(payload: Record<string, unknown>) {
   return unwrap(await request.post<ApiResponse<AssessmentEventRow>>('/assessments/events', payload));
 }
-export async function deleteAssessmentEvent(id: string) {
-  return unwrap(await request.delete<ApiResponse<{ id: string }>>(`/assessments/events/${id}`));
+export async function deleteAssessmentEvent(id: string, scope?: 'case' | 'monthly') {
+  return unwrap(
+    await request.delete<ApiResponse<{ id: string }>>(`/assessments/events/${id}`, {
+      params: scope ? { scope } : undefined,
+    }),
+  );
 }
 export async function fetchMonthlySettlements(params: {
   month: string;
@@ -268,11 +272,26 @@ export async function fetchPendingExpenses(params?: {
   status?: 'pending' | 'approved' | 'rejected' | 'all';
   keyword?: string;
   month?: string;
+  dateFrom?: string;
+  dateTo?: string;
 }) {
   return unwrap(
     await request.get<ApiResponse<ExpenseReviewRow[]>>('/cases/expenses/pending', {
       params,
     }),
+  );
+}
+
+export async function exportPendingExpenses(payload: {
+  status?: 'pending' | 'approved' | 'rejected' | 'all';
+  keyword?: string;
+  dateFrom?: string;
+  dateTo?: string;
+}) {
+  await downloadBlob(
+    '/cases/expenses/export',
+    payload,
+    `行程报销导出-${new Date().toISOString().slice(0, 10)}.xlsx`,
   );
 }
 export async function reviewExpense(
@@ -356,11 +375,27 @@ export async function fetchPendingFinanceReviews(params?: {
   keyword?: string;
   siteId?: string;
   month?: string;
+  dateFrom?: string;
+  dateTo?: string;
   overdue?: string;
   reviewStatus?: 'pending' | 'approved' | 'rejected' | 'all';
 }) {
   return unwrap(
     await request.get<ApiResponse<FinanceReviewItem[]>>('/review/pending', { params }),
+  );
+}
+
+export async function exportFinanceReviews(payload: {
+  keyword?: string;
+  siteId?: string;
+  dateFrom?: string;
+  dateTo?: string;
+  reviewStatus?: 'pending' | 'approved' | 'rejected' | 'all';
+}) {
+  await downloadBlob(
+    '/review/export',
+    payload,
+    `结算审核导出-${new Date().toISOString().slice(0, 10)}.xlsx`,
   );
 }
 export async function fetchReviewAmountBreakdown(caseId: string) {

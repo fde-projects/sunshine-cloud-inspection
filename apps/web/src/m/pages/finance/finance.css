@@ -248,6 +248,13 @@
   padding: 12px 20px 0;
   text-align: center;
 }
+.inc-bill-sum--skeleton > strong,
+.inc-bill-sum--skeleton .inc-bill-stats b {
+  opacity: 0.45;
+}
+.inc-bill-sum__sk {
+  letter-spacing: 0.12em !important;
+}
 .inc-bill-sum > p:first-child {
   margin: 0;
   font-size: 12px;

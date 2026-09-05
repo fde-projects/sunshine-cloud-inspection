@@ -14,6 +14,7 @@ function readStored<T>(key: string, maxAge: number): T | undefined {
   const memory = memoryCache.get(key) as StoredValue<T> | undefined;
   if (memory && now - memory.savedAt <= maxAge) return memory.value;
 
+  if (typeof window === 'undefined') return undefined;
   try {
     const raw = sessionStorage.getItem(`${CACHE_PREFIX}${key}`);
     if (!raw) return undefined;
@@ -32,6 +33,7 @@ function readStored<T>(key: string, maxAge: number): T | undefined {
 function writeStored<T>(key: string, value: T) {
   const stored: StoredValue<T> = { savedAt: Date.now(), value };
   memoryCache.set(key, stored);
+  if (typeof window === 'undefined') return;
   try {
     sessionStorage.setItem(`${CACHE_PREFIX}${key}`, JSON.stringify(stored));
   } catch {
@@ -71,17 +73,18 @@ export function prefetchResource<T>(key: string, loader: () => Promise<T>) {
 }
 
 /**
- * 移动端轻量 stale-while-revalidate 数据源：先展示最近成功数据，再后台更新。
- * 首次没有缓存时由页面展示骨架屏，不会误显示“0 / 暂无数据”。
+ * 移动端 stale-while-revalidate。
+ * 注意：首屏不得同步读 sessionStorage（否则 SSR/CSR HTML 不一致触发 hydration error）。
+ * 缓存在 useLayoutEffect 注入，仍可在绘制前带上旧数据。
  */
 export function useCachedResource<T>(
   key: string,
   loader: () => Promise<T>,
   maxAge = 10 * 60 * 1000,
 ) {
-  const initial = readStored<T>(key, maxAge);
-  const [state, setState] = useState<{ key: string; data?: T }>({ key, data: initial });
-  const [loading, setLoading] = useState(initial === undefined);
+  // 服务端与客户端首次 render 必须同为「无数据 + loading」
+  const [state, setState] = useState<{ key: string; data?: T }>({ key, data: undefined });
+  const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState(false);
   const activeKey = useRef(key);
@@ -98,7 +101,6 @@ export function useCachedResource<T>(
   const load = useCallback(
     async (force = false) => {
       const cached = readStored<T>(key, maxAge);
-      // 轮询 force 刷新时不闪 refreshing，避免整页像「卡一下」
       if (cached === undefined) setLoading(true);
       else if (!force) setRefreshing(true);
       setError(false);
@@ -128,7 +130,7 @@ export function useCachedResource<T>(
     void load().catch(() => undefined);
   }, [load]);
 
-  const data = state.key === key ? state.data : readStored<T>(key, maxAge);
+  const data = state.key === key ? state.data : undefined;
   const reload = useCallback(() => load(true), [load]);
   return { data, loading, refreshing, error, reload };
 }

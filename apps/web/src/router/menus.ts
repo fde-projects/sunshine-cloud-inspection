@@ -132,6 +132,13 @@ export const menuConfig: MenuConfig[] = [
     icon: 'SettingOutlined',
     roles: ['super_admin', 'site_manager', 'inspector'],
   },
+  {
+    key: 'help',
+    path: '/help',
+    label: '使用帮助',
+    icon: 'QuestionCircleOutlined',
+    roles: ['super_admin', 'site_manager'],
+  },
 ];
 
 function filterMenuByRole(items: MenuConfig[], role: UserRole): MenuConfig[] {

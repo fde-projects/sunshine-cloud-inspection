@@ -188,7 +188,11 @@ export default function StartWizardPage() {
             {projectId ? ` / ${projects.find((p) => p.id === projectId)?.name || currentSite?.name || ''}` : ''}
           </div>
           {loading ? (
-            <Empty description="加载案例中..." />
+            <div className="mobile-list-skeleton" style={{ padding: '12px 16px' }} aria-busy>
+              <i />
+              <i />
+              <i />
+            </div>
           ) : cases.length === 0 ? (
             <div style={{ padding: 16 }}>
               <Empty description="暂无已派案例" />

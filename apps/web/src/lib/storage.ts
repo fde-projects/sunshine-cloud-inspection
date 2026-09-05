@@ -92,7 +92,9 @@ function createTianyiUploadToken(
   const credential = `${accessKey}/${credentialScope}`;
   const acl = "public-read";
 
-  const signedHeaders = "content-type;host;x-amz-acl";
+  // 只签 content-type + host；x-amz-acl 仍随请求发送但不进签名。
+  // 避免部分 WebView 丢自定义头后整段签名校验失败；同时 Content-Type 仍与压缩后 jpeg 对齐。
+  const signedHeaders = "content-type;host";
   const canonicalQuery = [
     ["X-Amz-Algorithm", "AWS4-HMAC-SHA256"],
     ["X-Amz-Credential", credential],
@@ -104,7 +106,7 @@ function createTianyiUploadToken(
     .sort()
     .join("&");
 
-  const canonicalHeaders = `content-type:${contentType}\nhost:${objectHost}\nx-amz-acl:${acl}\n`;
+  const canonicalHeaders = `content-type:${contentType}\nhost:${objectHost}\n`;
   const canonicalRequest = [
     "PUT",
     `/${encodeS3Key(key)}`,
@@ -133,6 +135,7 @@ function createTianyiUploadToken(
     provider: "tianyi",
     method: "PUT",
     uploadUrl,
+    // 天翼走预签名 PUT：鉴权在 uploadUrl 查询参数，无独立 form token（留空属正常）
     token: "",
     key,
     publicUrl: `${domain}/${key}`,

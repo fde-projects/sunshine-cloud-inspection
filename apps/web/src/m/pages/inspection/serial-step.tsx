@@ -1,7 +1,7 @@
 "use client";
 
-import { forwardRef, useImperativeHandle, useRef, useState } from 'react';
-import { ActionSheet, Field, Toast } from '@/m/lib/react-vant';
+import { forwardRef, useImperativeHandle, useState } from 'react';
+import { Field, Toast } from '@/m/lib/react-vant';
 import {
   ocrUnitDeviceSerial,
   saveUnitDeviceSerial,
@@ -9,6 +9,7 @@ import {
 } from '../../api/finance';
 import { displayPhotoUrl } from '../../utils/photo-url';
 import { compressImage } from '../../utils/imageCompress';
+import PhotoAddTile from '../../components/PhotoAddTile';
 
 type Props = {
   caseId: string;
@@ -34,9 +35,6 @@ export const SerialStepPanel = forwardRef<SerialStepHandle, Props>(function Seri
   const [serial, setSerial] = useState(initialSerial || '');
   const [ocrBusy, setOcrBusy] = useState(false);
   const [upBusy, setUpBusy] = useState(false);
-  const [sheetOpen, setSheetOpen] = useState(false);
-  const camRef = useRef<HTMLInputElement>(null);
-  const galRef = useRef<HTMLInputElement>(null);
 
   const runOcr = async (url: string) => {
     setOcrBusy(true);
@@ -55,8 +53,8 @@ export const SerialStepPanel = forwardRef<SerialStepHandle, Props>(function Seri
     }
   };
 
-  const onFiles = async (files: FileList | null) => {
-    if (!files?.length || readonly) return;
+  const onFiles = async (files: File[]) => {
+    if (!files.length || readonly) return;
     setUpBusy(true);
     try {
       const file = files[0];
@@ -69,14 +67,7 @@ export const SerialStepPanel = forwardRef<SerialStepHandle, Props>(function Seri
       Toast.fail('上传失败');
     } finally {
       setUpBusy(false);
-      if (camRef.current) camRef.current.value = '';
-      if (galRef.current) galRef.current.value = '';
     }
-  };
-
-  const openPicker = () => {
-    if (readonly || upBusy || ocrBusy) return;
-    setSheetOpen(true);
   };
 
   useImperativeHandle(ref, () => ({
@@ -139,15 +130,11 @@ export const SerialStepPanel = forwardRef<SerialStepHandle, Props>(function Seri
             </div>
           ) : null}
           {!readonly && !photoUrl && (
-            <button
-              type="button"
-              className="inspection-photo-placeholder is-clickable"
+            <PhotoAddTile
               disabled={upBusy || ocrBusy}
-              aria-label="添加照片"
-              onClick={openPicker}
-            >
-              <strong>{upBusy || ocrBusy ? '…' : '＋'}</strong>
-            </button>
+              busyLabel={upBusy || ocrBusy ? '…' : undefined}
+              onFiles={(files) => void onFiles(files)}
+            />
           )}
         </div>
         {photoUrl && !readonly && (
@@ -160,21 +147,6 @@ export const SerialStepPanel = forwardRef<SerialStepHandle, Props>(function Seri
             {ocrBusy ? '识别中…' : '重新识别'}
           </button>
         )}
-        <input
-          ref={galRef}
-          type="file"
-          accept="image/*"
-          hidden
-          onChange={(e) => void onFiles(e.target.files)}
-        />
-        <input
-          ref={camRef}
-          type="file"
-          accept="image/*"
-          capture="environment"
-          hidden
-          onChange={(e) => void onFiles(e.target.files)}
-        />
       </div>
 
       <div className="trip-wizard-block">
@@ -186,23 +158,6 @@ export const SerialStepPanel = forwardRef<SerialStepHandle, Props>(function Seri
           onChange={setSerial}
         />
       </div>
-
-      <ActionSheet
-        visible={sheetOpen}
-        onCancel={() => setSheetOpen(false)}
-        cancelText="取消"
-        actions={[
-          { name: '拍照' },
-          { name: '从相册选择' },
-        ]}
-        onSelect={(action) => {
-          setSheetOpen(false);
-          setTimeout(() => {
-            if (action.name === '拍照') camRef.current?.click();
-            else galRef.current?.click();
-          }, 0);
-        }}
-      />
     </div>
   );
 });

@@ -34,7 +34,7 @@ import {
   batchImportDevices,
   fetchDeviceHistory,
 } from '../../api/device';
-import { fetchSites } from '../../api/site';
+import { fetchActiveSitesCached } from '../../api/option-cache';
 import type { DeviceItem, SiteItem, DeviceType } from '../../types';
 import { DEVICE_TYPE_LABEL } from '../../types';
 import FillTable, { listTablePagination } from '../../components/FillTable';
@@ -66,8 +66,8 @@ export default function DevicesPage() {
   } | null>(null);
 
   const loadSites = useCallback(async () => {
-    const res = await fetchSites({ limit: 100, status: 'active' });
-    setSites(res.list);
+    const list = await fetchActiveSitesCached();
+    setSites(list);
   }, []);
 
   const load = useCallback(async () => {

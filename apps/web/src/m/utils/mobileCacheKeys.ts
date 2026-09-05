@@ -5,4 +5,6 @@ export const mobileCacheKeys = {
     `task-list:${userId || 'anonymous'}:${siteId || 'all'}:${filters}`,
   inspectorSummary: (userId?: string, siteId?: string) =>
     `inspector-summary:v2:${userId || 'anonymous'}:${siteId || 'all'}`,
+  myIncome: (userId?: string, month?: string) =>
+    `my-income:${userId || 'anonymous'}:${month || 'current'}`,
 };

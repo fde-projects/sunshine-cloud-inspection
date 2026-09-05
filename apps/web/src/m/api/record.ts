@@ -1,4 +1,5 @@
 import request from '../utils/request';
+import { directUploadWithRetry } from '@/utils/direct-upload';
 import type { ApiResponse } from '../types';
 
 export interface RecordEntry {
@@ -108,9 +109,10 @@ export async function submitRecord(
   return data.data;
 }
 
+/** 巡检照片：优先直传（前端重试）→ 失败再服务端代传。 */
 export async function uploadPhoto(
   file: File,
-  meta: {
+  _meta?: {
     taskId?: string;
     gps?: string;
     accuracy?: string;
@@ -122,97 +124,7 @@ export async function uploadPhoto(
   },
   onProgress?: (percent: number) => void,
 ) {
-  const contentType = file.type || 'image/jpeg';
-  try {
-    const { data } = await request.get<
-      ApiResponse<{
-        method?: 'POST' | 'PUT';
-        token?: string;
-        uploadUrl: string;
-        key: string;
-        publicUrl?: string;
-        domain?: string;
-        headers?: Record<string, string>;
-        contentType?: string;
-      }>
-    >('/upload/token', {
-      timeout: 10000,
-      params: { filename: file.name || 'photo.jpg', contentType },
-    });
-    const tok = data.data;
-    if (tok?.uploadUrl && tok.key) {
-      if (tok.method === 'PUT') {
-        await new Promise<void>((resolve, reject) => {
-          const xhr = new XMLHttpRequest();
-          xhr.open('PUT', tok.uploadUrl);
-          const headers = {
-            ...(tok.headers || {}),
-            'Content-Type': tok.contentType || contentType,
-          };
-          Object.entries(headers).forEach(([k, v]) => xhr.setRequestHeader(k, v));
-          xhr.upload.onprogress = (event) => {
-            if (!event.total) return;
-            onProgress?.(Math.min(99, Math.round((event.loaded / event.total) * 100)));
-          };
-          xhr.onload = () => {
-            if (xhr.status >= 200 && xhr.status < 300) resolve();
-            else reject(new Error(`直传失败: ${xhr.status}`));
-          };
-          xhr.onerror = () => reject(new Error('直传网络错误'));
-          xhr.send(file);
-        });
-        onProgress?.(100);
-        return {
-          url: tok.publicUrl || `${(tok.domain || '').replace(/\/$/, '')}/${tok.key}`,
-          original: true,
-        };
-      }
-      if (tok.token) {
-        const fd = new FormData();
-        fd.append('token', tok.token);
-        fd.append('key', tok.key);
-        fd.append('file', file);
-        await new Promise<void>((resolve, reject) => {
-          const xhr = new XMLHttpRequest();
-          xhr.open('POST', tok.uploadUrl);
-          xhr.upload.onprogress = (event) => {
-            if (!event.total) return;
-            onProgress?.(Math.min(99, Math.round((event.loaded / event.total) * 100)));
-          };
-          xhr.onload = () => {
-            if (xhr.status >= 200 && xhr.status < 300) resolve();
-            else reject(new Error(`直传失败: ${xhr.status}`));
-          };
-          xhr.onerror = () => reject(new Error('直传网络错误'));
-          xhr.send(fd);
-        });
-        onProgress?.(100);
-        return {
-          url: tok.publicUrl || `${(tok.domain || '').replace(/\/$/, '')}/${tok.key}`,
-          original: true,
-        };
-      }
-    }
-  } catch {
-    // 回退服务端代传
-  }
-
-  const form = new FormData();
-  form.append('file', file);
-  Object.entries(meta).forEach(([key, value]) => {
-    if (value) form.append(key, value);
-  });
-  const { data } = await request.post<
-    ApiResponse<{ url: string; original: boolean }>
-  >('/upload/photo', form, {
-    headers: { 'Content-Type': 'multipart/form-data' },
-    timeout: 45_000,
-    onUploadProgress: (event) => {
-      if (!event.total) return;
-      onProgress?.(Math.min(99, Math.round((event.loaded / event.total) * 100)));
-    },
-  });
-  return data.data;
+  return directUploadWithRetry(file, { onProgress });
 }
 
 export interface LocationVerification {

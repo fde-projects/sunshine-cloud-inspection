@@ -171,6 +171,11 @@
   padding: 0;
   cursor: pointer;
   font: inherit;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
 }
 .inspection-photo-placeholder.is-clickable:disabled {
   opacity: 0.5;
@@ -180,6 +185,19 @@
   font-weight: 300;
   color: #087b59;
   line-height: 1;
+}
+.photo-add-tile {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.photo-add-tile .inspection-photo-placeholder {
+  width: 100%;
+}
+.photo-add-tile__cam-label,
+.photo-add-tile__album {
+  display: none;
 }
 
 /* 仅巡检网格内铺满格子；勿影响行程报销页的 72px 方块 */

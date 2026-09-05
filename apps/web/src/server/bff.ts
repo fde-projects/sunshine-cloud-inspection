@@ -70,6 +70,7 @@ import { getFinanceDashboard, getFinanceVariance } from "./finance/dashboard";
 import { listPriceMappings, recalculate, recalculateLedgers, repriceByPoIds, savePriceMapping } from "./finance/price-mapping";
 import { DEFAULT_ASSESSMENT_SCORE_RULES } from "./finance/assessment-score-rule.catalog";
 import { ASSESSMENT_EVENT_CATALOG, rankRewardAmount } from "./finance/assessment-event.catalog";
+import { monthKeyShanghai } from "./finance/types";
 import {
   appointPrimary,
   createPlatformAccount,
@@ -407,6 +408,10 @@ async function dispatch(ctx: {
     if (m && method === "GET") return myCase(need(user), m.id);
   }
   if (path === "cases/expenses/pending" && method === "GET") return pendingExpenses(query);
+  if (path === "cases/expenses/export" && method === "POST") {
+    needAdmin(user);
+    return exportPendingExpenses(body);
+  }
   {
     const m = match(path, "cases/expenses/:id/approve");
     if (m && method === "POST") return reviewExpense(m.id, true, body, needAdmin(user));
@@ -603,6 +608,10 @@ async function dispatch(ctx: {
   }
 
   if (path === "review/pending" && method === "GET") return pendingReviews(query);
+  if (path === "review/export" && method === "POST") {
+    needAdmin(user);
+    return exportPendingReviews(body);
+  }
   {
     const m = match(path, "review/:id/amount-breakdown");
     if (m && method === "GET") return amountBreakdown(m.id);
@@ -640,8 +649,7 @@ async function dispatch(ctx: {
     const m = match(path, "assessments/events/:id");
     if (m && method === "DELETE") {
       needAdmin(user);
-      await adminGql(`mutation ($id: uuid!) { delete_assessment_events_by_pk(id: $id) { id } }`, { id: m.id });
-      return ok({ id: m.id });
+      return deleteEvent(m.id, query);
     }
     const rk = match(path, "assessments/:month/rank");
     if (rk && method === "POST") return rankAssessments(needFinanceMgr(user), rk.month, body);
@@ -3159,9 +3167,14 @@ async function saveExpense(user: AppUser, caseId: string, unitId: string | null,
   return ok(mapExpenseClaim(row));
 }
 
-async function pendingExpenses(query: URLSearchParams) {
-  const statusParam = String(query.get("status") || "pending").trim();
-  // 前端「待审核」传 pending；库内提交态为 submitted
+function expenseListWhere(params: {
+  status?: string;
+  keyword?: string;
+  dateFrom?: string;
+  dateTo?: string;
+  month?: string;
+}): Record<string, unknown> {
+  const statusParam = String(params.status || "pending").trim();
   const statusWhere =
     statusParam === "all"
       ? { _neq: "draft" }
@@ -3170,7 +3183,7 @@ async function pendingExpenses(query: URLSearchParams) {
         : { _eq: statusParam };
 
   const and: Record<string, unknown>[] = [{ status: statusWhere }];
-  const keyword = String(query.get("keyword") || "").trim();
+  const keyword = String(params.keyword || "").trim();
   if (keyword) {
     and.push({
       _or: [
@@ -3181,70 +3194,231 @@ async function pendingExpenses(query: URLSearchParams) {
       ],
     });
   }
-  const month = String(query.get("month") || "").trim();
-  if (month) and.push({ month: { _eq: month.slice(0, 7) } });
 
+  const dateFrom = String(params.dateFrom || "").trim();
+  const dateTo = String(params.dateTo || "").trim();
+  const dayRe = /^\d{4}-\d{2}-\d{2}$/;
+  if (dateFrom || dateTo) {
+    if (dateFrom && !dayRe.test(dateFrom)) throw new HttpError(400, "完工开始日期无效");
+    if (dateTo && !dayRe.test(dateTo)) throw new HttpError(400, "完工结束日期无效");
+    if (dateFrom && dateTo && dateFrom > dateTo) {
+      throw new HttpError(400, "完工开始日期不能晚于结束日期");
+    }
+    const finishRange: Record<string, string> = {};
+    if (dateFrom) finishRange._gte = `${dateFrom}T00:00:00+08:00`;
+    if (dateTo) finishRange._lte = `${dateTo}T23:59:59.999+08:00`;
+    and.push({ service_case: { finish_time: finishRange } });
+  } else {
+    const month = String(params.month || "").trim();
+    if (month) and.push({ month: { _eq: month.slice(0, 7) } });
+  }
+
+  return { _and: and };
+}
+
+function expenseTripMileageLabel(row: {
+  tripSkipped?: boolean;
+  lineItems?: unknown;
+  mileageKm?: unknown;
+  startMileage?: unknown;
+  endMileage?: unknown;
+}): string {
+  if (row.tripSkipped) return "无行程";
+  const trips = (Array.isArray(row.lineItems) ? row.lineItems : []).filter(
+    (l) => (l as { type?: string })?.type === "trip",
+  ) as Array<{
+    startMileage?: unknown;
+    endMileage?: unknown;
+    mileageKm?: unknown;
+  }>;
+  let filledTotal = 0;
+  let hasFilled = false;
+  let minStart: number | null = null;
+  let maxEnd: number | null = null;
+  for (const trip of trips) {
+    const startM = trip.startMileage != null && trip.startMileage !== "" ? Number(trip.startMileage) : NaN;
+    const endM = trip.endMileage != null && trip.endMileage !== "" ? Number(trip.endMileage) : NaN;
+    if (Number.isFinite(startM)) minStart = minStart == null ? startM : Math.min(minStart, startM);
+    if (Number.isFinite(endM)) maxEnd = maxEnd == null ? endM : Math.max(maxEnd, endM);
+    let km: number | null = null;
+    if (trip.mileageKm != null && trip.mileageKm !== "") {
+      const n = Number(trip.mileageKm);
+      if (Number.isFinite(n)) km = n;
+    } else if (Number.isFinite(startM) && Number.isFinite(endM)) {
+      km = endM - startM;
+    }
+    if (km != null) {
+      filledTotal += km;
+      hasFilled = true;
+    }
+  }
+  if (!trips.length) {
+    const startM = row.startMileage != null && row.startMileage !== "" ? Number(row.startMileage) : NaN;
+    const endM = row.endMileage != null && row.endMileage !== "" ? Number(row.endMileage) : NaN;
+    const km =
+      row.mileageKm != null && row.mileageKm !== ""
+        ? Number(row.mileageKm)
+        : Number.isFinite(startM) && Number.isFinite(endM)
+          ? endM - startM
+          : NaN;
+    if (Number.isFinite(km)) return `填写合计 ${km} km`;
+    return "";
+  }
+  const span =
+    minStart != null && maxEnd != null && Number.isFinite(minStart) && Number.isFinite(maxEnd)
+      ? maxEnd - minStart
+      : null;
+  if (hasFilled && span != null && Math.abs(span - filledTotal) > 0.01) {
+    return `填写合计 ${filledTotal} km / 跨度 ${span} km`;
+  }
+  if (hasFilled) return `填写合计 ${filledTotal} km`;
+  if (span != null) return `跨度 ${span} km`;
+  return trips.length ? `${trips.length}段行程` : "";
+}
+
+const EXPENSE_STATUS_LABEL: Record<string, string> = {
+  submitted: "待审核",
+  approved: "已通过",
+  rejected: "已驳回",
+  draft: "草稿",
+};
+
+async function loadExpenseReviewRows(params: {
+  status?: string;
+  keyword?: string;
+  dateFrom?: string;
+  dateTo?: string;
+  month?: string;
+  limit?: number;
+}) {
+  const where = expenseListWhere(params);
+  const limit = params.limit ?? 500;
   const d = await adminGql<{
     case_expense_claims: Array<Record<string, unknown>>;
   }>(
-    `query ($where: case_expense_claims_bool_exp!) {
-      case_expense_claims(where: $where, order_by: { created_at: desc }, limit: 500) {
+    `query ($where: case_expense_claims_bool_exp!, $limit: Int!) {
+      case_expense_claims(where: $where, order_by: { created_at: desc }, limit: $limit) {
         id service_case_id work_unit_id inspector_id amount claim_amount
         line_items voucher_urls trip_skipped note status month review_note review_at created_at
         inspector { id real_name }
         service_case {
-          id gsp_case_no project_name unit_label completed_units
+          id gsp_case_no project_name unit_label completed_units finish_time
           case_work_units { id status inspector_id }
           case_expense_claims { id claim_amount amount status }
         }
       }
     }`,
-    { where: { _and: and } },
+    { where, limit },
   );
 
-  return ok(
-    d.case_expense_claims.map((r) => {
-      const sc = (r.service_case || {}) as {
-        id?: string;
-        gsp_case_no?: string;
-        project_name?: string;
-        unit_label?: string;
-        completed_units?: number;
-        case_work_units?: Array<{ status?: string; inspector_id?: string }>;
-        case_expense_claims?: Array<{
-          claim_amount?: unknown;
-          amount?: unknown;
-          status?: string;
-        }>;
-      };
-      const inspectorId = String(r.inspector_id || "");
-      const units = sc.case_work_units || [];
-      const completedUnits = units.filter(
-        (u) =>
-          u.inspector_id === inspectorId &&
-          (u.status === "completed" || u.status === "submitted"),
-      ).length;
-      const caseExpenseTotal = (sc.case_expense_claims || [])
-        .filter((e) => ["submitted", "approved", "rejected"].includes(String(e.status)))
-        .reduce((s, e) => s + Number(e.claim_amount ?? e.amount ?? 0), 0);
-      const lineItems = Array.isArray(r.line_items) ? r.line_items : [];
-      const mapped = mapExpenseClaim(r);
-      return {
-        ...mapped,
-        serviceCaseId: String(r.service_case_id),
-        gspCaseNo: sc.gsp_case_no,
-        projectName: sc.project_name,
-        unitLabel: sc.unit_label || "台",
-        completedUnits,
-        inspectorName: (r.inspector as { real_name?: string } | null)?.real_name,
-        caseExpenseTotal: money(caseExpenseTotal),
-        month: (r.month as string) || null,
-        reviewAt: (r.review_at as string) || null,
-        createdAt: (r.created_at as string) || null,
-        lineItems,
-      };
-    }),
-  );
+  return d.case_expense_claims.map((r) => {
+    const sc = (r.service_case || {}) as {
+      id?: string;
+      gsp_case_no?: string;
+      project_name?: string;
+      unit_label?: string;
+      completed_units?: number;
+      finish_time?: string | null;
+      case_work_units?: Array<{ status?: string; inspector_id?: string }>;
+      case_expense_claims?: Array<{
+        claim_amount?: unknown;
+        amount?: unknown;
+        status?: string;
+      }>;
+    };
+    const inspectorId = String(r.inspector_id || "");
+    const units = sc.case_work_units || [];
+    const completedUnits = units.filter(
+      (u) =>
+        u.inspector_id === inspectorId &&
+        (u.status === "completed" || u.status === "submitted"),
+    ).length;
+    const caseExpenseTotal = (sc.case_expense_claims || [])
+      .filter((e) => ["submitted", "approved", "rejected"].includes(String(e.status)))
+      .reduce((s, e) => s + Number(e.claim_amount ?? e.amount ?? 0), 0);
+    const lineItems = Array.isArray(r.line_items) ? r.line_items : [];
+    const mapped = mapExpenseClaim(r);
+    return {
+      ...mapped,
+      serviceCaseId: String(r.service_case_id),
+      gspCaseNo: sc.gsp_case_no,
+      projectName: sc.project_name,
+      unitLabel: sc.unit_label || "台",
+      completedUnits,
+      finishTime: sc.finish_time || null,
+      inspectorName: (r.inspector as { real_name?: string } | null)?.real_name,
+      caseExpenseTotal: money(caseExpenseTotal),
+      month: (r.month as string) || null,
+      reviewAt: (r.review_at as string) || null,
+      createdAt: (r.created_at as string) || null,
+      lineItems,
+    };
+  });
+}
+
+async function pendingExpenses(query: URLSearchParams) {
+  const rows = await loadExpenseReviewRows({
+    status: query.get("status") || undefined,
+    keyword: query.get("keyword") || undefined,
+    dateFrom: query.get("dateFrom") || undefined,
+    dateTo: query.get("dateTo") || undefined,
+    month: query.get("month") || undefined,
+    limit: 500,
+  });
+  return ok(rows);
+}
+
+async function exportPendingExpenses(body: Record<string, unknown>) {
+  const rows = await loadExpenseReviewRows({
+    status: String(body.status || "all"),
+    keyword: body.keyword != null ? String(body.keyword) : undefined,
+    dateFrom: body.dateFrom != null ? String(body.dateFrom) : undefined,
+    dateTo: body.dateTo != null ? String(body.dateTo) : undefined,
+    month: body.month != null ? String(body.month) : undefined,
+    limit: 5000,
+  });
+  if (!rows.length) throw new HttpError(400, "没有可导出的行程报销记录");
+
+  const ExcelJS = (await import("exceljs")).default;
+  const workbook = new ExcelJS.Workbook();
+  const sheet = workbook.addWorksheet("行程报销");
+  sheet.columns = [
+    { header: "案例号", key: "gsp", width: 18 },
+    { header: "项目", key: "name", width: 28 },
+    { header: "完成台数", key: "units", width: 10 },
+    { header: "工程师", key: "inspector", width: 14 },
+    { header: "行程", key: "trip", width: 12 },
+    { header: "申报金额", key: "claim", width: 12 },
+    { header: "核定金额", key: "amount", width: 12 },
+    { header: "案例合计", key: "caseTotal", width: 12 },
+    { header: "填写合计/跨度", key: "mileage", width: 28 },
+    { header: "状态", key: "status", width: 10 },
+    { header: "完工时间", key: "finish", width: 20 },
+    { header: "说明", key: "note", width: 24 },
+    { header: "审核意见", key: "reviewNote", width: 24 },
+  ];
+
+  for (const row of rows) {
+    const status = String(row.status || "");
+    sheet.addRow({
+      gsp: row.gspCaseNo || "",
+      name: row.projectName || "",
+      units: Number(row.completedUnits || 0),
+      inspector: row.inspectorName || row.inspectorId || "",
+      trip: row.tripSkipped ? "无行程" : "有行程",
+      claim: Number(row.claimAmount ?? row.amount ?? 0),
+      amount: status === "approved" ? Number(row.amount || 0) : Number(row.claimAmount ?? row.amount ?? 0),
+      caseTotal: Number(row.caseExpenseTotal || 0),
+      mileage: expenseTripMileageLabel(row),
+      status: EXPENSE_STATUS_LABEL[status] || status,
+      finish: row.finishTime ? String(row.finishTime).replace("T", " ").slice(0, 19) : "",
+      note: row.note || "",
+      reviewNote: row.reviewNote || "",
+    });
+  }
+  sheet.getRow(1).font = { bold: true };
+  const buffer = Buffer.from(await workbook.xlsx.writeBuffer());
+  return xlsxResponse(`行程报销导出-${new Date().toISOString().slice(0, 10)}.xlsx`, buffer);
 }
 
 async function reviewExpense(id: string, pass: boolean, body: Record<string, unknown>, user: AppUser) {
@@ -4522,11 +4696,62 @@ async function savePrice(_user: AppUser, id: string | null, body: Record<string,
   return ok({ ...body, id: savedId, applied });
 }
 
-async function pendingReviews(query: URLSearchParams) {
-  const reviewStatus = query.get("reviewStatus") || "pending";
-  const keyword = (query.get("keyword") || "").trim();
-  const siteId = (query.get("siteId") || "").trim();
-  const month = (query.get("month") || "").trim(); // YYYY-MM，按完工时间过滤
+function reviewFinishTimeFilter(params: {
+  dateFrom?: string;
+  dateTo?: string;
+  month?: string;
+}): Record<string, unknown> | null {
+  const dateFrom = (params.dateFrom || "").trim();
+  const dateTo = (params.dateTo || "").trim();
+  const month = (params.month || "").trim();
+  const dayRe = /^\d{4}-\d{2}-\d{2}$/;
+  const monthRe = /^\d{4}-\d{2}$/;
+
+  if (dateFrom || dateTo) {
+    if (dateFrom && !dayRe.test(dateFrom)) throw new HttpError(400, "完工开始日期无效");
+    if (dateTo && !dayRe.test(dateTo)) throw new HttpError(400, "完工结束日期无效");
+    if (dateFrom && dateTo && dateFrom > dateTo) {
+      throw new HttpError(400, "完工开始日期不能晚于结束日期");
+    }
+    const range: Record<string, string> = {};
+    if (dateFrom) range._gte = `${dateFrom}T00:00:00+08:00`;
+    if (dateTo) range._lte = `${dateTo}T23:59:59.999+08:00`;
+    return { finish_time: range };
+  }
+
+  if (month && monthRe.test(month)) {
+    const [yy, mm] = month.split("-").map(Number);
+    const from = `${month}-01T00:00:00+08:00`;
+    const to =
+      mm === 12
+        ? `${yy + 1}-01-01T00:00:00+08:00`
+        : `${yy}-${String(mm + 1).padStart(2, "0")}-01T00:00:00+08:00`;
+    return { finish_time: { _gte: from, _lt: to } };
+  }
+
+  if (month && dayRe.test(month)) {
+    return {
+      finish_time: {
+        _gte: `${month}T00:00:00+08:00`,
+        _lte: `${month}T23:59:59.999+08:00`,
+      },
+    };
+  }
+
+  return null;
+}
+
+function reviewListWhere(params: {
+  reviewStatus?: string;
+  keyword?: string;
+  siteId?: string;
+  dateFrom?: string;
+  dateTo?: string;
+  month?: string;
+}): Record<string, unknown> {
+  const reviewStatus = params.reviewStatus || "pending";
+  const keyword = (params.keyword || "").trim();
+  const siteId = (params.siteId || "").trim();
   const and: Record<string, unknown>[] = [];
 
   if (reviewStatus === "pending") {
@@ -4552,15 +4777,8 @@ async function pendingReviews(query: URLSearchParams) {
   }
 
   if (siteId) and.push({ site_id: { _eq: siteId } });
-  if (month && /^\d{4}-\d{2}$/.test(month)) {
-    const [yy, mm] = month.split("-").map(Number);
-    const from = `${month}-01T00:00:00+08:00`;
-    const to =
-      mm === 12
-        ? `${yy + 1}-01-01T00:00:00+08:00`
-        : `${yy}-${String(mm + 1).padStart(2, "0")}-01T00:00:00+08:00`;
-    and.push({ finish_time: { _gte: from, _lt: to } });
-  }
+  const finishFilter = reviewFinishTimeFilter(params);
+  if (finishFilter) and.push(finishFilter);
   if (keyword) {
     and.push({
       _or: [
@@ -4570,12 +4788,30 @@ async function pendingReviews(query: URLSearchParams) {
       ],
     });
   }
+  return and.length ? { _and: and } : {};
+}
+
+const REVIEW_STATUS_LABEL: Record<string, string> = {
+  pending: "待审核",
+  approved: "已通过",
+  rejected: "已驳回",
+};
+
+async function pendingReviews(query: URLSearchParams) {
+  const where = reviewListWhere({
+    reviewStatus: query.get("reviewStatus") || undefined,
+    keyword: query.get("keyword") || undefined,
+    siteId: query.get("siteId") || undefined,
+    dateFrom: query.get("dateFrom") || undefined,
+    dateTo: query.get("dateTo") || undefined,
+    month: query.get("month") || undefined,
+  });
 
   const d = await adminGql<{ service_cases: Record<string, unknown>[] }>(
     `query ($where: service_cases_bool_exp!) {
       service_cases(where: $where, order_by: { updated_at: desc }, limit: 200) { ${CASE_FIELDS} }
     }`,
-    { where: and.length ? { _and: and } : {} },
+    { where },
   );
   return ok(
     d.service_cases.map((c) => ({
@@ -4583,6 +4819,65 @@ async function pendingReviews(query: URLSearchParams) {
       overdue: false,
     })),
   );
+}
+
+async function exportPendingReviews(body: Record<string, unknown>) {
+  const where = reviewListWhere({
+    reviewStatus: String(body.reviewStatus || "all"),
+    keyword: body.keyword != null ? String(body.keyword) : undefined,
+    siteId: body.siteId != null ? String(body.siteId) : undefined,
+    dateFrom: body.dateFrom != null ? String(body.dateFrom) : undefined,
+    dateTo: body.dateTo != null ? String(body.dateTo) : undefined,
+    month: body.month != null ? String(body.month) : undefined,
+  });
+
+  const d = await adminGql<{ service_cases: Record<string, unknown>[] }>(
+    `query ($where: service_cases_bool_exp!) {
+      service_cases(where: $where, order_by: { updated_at: desc }, limit: 5000) { ${CASE_FIELDS} }
+    }`,
+    { where },
+  );
+  if (!d.service_cases.length) throw new HttpError(400, "没有可导出的结算审核记录");
+
+  const ExcelJS = (await import("exceljs")).default;
+  const workbook = new ExcelJS.Workbook();
+  const sheet = workbook.addWorksheet("结算审核");
+  sheet.columns = [
+    { header: "案例号", key: "gsp", width: 18 },
+    { header: "项目", key: "name", width: 36 },
+    { header: "工程师", key: "inspector", width: 16 },
+    { header: "审核状态", key: "review", width: 12 },
+    { header: "完工时间", key: "finish", width: 20 },
+    { header: "案例收入", key: "revenue", width: 12 },
+    { header: "计件绩效", key: "perf", width: 12 },
+    { header: "事件扣罚", key: "penalty", width: 12 },
+    { header: "核定绩效", key: "final", width: 12 },
+    { header: "完成台数", key: "units", width: 10 },
+    { header: "网格", key: "site", width: 16 },
+    { header: "审核意见", key: "comment", width: 28 },
+  ];
+
+  for (const raw of d.service_cases) {
+    const row = mapCase(raw) as Record<string, unknown>;
+    const status = String(row.reviewStatus || "pending");
+    sheet.addRow({
+      gsp: row.gspCaseNo || "",
+      name: row.projectName || "",
+      inspector: row.inspectorName || "",
+      review: REVIEW_STATUS_LABEL[status] || status,
+      finish: row.finishTime ? String(row.finishTime).replace("T", " ").slice(0, 19) : "",
+      revenue: Number(row.caseRevenue || 0),
+      perf: Number(row.perfBase || 0),
+      penalty: Number(row.eventPenalty || 0),
+      final: Number(row.perfFinal || 0),
+      units: Number(row.completedUnits || 0),
+      site: row.siteName || "",
+      comment: row.reviewComment || "",
+    });
+  }
+  sheet.getRow(1).font = { bold: true };
+  const buffer = Buffer.from(await workbook.xlsx.writeBuffer());
+  return xlsxResponse(`结算审核导出-${new Date().toISOString().slice(0, 10)}.xlsx`, buffer);
 }
 
 async function amountBreakdown(caseId: string) {
@@ -5193,13 +5488,19 @@ async function eventCatalog() {
 
 async function listEvents(query: URLSearchParams) {
   const where: Record<string, unknown> = {};
-  if (query.get("month")) where.month = { _eq: query.get("month") };
-  if (query.get("userId")) where.user_id = { _eq: query.get("userId") };
+  const and: Record<string, unknown>[] = [];
+  if (query.get("month")) and.push({ month: { _eq: query.get("month") } });
+  if (query.get("userId")) and.push({ user_id: { _eq: query.get("userId") } });
+  const serviceCaseId = (query.get("serviceCaseId") || "").trim();
+  if (serviceCaseId) and.push({ service_case_id: { _eq: serviceCaseId } });
+  if (and.length) where._and = and;
+
   const d = await adminGql<{ assessment_events: Record<string, unknown>[] }>(
     `query ($where: assessment_events_bool_exp!) {
       assessment_events(where: $where, order_by: { created_at: desc }) {
         id user_id service_case_id month category content unit qty unit_amount amount remark created_at
         user { real_name }
+        service_case { id gsp_case_no }
       }
     }`,
     { where },
@@ -5211,6 +5512,7 @@ async function listEvents(query: URLSearchParams) {
       userId: r.user_id,
       userName: (r.user as { real_name?: string } | null)?.real_name,
       serviceCaseId: r.service_case_id,
+      gspCaseNo: (r.service_case as { gsp_case_no?: string } | null)?.gsp_case_no || null,
       category: r.category,
       content: r.content,
       unit: r.unit,
@@ -5225,6 +5527,9 @@ async function listEvents(query: URLSearchParams) {
 async function createEvent(user: AppUser, body: Record<string, unknown>) {
   const catalog = ASSESSMENT_EVENT_CATALOG.find((item) => item.id === String(body.catalogId || ""));
   if (!catalog) throw new HttpError(400, "考核细则不存在");
+  const userId = String(body.userId || "").trim();
+  if (!userId) throw new HttpError(400, "请选择扣罚对象");
+
   const qty = Number(body.qty ?? 1);
   let amount = body.amount == null ? null : Number(body.amount);
   if (catalog.unitAmount == null) {
@@ -5232,13 +5537,56 @@ async function createEvent(user: AppUser, body: Record<string, unknown>) {
   } else {
     amount = Math.round(catalog.unitAmount * qty * 100) / 100;
   }
+
+  const serviceCaseId = String(body.serviceCaseId || "").trim() || null;
+  let month = String(body.month || "").trim();
+
+  if (serviceCaseId) {
+    const caseRow = await adminGql<{
+      service_cases_by_pk: { id: string; finish_time?: string | null } | null;
+    }>(
+      `query ($id: uuid!) { service_cases_by_pk(id: $id) { id finish_time } }`,
+      { id: serviceCaseId },
+    );
+    if (!caseRow.service_cases_by_pk) throw new HttpError(404, "案例不存在");
+    month = monthKeyShanghai(caseRow.service_cases_by_pk.finish_time || new Date());
+  } else if (!/^\d{4}-\d{2}$/.test(month)) {
+    throw new HttpError(400, "请指定归属月份");
+  }
+
+  const dupWhere: Record<string, unknown> = {
+    _and: [
+      { user_id: { _eq: userId } },
+      { month: { _eq: month } },
+      { category: { _eq: catalog.category } },
+      { content: { _eq: catalog.content } },
+      serviceCaseId
+        ? { service_case_id: { _eq: serviceCaseId } }
+        : { service_case_id: { _is_null: true } },
+    ],
+  };
+  const dup = await adminGql<{ assessment_events: { id: string }[] }>(
+    `query ($where: assessment_events_bool_exp!) {
+      assessment_events(where: $where, limit: 1) { id }
+    }`,
+    { where: dupWhere },
+  );
+  if (dup.assessment_events[0]) {
+    throw new HttpError(
+      400,
+      serviceCaseId
+        ? "该细则已在本案例登记过，请勿重复登记"
+        : "该细则已在本月补录过，请勿重复登记；若需挂案例请到结算审核登记",
+    );
+  }
+
   const d = await adminGql<{ insert_assessment_events_one: { id: string } }>(
     `mutation ($obj: assessment_events_insert_input!) { insert_assessment_events_one(object: $obj) { id } }`,
     {
       obj: {
-        user_id: body.userId,
-        service_case_id: body.serviceCaseId || null,
-        month: body.month,
+        user_id: userId,
+        service_case_id: serviceCaseId,
+        month,
         category: catalog.category,
         content: catalog.content,
         unit: catalog.unit,
@@ -5250,9 +5598,35 @@ async function createEvent(user: AppUser, body: Record<string, unknown>) {
       },
     },
   );
-  const month = String(body.month || "");
-  if (month) await syncMonthlySettlements(month).catch(() => null);
-  return ok({ id: d.insert_assessment_events_one.id });
+  await syncMonthlySettlements(month).catch(() => null);
+  return ok({ id: d.insert_assessment_events_one.id, month });
+}
+
+async function deleteEvent(id: string, query: URLSearchParams) {
+  const existing = await adminGql<{
+    assessment_events_by_pk: {
+      id: string;
+      month: string;
+      service_case_id?: string | null;
+    } | null;
+  }>(
+    `query ($id: uuid!) {
+      assessment_events_by_pk(id: $id) { id month service_case_id }
+    }`,
+    { id },
+  );
+  const row = existing.assessment_events_by_pk;
+  if (!row) throw new HttpError(404, "事件扣罚不存在");
+
+  // 考核管理补录入口：不允许删挂案例的记录（须回结算审核删）
+  const scope = (query.get("scope") || "").trim();
+  if (scope === "monthly" && row.service_case_id) {
+    throw new HttpError(400, "案例关联的扣罚请到结算审核删除，考核管理仅可删月度补录");
+  }
+
+  await adminGql(`mutation ($id: uuid!) { delete_assessment_events_by_pk(id: $id) { id } }`, { id });
+  if (row.month) await syncMonthlySettlements(row.month).catch(() => null);
+  return ok({ id });
 }
 
 type ScoredAssessmentRow = {

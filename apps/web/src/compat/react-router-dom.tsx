@@ -13,12 +13,24 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useState,
   type ReactNode,
 } from "react";
+import { setMobilePendingPath } from "@/m/nav/mobilePendingPath";
+import { matchMobileClientRoute } from "@/m/nav/mobileClientRoutes";
 
 type NavOpts = { replace?: boolean; state?: unknown };
 
 const LocationStateContext = createContext<unknown>(undefined);
+
+function markOptimisticMobilePath(to: string) {
+  const path = to.split("?")[0].split("#")[0];
+  if (!path.startsWith("/m") || path.startsWith("/m/login")) return;
+  // 动态路由依赖 Next useParams，需等真实 pathname；静态二级页可立刻切壳
+  const route = matchMobileClientRoute(path);
+  if (route && !route.keep) return;
+  setMobilePendingPath(path);
+}
 
 export function useNavigate() {
   const router = useRouter();
@@ -35,6 +47,8 @@ export function useNavigate() {
           /* ignore */
         }
       }
+      // 先切壳再等 Next，避免整页「加载中」
+      markOptimisticMobilePath(to);
       if (opts?.replace) router.replace(to);
       else router.push(to);
     },
@@ -47,15 +61,19 @@ export function useLocation() {
   const searchParams = useNextSearchParams() ?? new URLSearchParams();
   const search = searchParams.toString();
   const ctxState = useContext(LocationStateContext);
-  let state = ctxState;
-  if (state === undefined && typeof window !== "undefined") {
+  const [storedState, setStoredState] = useState<unknown>(null);
+
+  useEffect(() => {
+    if (ctxState !== undefined) return;
     try {
       const raw = sessionStorage.getItem("rr-location-state");
-      state = raw ? JSON.parse(raw) : null;
+      setStoredState(raw ? JSON.parse(raw) : null);
     } catch {
-      state = null;
+      setStoredState(null);
     }
-  }
+  }, [ctxState, pathname]);
+
+  const state = ctxState !== undefined ? ctxState : storedState;
   return {
     pathname,
     search: search ? `?${search}` : "",
@@ -118,6 +136,7 @@ export function Link({
 export function Navigate({ to, replace }: { to: string; replace?: boolean }) {
   const router = useRouter();
   useEffect(() => {
+    markOptimisticMobilePath(to);
     if (replace) router.replace(to);
     else router.push(to);
   }, [to, replace, router]);

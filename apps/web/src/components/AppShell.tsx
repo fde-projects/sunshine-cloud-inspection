@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useTransition } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { Layout, Menu, Dropdown, Avatar, Drawer, Button, Grid } from "antd";
 import type { MenuProps } from "antd";
@@ -22,6 +22,7 @@ import {
   MenuFoldOutlined,
   MenuUnfoldOutlined,
   AccountBookOutlined,
+  QuestionCircleOutlined,
 } from "@ant-design/icons";
 import { useAuthStore } from "@/stores/auth";
 import { brandMarkText, useBrandingStore } from "@/stores/branding";
@@ -48,6 +49,7 @@ const iconMap: Record<string, React.ReactNode> = {
   SafetyCertificateOutlined: <SafetyCertificateOutlined />,
   SettingOutlined: <SettingOutlined />,
   AccountBookOutlined: <AccountBookOutlined />,
+  QuestionCircleOutlined: <QuestionCircleOutlined />,
 };
 
 const roleLabel: Record<string, string> = {
@@ -86,6 +88,8 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   const [openKeys, setOpenKeys] = useState<string[]>([]);
   const [mounted, setMounted] = useState(false);
   const [shellReady, setShellReady] = useState(false);
+  const [pendingPath, setPendingPath] = useState<string | null>(null);
+  const [, startNavTransition] = useTransition();
   const router = useRouter();
   const pathname = usePathname() || "";
   const { user, logout, hydrated } = useAuthStore();
@@ -101,12 +105,34 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   const leafMenus = useMemo(() => flattenMenus(menuTree), [menuTree]);
   const menus = useMemo(() => toMenuItems(menuTree), [menuTree]);
 
-  const selectedKeys = useMemo(() => {
+  const pathSelectedKeys = useMemo(() => {
     const match = leafMenus
       .filter((m) => pathname === m.path || pathname.startsWith(`${m.path}/`))
       .sort((a, b) => b.path.length - a.path.length)[0];
     return match ? [match.path] : [];
   }, [pathname, leafMenus]);
+
+  // 点击后立刻高亮目标菜单，不等路由/chunk 加载完
+  const selectedKeys = pendingPath ? [pendingPath] : pathSelectedKeys;
+
+  useEffect(() => {
+    if (!pendingPath) return;
+    if (pathname === pendingPath || pathname.startsWith(`${pendingPath}/`)) {
+      setPendingPath(null);
+    }
+  }, [pathname, pendingPath]);
+
+  // 预取叶子路由，减轻首次切换卡顿
+  useEffect(() => {
+    if (!hydrated || !user) return;
+    leafMenus.slice(0, 12).forEach((m) => {
+      try {
+        router.prefetch(m.path);
+      } catch {
+        /* ignore */
+      }
+    });
+  }, [hydrated, user, leafMenus, router]);
 
   const currentTitle = useMemo(() => {
     const leaf = leafMenus.find((m) => selectedKeys.includes(m.path));
@@ -141,6 +167,20 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     router.replace("/login");
   };
 
+  const navigateTo = (path: string) => {
+    if (!path.startsWith("/")) return;
+    if (pathname === path) {
+      setPendingPath(null);
+      setMobileMenuOpen(false);
+      return;
+    }
+    setPendingPath(path);
+    setMobileMenuOpen(false);
+    startNavTransition(() => {
+      router.push(path);
+    });
+  };
+
   const ready = Boolean(hydrated && user && shellReady);
 
   const menuNode = (
@@ -169,12 +209,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         openKeys={collapsed && !isMobile ? [] : openKeys}
         onOpenChange={(keys) => setOpenKeys(keys as string[])}
         items={menus}
-        onClick={({ key }) => {
-          if (String(key).startsWith("/")) {
-            router.push(key);
-            setMobileMenuOpen(false);
-          }
-        }}
+        onClick={({ key }) => navigateTo(String(key))}
       />
     </>
   );
@@ -225,7 +260,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
                           key: "switch-role",
                           icon: <TeamOutlined />,
                           label: "切换入口",
-                          onClick: () => router.push("/"),
+                          onClick: () => navigateTo("/"),
                         },
                       ]
                     : []),
@@ -233,7 +268,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
                     key: "settings",
                     icon: <SettingOutlined />,
                     label: "系统设置",
-                    onClick: () => router.push("/settings"),
+                    onClick: () => navigateTo("/settings"),
                   },
                   {
                     key: "logout",

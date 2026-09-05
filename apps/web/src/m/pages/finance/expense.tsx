@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { Loading, Toast, ActionSheet, DatetimePicker } from '@/m/lib/react-vant';
+import { Toast, DatetimePicker } from '@/m/lib/react-vant';
 import {
   completeFinanceUnit,
   fetchMyFinanceCase,
@@ -328,10 +328,8 @@ export default function FinanceExpensePage() {
   const navigate = useNavigate();
   const userId = useAuthStore((s) => s.user?.id);
   const fileRef = useRef<HTMLInputElement>(null);
-  const cameraRef = useRef<HTMLInputElement>(null);
   const [pickTarget, setPickTarget] = useState<string | null>(null);
   const [pickMulti, setPickMulti] = useState(false);
-  const [pickSheetOpen, setPickSheetOpen] = useState(false);
 
   const [item, setItem] = useState<MobileFinanceCase>();
   const [loading, setLoading] = useState(true);
@@ -521,19 +519,14 @@ export default function FinanceExpensePage() {
     setEditingId((cur) => (cur === lineId ? null : cur));
   };
 
+  /** 直接打开系统选择器（相机/相册由系统分流），须在点击栈内同步 click */
   const openPick = (target: string, multi = false) => {
     if (readonly || uploading) return;
     setPickTarget(target);
     setPickMulti(multi);
-    setPickSheetOpen(true);
-  };
-
-  const runFilePick = (mode: 'camera' | 'gallery') => {
-    const multi = pickMulti && mode === 'gallery';
-    const input = mode === 'camera' ? cameraRef.current : fileRef.current;
+    const input = fileRef.current;
     if (!input) return;
     input.multiple = multi;
-    // 必须在同一用户点击栈内同步 click；ActionSheet.onSelect 自带 setTimeout，不可依赖
     input.value = '';
     input.click();
   };
@@ -661,9 +654,6 @@ export default function FinanceExpensePage() {
       if (fileRef.current) {
         fileRef.current.value = '';
         fileRef.current.multiple = false;
-      }
-      if (cameraRef.current) {
-        cameraRef.current.value = '';
       }
     }
   };
@@ -830,7 +820,18 @@ export default function FinanceExpensePage() {
   if (loading) {
     return (
       <div className="mobile-finance-page">
-        <Loading vertical>加载中...</Loading>
+        <header className="mobile-finance-head">
+          <button type="button" onClick={() => navigate(`/m/finance-cases/${id}`)}>
+            ← 返回
+          </button>
+          <h1>费用明细</h1>
+        </header>
+        <div className="mobile-list-skeleton" style={{ padding: '12px 16px' }} aria-busy>
+          <i />
+          <i />
+          <i />
+          <i />
+        </div>
       </div>
     );
   }
@@ -1349,32 +1350,6 @@ export default function FinanceExpensePage() {
         accept="image/*"
         className="exp-file-input"
         onChange={(e) => void onPick(e.target.files)}
-      />
-      <input
-        ref={cameraRef}
-        type="file"
-        accept="image/*"
-        capture="environment"
-        className="exp-file-input"
-        onChange={(e) => void onPick(e.target.files)}
-      />
-
-      <ActionSheet
-        visible={pickSheetOpen}
-        closeOnClickAction
-        onCancel={() => setPickSheetOpen(false)}
-        cancelText="取消"
-        actions={[
-          {
-            name: '拍照',
-            callback: () => runFilePick('camera'),
-          },
-          {
-            name: pickMulti ? '从相册选择（可多选）' : '从相册选择',
-            callback: () => runFilePick('gallery'),
-          },
-        ]}
-        onSelect={() => setPickSheetOpen(false)}
       />
 
       {viewer && (

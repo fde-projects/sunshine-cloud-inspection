@@ -12,7 +12,6 @@ import {
   Dialog,
   Input,
   Tag,
-  ActionSheet,
 } from '@/m/lib/react-vant';
 import { fetchTask, startTask, type TaskItem } from '../../api/task';
 import {
@@ -38,6 +37,7 @@ import { displayPhotoUrl } from '../../utils/photo-url';
 import { chineseErrorMessage } from '../../utils/displayLabels';
 import { resolveWorkTypeLabel, workActionLabel } from '../../utils/workTypeLabels';
 import PhotoViewerOverlay from '../../components/PhotoViewerOverlay';
+import PhotoAddTile from '../../components/PhotoAddTile';
 import {
   emptyTripForm,
   type TripFormState,
@@ -243,7 +243,6 @@ export default function InspectionPage() {
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [uploadSource, setUploadSource] = useState<'camera' | 'gallery' | null>(null);
-  const [pickSheetOpen, setPickSheetOpen] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [uploadNotice, setUploadNotice] = useState('');
   const [pendingPreview, setPendingPreview] = useState('');
@@ -258,8 +257,7 @@ export default function InspectionPage() {
     null,
   );
   const [locationError, setLocationError] = useState('正在获取现场定位…');
-  const cameraRef = useRef<HTMLInputElement>(null);
-  const galleryRef = useRef<HTMLInputElement>(null);
+  const [httpInsecure, setHttpInsecure] = useState(false);
   const stepStripRef = useRef<HTMLDivElement>(null);
   const activeStepRef = useRef<HTMLButtonElement>(null);
   const serialStepRef = useRef<SerialStepHandle>(null);
@@ -276,6 +274,10 @@ export default function InspectionPage() {
   const rejectJumpedRef = useRef(false);
   /** 正在 AI 分析的条目，不阻塞其他条目 */
   const [analyzingIds, setAnalyzingIds] = useState<string[]>([]);
+
+  useEffect(() => {
+    setHttpInsecure(!window.isSecureContext);
+  }, []);
 
   const verifyLocation = useCallback(async () => {
     if (!taskId) throw new Error('缺少作业');
@@ -988,10 +990,6 @@ export default function InspectionPage() {
     }
   };
 
-  const handleCapture = async (file: File, source: 'camera' | 'gallery') => {
-    await handleCaptureFiles([file], source);
-  };
-
   /** 必检项：拍照须有图；文本须有文字 */
   const requiredIncomplete = () => {
     if (!record) return [] as string[];
@@ -1198,10 +1196,18 @@ export default function InspectionPage() {
           </button>
         </div>
       ) : !task || !record ? (
-        <div className="inspection-load-state is-loading">
-          <div className="inspection-loading-ring" />
-          <h2>正在准备{workActionLabel(workType, 'task_noun')}</h2>
-          <p>正在同步检查项和已上传照片…</p>
+        <div className="inspection-body" aria-busy="true" aria-label="正在加载作业">
+          <div className="mobile-summary-skeleton" style={{ margin: '12px 0' }}>
+            <i />
+            <i />
+            <i />
+          </div>
+          <div className="mobile-list-skeleton">
+            <i />
+            <i />
+            <i />
+            <i />
+          </div>
         </div>
       ) : (
         <div className="inspection-body">
@@ -1344,7 +1350,7 @@ export default function InspectionPage() {
             )}
             <div style={{ marginTop: 10, color: '#7b8983', fontSize: 11, lineHeight: 1.5 }}>
               {locationStatus === 'failed' || locationStatus === 'skipped'
-                ? typeof window !== 'undefined' && !window.isSecureContext
+                ? httpInsecure
                   ? '要用真实定位，需要 HTTPS 公网地址。现在用局域网 HTTP 测功能，点「无法定位，继续作业」即可。'
                   : '偏远无信号时仍可拍照上传并提交；报告会标记「位置异常」，供审核抽查。'
                 : locationStatus === 'weak'
@@ -1619,41 +1625,17 @@ export default function InspectionPage() {
                     </div>
                   )}
                   {!pendingPreview && (currentEntry?.photos || []).length < fieldPhotoQuota(currentTpl).max && (
-                    <button
-                      type="button"
-                      className="inspection-photo-placeholder is-clickable"
+                    <PhotoAddTile
                       disabled={uploading}
-                      aria-label="添加照片"
-                      onClick={() => setPickSheetOpen(true)}
-                    >
-                      <strong>{uploading ? '…' : '＋'}</strong>
-                    </button>
+                      multiple
+                      busyLabel={uploading ? '…' : undefined}
+                      onFiles={(files) => {
+                        setUploadSource('gallery');
+                        void handleCaptureFiles(files, 'gallery');
+                      }}
+                    />
                   )}
                 </div>
-                <input
-                  ref={cameraRef}
-                  type="file"
-                  accept="image/*"
-                  capture="environment"
-                  style={{ display: 'none' }}
-                  onChange={(e) => {
-                    const f = e.target.files?.[0];
-                    if (f) void handleCapture(f, 'camera');
-                    e.target.value = '';
-                  }}
-                />
-                <input
-                  ref={galleryRef}
-                  type="file"
-                  accept="image/*"
-                  multiple
-                  style={{ display: 'none' }}
-                  onChange={(e) => {
-                    const list = e.target.files ? Array.from(e.target.files) : [];
-                    if (list.length) void handleCaptureFiles(list, 'gallery');
-                    e.target.value = '';
-                  }}
-                />
                 {uploadNotice && (
                   <div
                     className="inspection-upload-notice"
@@ -1851,22 +1833,6 @@ export default function InspectionPage() {
           onClose={() => setPhotoPreview(null)}
         />
       )}
-      <ActionSheet
-        visible={pickSheetOpen}
-        onCancel={() => setPickSheetOpen(false)}
-        cancelText="取消"
-        actions={[
-          { name: '拍照' },
-          { name: '从相册选择（可多选）' },
-        ]}
-        onSelect={(action) => {
-          setPickSheetOpen(false);
-          setTimeout(() => {
-            if (action.name === '拍照') cameraRef.current?.click();
-            else galleryRef.current?.click();
-          }, 0);
-        }}
-      />
     </div>
   );
 }

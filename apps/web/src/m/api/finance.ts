@@ -1,4 +1,5 @@
 import request from '../utils/request';
+import { directUploadWithRetry } from '@/utils/direct-upload';
 import type { ApiResponse } from '../types';
 
 const unwrap = <T>(response: { data: ApiResponse<T> }) => response.data.data;
@@ -271,85 +272,13 @@ export async function startFinanceCase(id: string) {
 export async function saveFinanceCaseWork(id: string, payload: Record<string, unknown>) {
   return unwrap(await request.put<ApiResponse<CaseWorkRecord>>(`/cases/${id}/work-record`, payload));
 }
-/** 费用照片：优先浏览器直传对象存储（与巡检一致），失败再回退服务端代传。 */
+/** 费用照片：优先直传（前端重试）→ 失败再服务端代传。 */
 export async function uploadFinanceWorkPhoto(id: string, file: File) {
-  const contentType = file.type || 'image/jpeg';
-  try {
-    const { data } = await request.get<
-      ApiResponse<{
-        method?: 'POST' | 'PUT';
-        token?: string;
-        uploadUrl: string;
-        key: string;
-        publicUrl?: string;
-        domain?: string;
-        headers?: Record<string, string>;
-        contentType?: string;
-      }>
-    >('/upload/token', {
-      timeout: 10000,
-      params: { filename: file.name || 'photo.jpg', contentType },
-      skipErrorToast: true,
-    } as never);
-    const tok = data.data;
-    if (tok?.uploadUrl && tok.key) {
-      if (tok.method === 'PUT') {
-        const resp = await fetch(tok.uploadUrl, {
-          method: 'PUT',
-          headers: {
-            ...(tok.headers || {}),
-            'Content-Type': tok.contentType || contentType,
-          },
-          body: file,
-        });
-        if (!resp.ok) {
-          const text = await resp.text().catch(() => '');
-          throw new Error(`直传失败: ${resp.status} ${text}`);
-        }
-        return {
-          url: tok.publicUrl || `${(tok.domain || '').replace(/\/$/, '')}/${tok.key}`,
-        };
-      }
-      if (tok.token) {
-        const fd = new FormData();
-        fd.append('token', tok.token);
-        fd.append('key', tok.key);
-        fd.append('file', file);
-        const resp = await fetch(tok.uploadUrl, { method: 'POST', body: fd });
-        if (!resp.ok) {
-          const text = await resp.text().catch(() => '');
-          throw new Error(`直传失败: ${resp.status} ${text}`);
-        }
-        return {
-          url: tok.publicUrl || `${(tok.domain || '').replace(/\/$/, '')}/${tok.key}`,
-        };
-      }
-    }
-  } catch (directErr) {
-    console.warn('费用照片直传失败，回退服务端代传', directErr);
-  }
-
-  const form = new FormData();
-  form.append('file', file);
-  const postOnce = () =>
-    request.post<ApiResponse<{ url: string }>>(`/cases/${id}/work-photo`, form, {
-      headers: { 'Content-Type': 'multipart/form-data' },
-      timeout: 120000,
-      skipErrorToast: true,
-    } as never);
-  try {
-    return unwrap(await postOnce());
-  } catch (first) {
-    const status =
-      first && typeof first === 'object' && 'response' in first
-        ? (first as { response?: { status?: number } }).response?.status
-        : undefined;
-    if (status && status >= 500) {
-      await new Promise((r) => setTimeout(r, 800));
-      return unwrap(await postOnce());
-    }
-    throw first;
-  }
+  const result = await directUploadWithRetry(file, {
+    skipErrorToast: true,
+    serverFallbackPath: `/cases/${id}/work-photo`,
+  });
+  return { url: result.url };
 }
 export async function finishFinanceCase(id: string, opts?: { skipErrorToast?: boolean }) {
   const res = await request.post<ApiResponse<MobileFinanceCase>>(

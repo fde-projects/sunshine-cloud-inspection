@@ -181,7 +181,12 @@ export default function ReportPage() {
       />
 
       {loading && !record ? (
-        <Empty description="加载中..." />
+        <div className="mobile-list-skeleton" style={{ padding: '12px 16px' }} aria-busy aria-label="正在加载报告">
+          <i />
+          <i />
+          <i />
+          <i />
+        </div>
       ) : !record ? (
         <Empty description="报告不存在" />
       ) : (

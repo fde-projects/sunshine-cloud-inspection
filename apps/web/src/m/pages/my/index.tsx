@@ -1,7 +1,8 @@
 "use client";
 
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useRouter } from 'next/navigation';
 import { Cell, Button, Dialog, Empty } from '@/m/lib/react-vant';
 import { useAuthStore } from '../../stores/auth';
 import { canSwitchPortal, normalizeRoles } from '@/lib/portal';
@@ -9,6 +10,8 @@ import type { AppRole } from '@/lib/types';
 import { fetchInspectorSummary, type InspectorSummary } from '../../api/stats';
 import { mobileCacheKeys } from '../../utils/mobileCacheKeys';
 import { useCachedResource } from '../../utils/useCachedResource';
+import { prefetchMobileSecondaryAssets } from '../../utils/prefetchMobileTabs';
+import { prefetchMobileHref } from '../../hooks/useViewportPrefetch';
 import { isStandaloneDisplay, isIosDevice, isSecureInstallContext, tryNativeInstall } from '../../utils/addToHome';
 import AddToHomePrompt from '../../components/AddToHomePrompt';
 import './my.css';
@@ -16,8 +19,24 @@ import './my.css';
 /** 我的：头像、网格、统计、设置 */
 export default function MyPage() {
   const navigate = useNavigate();
+  const router = useRouter();
   const { user, currentSite, logout } = useAuthStore();
   const [showA2hs, setShowA2hs] = useState(false);
+  /** SSR 与首屏统一为 false，挂载后再判断是否展示「添加到桌面」 */
+  const [showInstallEntry, setShowInstallEntry] = useState(false);
+
+  useEffect(() => {
+    prefetchMobileSecondaryAssets(router);
+  }, [router]);
+
+  useEffect(() => {
+    setShowInstallEntry(!isStandaloneDisplay());
+  }, []);
+
+  const go = (href: string) => {
+    prefetchMobileHref(router, href);
+    navigate(href);
+  };
 
   const loader = useCallback(
     () => fetchInspectorSummary(currentSite?.id),
@@ -59,12 +78,14 @@ export default function MyPage() {
 
       <div className="my-body">
         <Cell.Group inset>
-          <Cell
-            title="当前网格"
-            value={currentSite?.name || '未选择'}
-            isLink
-            onClick={() => navigate('/m/sites')}
-          />
+          <div data-prefetch="/m/sites">
+            <Cell
+              title="当前网格"
+              value={currentSite?.name || '未选择'}
+              isLink
+              onClick={() => go('/m/sites')}
+            />
+          </div>
         </Cell.Group>
 
         <div className="my-stats-card">
@@ -81,15 +102,15 @@ export default function MyPage() {
             </button>
           ) : month ? (
             <div className="my-stats-grid">
-              <button type="button" onClick={() => navigate('/m/tasks')}>
+              <button type="button" data-prefetch="/m/tasks" onClick={() => go('/m/tasks')}>
                 <b>{month.total ?? 0}</b>
                 <span>作业数</span>
               </button>
-              <button type="button" onClick={() => navigate('/m/tasks')}>
+              <button type="button" data-prefetch="/m/tasks" onClick={() => go('/m/tasks')}>
                 <b>{month.completed ?? 0}</b>
                 <span>已完成</span>
               </button>
-              <button type="button" onClick={() => navigate('/m/income')}>
+              <button type="button" data-prefetch="/m/income" onClick={() => go('/m/income')}>
                 <b>{month.completionRate ?? 0}%</b>
                 <span>完成率</span>
               </button>
@@ -100,9 +121,26 @@ export default function MyPage() {
         </div>
 
         <Cell.Group inset>
-          <Cell title="我的收入" label="每单绩效与审核状态" isLink onClick={() => navigate('/m/income')} />
-          <Cell title="个人资料" isLink onClick={() => navigate('/m/settings')} />
-          {!isStandaloneDisplay() ? (
+          <div data-prefetch="/m/income">
+            <Cell
+              title="我的收入"
+              label="每单绩效与审核状态"
+              isLink
+              onClick={() => go('/m/income')}
+            />
+          </div>
+          <div data-prefetch="/m/settings">
+            <Cell title="个人资料" isLink onClick={() => go('/m/settings')} />
+          </div>
+          <div data-prefetch="/m/help">
+            <Cell
+              title="使用帮助"
+              label="图文手册，按步骤对照操作"
+              isLink
+              onClick={() => go('/m/help')}
+            />
+          </div>
+          {showInstallEntry ? (
             <Cell
               title="添加到手机桌面"
               label="下次点图标直接进入作业端"

@@ -1,15 +1,18 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Empty, Loading, Popup } from '@/m/lib/react-vant';
+import { Empty, Popup } from '@/m/lib/react-vant';
 import {
   fetchMyIncome,
   type IncomeEventPenalty,
   type IncomeLedger,
   type MyIncome,
 } from '../../api/finance';
+import { useAuthStore } from '../../stores/auth';
 import { formatDateTime } from '../../utils/displayLabels';
+import { mobileCacheKeys } from '../../utils/mobileCacheKeys';
+import { useCachedResource } from '../../utils/useCachedResource';
 import './finance.css';
 
 const reviewLabel = { pending: '待审', approved: '已审', rejected: '已驳' };
@@ -283,25 +286,17 @@ function CaseSheet({
 
 export default function MyIncomePage() {
   const navigate = useNavigate();
+  const user = useAuthStore((s) => s.user);
   const [month, setMonth] = useState(currentMonth);
-  const [data, setData] = useState<MyIncome>();
-  const [loading, setLoading] = useState(true);
   const [active, setActive] = useState<IncomeLedger>();
   const [pickOpen, setPickOpen] = useState(false);
   const [dayFilter, setDayFilter] = useState<string>('all');
 
-  const load = useCallback(async (ym: string) => {
-    setLoading(true);
-    try {
-      setData(await fetchMyIncome(ym));
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    void load(month);
-  }, [month, load]);
+  const loader = useCallback(() => fetchMyIncome(month), [month]);
+  const { data, loading } = useCachedResource<MyIncome>(
+    mobileCacheKeys.myIncome(user?.id, month),
+    loader,
+  );
 
   const settlement = data?.monthlySettlement;
   const assessment = data?.assessment;
@@ -421,11 +416,27 @@ export default function MyIncomePage() {
           </button>
         </header>
 
-        {loading || !data || !breakdown ? (
-          <div className="inc-bill-loading">
-            <Loading color="#fff">核算中...</Loading>
+        {loading && !data ? (
+          <div className="inc-bill-sum inc-bill-sum--skeleton" aria-busy="true">
+            <p>到手合计</p>
+            <strong className="inc-bill-sum__sk">——</strong>
+            <p className="inc-bill-month-status">正在核算本月收入…</p>
+            <div className="inc-bill-stats">
+              <div>
+                <span>计件</span>
+                <b>—</b>
+              </div>
+              <div>
+                <span>报销</span>
+                <b>—</b>
+              </div>
+              <div>
+                <span>扣罚</span>
+                <b>—</b>
+              </div>
+            </div>
           </div>
-        ) : (
+        ) : data && breakdown ? (
           <div className="inc-bill-sum">
             <p>到手合计</p>
             <strong className={breakdown.final < 0 ? 'is-neg' : ''}>
@@ -475,11 +486,24 @@ export default function MyIncomePage() {
               </p>
             )}
           </div>
+        ) : (
+          <div className="inc-bill-sum">
+            <p>到手合计</p>
+            <strong>¥0.00</strong>
+            <p className="inc-bill-month-status">暂无本月收入数据</p>
+          </div>
         )}
       </div>
 
       <div className="inc-bill-body">
-        {!loading && data && (
+        {loading && !data ? (
+          <div className="mobile-list-skeleton" aria-label="正在加载收入明细">
+            <i />
+            <i />
+            <i />
+            <i />
+          </div>
+        ) : data ? (
           <>
             {dayGroups.length > 0 && (
               <div className="inc-bill-days" role="listbox" aria-label="按日筛选">
@@ -593,7 +617,7 @@ export default function MyIncomePage() {
               </section>
             )}
           </>
-        )}
+        ) : null}
       </div>
 
       <Popup visible={pickOpen} position="bottom" round onClose={() => setPickOpen(false)}>

@@ -10,7 +10,7 @@ import {
   rankFinanceAssessments,
   saveFinanceAssessment,
 } from '../../../api/finance';
-import { fetchSites } from '../../../api/site';
+import { fetchActiveSitesCached } from '../../../api/option-cache';
 import type { FinanceAssessment } from '../../../types/finance';
 import type { SiteItem } from '../../../types';
 import { useAuthStore } from '../../../stores/auth';
@@ -35,6 +35,7 @@ export default function FinanceAssessmentPage() {
   const isManager = user?.role === 'site_manager';
   const [month, setMonth] = useState(dayjs().format('YYYY-MM'));
   const [keyword, setKeyword] = useState('');
+  const [appliedKeyword, setAppliedKeyword] = useState('');
   const [role, setRole] = useState<string>();
   const [siteId, setSiteId] = useState<string>();
   const [sites, setSites] = useState<SiteItem[]>([]);
@@ -47,8 +48,8 @@ export default function FinanceAssessmentPage() {
 
   useEffect(() => {
     if (!isAdmin) return;
-    void fetchSites({ page: 1, limit: 100 })
-      .then((res) => setSites(res.list || []))
+    void fetchActiveSitesCached()
+      .then(setSites)
       .catch(() => setSites([]));
   }, [isAdmin]);
 
@@ -58,7 +59,7 @@ export default function FinanceAssessmentPage() {
       setRows(
         await fetchFinanceAssessments({
           month,
-          keyword: keyword || undefined,
+          keyword: appliedKeyword || undefined,
           siteId: isAdmin ? siteId : undefined,
           role: isAdmin ? role : undefined,
         }),
@@ -66,7 +67,7 @@ export default function FinanceAssessmentPage() {
     } finally {
       setLoading(false);
     }
-  }, [month, keyword, siteId, role, isAdmin]);
+  }, [month, appliedKeyword, siteId, role, isAdmin]);
 
   useEffect(() => {
     void load();
@@ -207,7 +208,11 @@ export default function FinanceAssessmentPage() {
           className="assessment-toolbar__search"
           value={keyword}
           onChange={(event) => setKeyword(event.target.value)}
-          onPressEnter={() => void load()}
+          onPressEnter={() => setAppliedKeyword(keyword.trim())}
+          onClear={() => {
+            setKeyword('');
+            setAppliedKeyword('');
+          }}
         />
         {isAdmin ? (
           <>
@@ -234,7 +239,7 @@ export default function FinanceAssessmentPage() {
             />
           </>
         ) : null}
-        <Button type="primary" onClick={() => void load()}>
+        <Button type="primary" onClick={() => setAppliedKeyword(keyword.trim())}>
           查询
         </Button>
         <div className="assessment-toolbar__actions">
@@ -410,7 +415,7 @@ export default function FinanceAssessmentPage() {
           {
             title: colTip(
               '事件扣罚',
-              '本月已登记合计（与结算审核同一数据）。点「事件」可补录或查看明细；有案例时建议优先在结算审核登记。',
+              '本月合计 = 结算审核已挂案例的扣罚 + 本页月度补录。有案例请到结算审核登记；本页事件明细里案例关联项只读，只能删补录。',
             ),
             dataIndex: 'eventPenalty',
             width: 110,

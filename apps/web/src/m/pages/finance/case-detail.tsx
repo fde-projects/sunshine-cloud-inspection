@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams, useLocation } from 'react-router-dom';
-import { Loading, Toast, Dialog } from '@/m/lib/react-vant';
+import { Toast, Dialog } from '@/m/lib/react-vant';
 import {
   claimFinanceUnit,
   unclaimFinanceUnit,
@@ -256,8 +256,27 @@ export default function FinanceCaseDetailPage() {
 
   if (loading) {
     return (
-      <div className="mobile-finance-page">
-        <Loading vertical>加载案例...</Loading>
+      <div className="mobile-finance-page case-detail-shell">
+        <header className="case-chrome">
+          <div className="case-chrome__nav">
+            <button type="button" onClick={() => navigate('/m/tasks')}>
+              ← 返回
+            </button>
+          </div>
+          <div className="case-chrome__title">
+            <h1>作业详情</h1>
+            <span>加载中</span>
+          </div>
+          <p className="case-chrome__meta">
+            <span>正在拉取案例…</span>
+          </p>
+        </header>
+        <div className="mobile-list-skeleton" style={{ padding: '12px 16px' }} aria-busy>
+          <i />
+          <i />
+          <i />
+          <i />
+        </div>
       </div>
     );
   }

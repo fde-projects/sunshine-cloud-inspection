@@ -1,0 +1,74 @@
+/* 全局 html/body 写了 height:100%，且 body 的 overflow-x:hidden 会让 sticky 失效。 */
+html:has(.m-help-page) {
+  height: auto;
+  min-height: 100%;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+body:has(.m-help-page) {
+  height: auto;
+  min-height: 100%;
+  overflow: visible;
+}
+
+.m-help-page {
+  min-height: 100%;
+  background: #f6f9f7;
+  padding-bottom: 32px;
+}
+
+.m-help-page .help-page {
+  display: block;
+  height: auto;
+  min-height: 0;
+  overflow: visible;
+}
+
+.m-help-page .help-toc {
+  display: none;
+}
+
+.m-help-page .help-sticky {
+  display: block;
+  position: sticky;
+  top: 0;
+  z-index: 30;
+  padding-top: env(safe-area-inset-top);
+  background: rgba(251, 252, 251, 0.96);
+  backdrop-filter: blur(12px);
+  box-shadow: 0 6px 18px rgba(16, 56, 44, 0.06);
+}
+
+.m-help-page .help-sticky .rv-nav-bar {
+  background: transparent;
+  box-shadow: none;
+}
+
+.m-help-page .help-toc-mobile {
+  display: block;
+  padding: 0 14px 10px;
+}
+
+.m-help-page .help-content {
+  height: auto;
+  overflow: visible;
+  padding: 12px 14px 40px;
+  max-width: none;
+}
+
+.m-help-page .help-hero {
+  padding: 16px 16px;
+}
+
+.m-help-page .help-hero h1 {
+  font-size: 20px;
+}
+
+.m-help-page .help-step {
+  padding: 14px 12px 12px;
+}
+
+.m-help-page .help-step__figure {
+  border-radius: 8px;
+}

@@ -10,7 +10,8 @@ import {
   type CompletionStats,
   type DefectStats,
 } from '../../api/stats';
-import { fetchSites, fetchSiteMembers } from '../../api/site';
+import { fetchSiteMembers } from '../../api/site';
+import { fetchActiveSitesCached } from '../../api/option-cache';
 import { fetchInspectorPool } from '../../api/user';
 import { DEVICE_TYPE_LABEL } from '../../types';
 import type { SiteItem } from '../../types';
@@ -28,7 +29,7 @@ export default function AnalysisPage() {
   const [defects, setDefects] = useState<DefectStats | null>(null);
 
   useEffect(() => {
-    fetchSites({ limit: 100 }).then((res) => setSites(res.list));
+    void fetchActiveSitesCached().then(setSites);
   }, []);
 
   useEffect(() => {

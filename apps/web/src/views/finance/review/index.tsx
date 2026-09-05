@@ -6,6 +6,7 @@ import {
   Badge,
   Button,
   Card,
+  DatePicker,
   Form,
   Input,
   Modal,
@@ -17,17 +18,18 @@ import {
   message,
 } from 'antd';
 import { QuestionCircleOutlined } from '@ant-design/icons';
-import dayjs from 'dayjs';
+import dayjs, { type Dayjs } from 'dayjs';
 import { useSearchParams } from 'react-router-dom';
 import {
   approveFinanceReview,
+  exportFinanceReviews,
   fetchFinanceCase,
   fetchPendingExpenses,
   fetchPendingFinanceReviews,
   rejectFinanceReview,
   reviewFinanceDeduction,
 } from '../../../api/finance';
-import { fetchSites } from '../../../api/site';
+import { fetchActiveSitesCached } from '../../../api/option-cache';
 import type { FinanceReviewItem } from '../../../types/finance';
 import type { SiteItem } from '../../../types';
 import { useAuthStore } from '../../../stores/auth';
@@ -36,7 +38,6 @@ import AssessmentEventDrawer, {
 } from '../components/AssessmentEventDrawer';
 import SettlementAmountDrawer from '../components/SettlementAmountDrawer';
 import ExpenseReviewPanel from '../expenses/ExpenseReviewPanel';
-import DayDatePicker from '../../../components/DayDatePicker';
 import FillTable from '../../../components/FillTable';
 import AdminFilterMore from '../../../components/AdminFilterMore';
 import { formatDateTime } from '../../../utils/displayLabels';
@@ -82,11 +83,13 @@ export default function FinanceReviewPage() {
   );
   const [tab, setTab] = useState<ReviewTab>('pending');
   const [keyword, setKeyword] = useState('');
-  const [month, setMonth] = useState<string>();
+  const [appliedKeyword, setAppliedKeyword] = useState('');
+  const [dateRange, setDateRange] = useState<[Dayjs | null, Dayjs | null] | null>(null);
   const [siteId, setSiteId] = useState<string>();
   const [sites, setSites] = useState<SiteItem[]>([]);
   const [rows, setRows] = useState<FinanceReviewItem[]>([]);
   const [loading, setLoading] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const [current, setCurrent] = useState<FinanceReviewItem>();
   const [action, setAction] = useState<Action>();
   const [eventCase, setEventCase] = useState<FinanceReviewItem>();
@@ -142,10 +145,13 @@ export default function FinanceReviewPage() {
 
   useEffect(() => {
     if (!isAdmin) return;
-    void fetchSites({ page: 1, limit: 100 })
-      .then((res) => setSites(res.list || []))
+    void fetchActiveSitesCached()
+      .then(setSites)
       .catch(() => setSites([]));
   }, [isAdmin]);
+
+  const dateFrom = dateRange?.[0]?.format('YYYY-MM-DD');
+  const dateTo = dateRange?.[1]?.format('YYYY-MM-DD');
 
   const load = useCallback(async () => {
     if (scope !== 'case') return;
@@ -153,24 +159,46 @@ export default function FinanceReviewPage() {
     setLoading(true);
     try {
       const next = await fetchPendingFinanceReviews({
-        keyword: keyword || undefined,
-        month: month || undefined,
+        keyword: appliedKeyword || undefined,
+        dateFrom,
+        dateTo,
         siteId: isAdmin ? siteId : undefined,
         reviewStatus: tab,
       });
       if (seq !== loadSeq.current) return;
       setRows(next);
+      if (tab === 'pending' && !appliedKeyword && !dateFrom && !dateTo && !siteId) {
+        setCasePending(next.length);
+      }
     } catch {
       if (seq !== loadSeq.current) return;
       setRows([]);
     } finally {
       if (seq === loadSeq.current) setLoading(false);
     }
-  }, [keyword, month, siteId, isAdmin, tab, scope]);
+  }, [appliedKeyword, dateFrom, dateTo, siteId, isAdmin, tab, scope]);
 
   useEffect(() => {
     void load();
   }, [load]);
+
+  const onExport = async () => {
+    setExporting(true);
+    try {
+      await exportFinanceReviews({
+        keyword: appliedKeyword || undefined,
+        dateFrom,
+        dateTo,
+        siteId: isAdmin ? siteId : undefined,
+        reviewStatus: tab,
+      });
+      message.success('已开始下载导出文件');
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : '导出失败');
+    } finally {
+      setExporting(false);
+    }
+  };
 
   const submit = async () => {
     if (!current || !action) return;
@@ -306,16 +334,20 @@ export default function FinanceReviewPage() {
               className="admin-toolbar__search"
               value={keyword}
               onChange={(event) => setKeyword(event.target.value)}
+              onPressEnter={() => setAppliedKeyword(keyword.trim())}
+              onClear={() => {
+                setKeyword('');
+                setAppliedKeyword('');
+              }}
               style={{ width: 200 }}
             />
             <AdminFilterMore>
-                <DayDatePicker
+                <DatePicker.RangePicker
                   allowClear
-                  value={month}
-                  onChange={setMonth}
-                  placeholder="完工日期"
-                  title="完工日期"
-                  style={{ width: 160 }}
+                  value={dateRange}
+                  onChange={(next) => setDateRange(next)}
+                  placeholder={['完工开始', '完工结束']}
+                  style={{ width: 260 }}
                 />
                 {isAdmin && (
                   <Select
@@ -331,9 +363,14 @@ export default function FinanceReviewPage() {
                   />
                 )}
             </AdminFilterMore>
-            <Button type="primary" onClick={() => void load()}>
+            <Button type="primary" onClick={() => setAppliedKeyword(keyword.trim())}>
               查询
             </Button>
+            {isAdmin ? (
+              <Button loading={exporting} disabled={loading} onClick={() => void onExport()}>
+                导出
+              </Button>
+            ) : null}
           </div>
           <FillTable
             rowKey="id"
@@ -572,7 +609,7 @@ export default function FinanceReviewPage() {
               {
                 title: colTip(
                   '事件扣罚',
-                  '本案例已登记的事件扣罚合计（与考核管理同一数据）。点「事件」可登记；点「明细」可看原因与对象。',
+                  '本案例已登记的事件扣罚合计。点「事件」登记或删除；归属月按完工日计入月结。考核管理可汇总查看，案例关联项在那边只读。',
                 ),
                 dataIndex: 'eventPenalty',
                 width: 100,
@@ -652,46 +689,6 @@ export default function FinanceReviewPage() {
               },
             ]}
           />
-          <Modal
-            open={!!action}
-            title={action === 'approve' ? '通过结算审核' : '驳回结算审核'}
-            okText="确认"
-            cancelText="取消"
-            onCancel={() => {
-              setAction(undefined);
-              setCurrent(undefined);
-              form.resetFields();
-            }}
-            onOk={() => void submit()}
-          >
-            <Form form={form} layout="vertical">
-              {action === 'reject' && (
-                <Form.Item
-                  name="reason"
-                  label="原因"
-                  rules={[{ required: true, message: '请填写原因' }]}
-                >
-                  <Input.TextArea rows={3} maxLength={500} showCount />
-                </Form.Item>
-              )}
-              {action === 'approve' && (
-                <>
-                  {Number(current?.pendingExpenseCount || 0) > 0 ? (
-                    <Alert
-                      type="warning"
-                      showIcon
-                      style={{ marginBottom: 12 }}
-                      message={`本案例仍有 ${current?.pendingExpenseCount} 条待审报销`}
-                      description="仅提醒，不阻止通过。结算通过不会自动核定报销，请稍后到「行程报销」页签处理。"
-                    />
-                  ) : null}
-                  <Form.Item name="comment" label="审核意见（可选）">
-                    <Input.TextArea rows={3} />
-                  </Form.Item>
-                </>
-              )}
-            </Form>
-          </Modal>
           {eventCase && eventAssignees.length > 0 && (
             <AssessmentEventDrawer
               open={!!eventCase}
@@ -723,6 +720,48 @@ export default function FinanceReviewPage() {
           />
         </>
       )}
+      {action ? (
+        <Modal
+          open
+          title={action === 'approve' ? '通过结算审核' : '驳回结算审核'}
+          okText="确认"
+          cancelText="取消"
+          onCancel={() => {
+            setAction(undefined);
+            setCurrent(undefined);
+            form.resetFields();
+          }}
+          onOk={() => void submit()}
+        >
+          <Form form={form} layout="vertical">
+            {action === 'reject' && (
+              <Form.Item
+                name="reason"
+                label="原因"
+                rules={[{ required: true, message: '请填写原因' }]}
+              >
+                <Input.TextArea rows={3} maxLength={500} showCount />
+              </Form.Item>
+            )}
+            {action === 'approve' && (
+              <>
+                {Number(current?.pendingExpenseCount || 0) > 0 ? (
+                  <Alert
+                    type="warning"
+                    showIcon
+                    style={{ marginBottom: 12 }}
+                    message={`本案例仍有 ${current?.pendingExpenseCount} 条待审报销`}
+                    description="仅提醒，不阻止通过。结算通过不会自动核定报销，请稍后到「行程报销」页签处理。"
+                  />
+                ) : null}
+                <Form.Item name="comment" label="审核意见（可选）">
+                  <Input.TextArea rows={3} />
+                </Form.Item>
+              </>
+            )}
+          </Form>
+        </Modal>
+      ) : null}
     </Card>
   );
 }

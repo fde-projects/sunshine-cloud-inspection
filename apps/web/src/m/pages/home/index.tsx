@@ -9,6 +9,7 @@ import { fetchMyFinanceCases, type MobileFinanceCase } from '../../api/finance';
 import { mobileCacheKeys } from '../../utils/mobileCacheKeys';
 import { useCachedResource } from '../../utils/useCachedResource';
 import { useNewOrderNotice, useVisiblePolling } from '../../utils/useVisiblePolling';
+import { useClientNow } from '../../hooks/useClientNow';
 import {
   clearLayoutPreviewFlag,
   isMobilePreviewMode,
@@ -67,6 +68,17 @@ export default function HomePage() {
   const [previewMode, setPreviewMode] = useState(false);
   const { currentSite, user, setCurrentSite } = useAuthStore();
   const profileIncomplete = !user?.realName?.trim() || !user?.phone?.trim();
+  const now = useClientNow();
+  const greeting = !now
+    ? '你好'
+    : now.getHours() < 12
+      ? '早上好'
+      : now.getHours() < 18
+        ? '下午好'
+        : '晚上好';
+  const dateLabel = now
+    ? now.toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric' })
+    : '';
 
   useEffect(() => {
     clearLayoutPreviewFlag();
@@ -297,16 +309,12 @@ export default function HomePage() {
             <div className="home-overview__head">
               <div className="home-greeting">
                 <b>
-                  {new Date().getHours() < 12
-                    ? '早上好'
-                    : new Date().getHours() < 18
-                      ? '下午好'
-                      : '晚上好'}{' '}
+                  {greeting}{' '}
                   {user?.realName || user?.username || '工程师'}
                 </b>
               </div>
               <span className="home-date-badge">
-                {new Date().toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric' })}
+                {dateLabel || '—'}
               </span>
             </div>
 
@@ -412,6 +420,7 @@ export default function HomePage() {
                   type="button"
                   className="home-task"
                   key={t.key}
+                  data-prefetch={t.href}
                   onClick={() => navigate(t.href)}
                 >
                   <span className={`home-task__dot is-${t.status}`} />

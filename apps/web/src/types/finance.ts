@@ -285,6 +285,7 @@ export interface AssessmentEventRow {
   userId: string;
   userName?: string | null;
   serviceCaseId?: string | null;
+  gspCaseNo?: string | null;
   category: string;
   content: string;
   unit: string;

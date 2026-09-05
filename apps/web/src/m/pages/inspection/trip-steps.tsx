@@ -1,7 +1,7 @@
 "use client";
 
-import { useRef, useState, type Dispatch, type SetStateAction } from 'react';
-import { ActionSheet, Toast } from '@/m/lib/react-vant';
+import { useState, type Dispatch, type SetStateAction } from 'react';
+import { Toast } from '@/m/lib/react-vant';
 import {
   ocrMyMileage,
   saveMyTripExpense,
@@ -10,6 +10,7 @@ import {
 } from '../../api/finance';
 import { displayPhotoUrl } from '../../utils/photo-url';
 import { compressImage } from '../../utils/imageCompress';
+import PhotoAddTile from '../../components/PhotoAddTile';
 
 export type TripMode = 'undecided' | 'skip' | 'need' | 'na';
 
@@ -201,10 +202,7 @@ function SlotUploadBar({
   disabled?: boolean;
   onUploaded: (urls: string[], slot: SlotKey) => void;
 }) {
-  const fileRef = useRef<HTMLInputElement>(null);
-  const cameraRef = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
-  const [sheetOpen, setSheetOpen] = useState(false);
 
   const run = async (files: File[]) => {
     if (!files.length || disabled) return;
@@ -230,62 +228,13 @@ function SlotUploadBar({
   };
 
   return (
-    <>
-      <input
-        ref={fileRef}
-        type="file"
-        accept="image/*"
-        multiple={!!multi}
-        hidden
-        onChange={(e) => {
-          const list = e.target.files ? Array.from(e.target.files) : [];
-          if (list.length) void run(list);
-          e.target.value = '';
-        }}
-      />
-      <input
-        ref={cameraRef}
-        type="file"
-        accept="image/*"
-        capture="environment"
-        hidden
-        onChange={(e) => {
-          const list = e.target.files ? Array.from(e.target.files) : [];
-          if (list.length) void run(list);
-          e.target.value = '';
-        }}
-      />
-      <button
-        type="button"
-        className="trip-upload-add"
-        disabled={disabled || busy}
-        aria-label="添加照片"
-        onClick={() => {
-          if (disabled || busy) return;
-          setSheetOpen(true);
-        }}
-      >
-        {busy ? '…' : '+'}
-      </button>
-      <ActionSheet
-        visible={sheetOpen}
-        onCancel={() => setSheetOpen(false)}
-        cancelText="取消"
-        actions={[
-          { name: '拍照' },
-          {
-            name: multi ? '从相册选择（可多选）' : '从相册选择',
-          },
-        ]}
-        onSelect={(action) => {
-          setSheetOpen(false);
-          setTimeout(() => {
-            if (action.name === '拍照') cameraRef.current?.click();
-            else fileRef.current?.click();
-          }, 0);
-        }}
-      />
-    </>
+    <PhotoAddTile
+      className="trip-upload-add-wrap"
+      disabled={disabled || busy}
+      multiple={!!multi}
+      busyLabel={busy ? '…' : undefined}
+      onFiles={(files) => void run(files)}
+    />
   );
 }
 

@@ -405,12 +405,19 @@ export default function TasksPage() {
               </div>
             ) : (
               <>
-                {visibleList.map((item) => (
+                {visibleList.map((item) => {
+                  const href = item.financeCase?.id
+                    ? `/m/finance-cases/${item.financeCase.id}`
+                    : previewMode
+                      ? '/m/finance-cases/preview-case-1'
+                      : '';
+                  return (
                   <div
                     key={item.key}
                     className="tasks-item"
                     role="button"
                     tabIndex={0}
+                    data-prefetch={href || undefined}
                 onClick={() => {
                   if (previewMode) {
                     navigate(
@@ -447,7 +454,8 @@ export default function TasksPage() {
                       <div className="tasks-item__reject">{item.rejectReason}</div>
                     )}
                   </div>
-                ))}
+                  );
+                })}
                 <div ref={sentinelRef} className="tasks-page__sentinel" aria-hidden />
                 <div className="tasks-page__footer">
                   {loadingMore

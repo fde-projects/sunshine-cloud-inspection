@@ -56,8 +56,9 @@ import RecordDetailDrawer from '../../../components/RecordDetailDrawer';
 import FillTable, { listTablePagination } from '../../../components/FillTable';
 import AdminFilterMore from '../../../components/AdminFilterMore';
 import { useDrawerWidth, useMobileDrawer } from '../../../hooks/useDrawerWidth';
-import { fetchSiteMembers, fetchSites } from '../../../api/site';
-import { fetchTemplates, type TemplateItem } from '../../../api/template';
+import { fetchSiteMembers } from '../../../api/site';
+import { fetchActiveSitesCached, fetchTemplatesCached } from '../../../api/option-cache';
+import { type TemplateItem } from '../../../api/template';
 import type { FinanceCase, FinanceInspectorOption } from '../../../types/finance';
 import type { SiteItem } from '../../../types';
 import { useAuthStore } from '../../../stores/auth';
@@ -493,8 +494,8 @@ export default function FinanceCasesPage() {
   }, [amountOpen]);
 
   useEffect(() => {
-    void fetchSites({ limit: 100 }).then((r) => setSites(r.list));
-    void fetchTemplates().then(setTaskTypes).catch(() => setTaskTypes([]));
+    void fetchActiveSitesCached().then(setSites);
+    void fetchTemplatesCached().then(setTaskTypes).catch(() => setTaskTypes([]));
     void fetchFinanceCaseLocationOptions()
       .then((r) => {
         setProvinces(r.provinces || []);

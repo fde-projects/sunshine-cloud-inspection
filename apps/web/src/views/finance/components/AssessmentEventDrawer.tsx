@@ -25,7 +25,7 @@ export type AssessmentEventDrawerProps = {
   userName?: string;
   /** 案例在派工程师列表；多人时必须先选扣罚对象 */
   assignees?: AssessmentEventAssignee[];
-  /** 关联案例时只展示/登记本案例事件 */
+  /** 关联案例：本抽屉只登记/删除本案例事件 */
   serviceCaseId?: string;
   caseLabel?: string;
   onChanged?: () => void;
@@ -42,6 +42,7 @@ export default function AssessmentEventDrawer({
   caseLabel,
   onChanged,
 }: AssessmentEventDrawerProps) {
+  const caseMode = Boolean(serviceCaseId);
   const [catalog, setCatalog] = useState<AssessmentEventCatalogItem[]>([]);
   const [events, setEvents] = useState<AssessmentEventRow[]>([]);
   const [loading, setLoading] = useState(false);
@@ -68,7 +69,7 @@ export default function AssessmentEventDrawer({
       setEvents(
         await fetchAssessmentEvents(
           month,
-          serviceCaseId ? undefined : people[0]?.id,
+          caseMode ? undefined : people[0]?.id,
           serviceCaseId,
         ),
       );
@@ -96,30 +97,41 @@ export default function AssessmentEventDrawer({
       message.warning('请选择要扣罚的工程师');
       return;
     }
-    await createAssessmentEvent({
-      month,
-      userId: targetUserId,
-      catalogId: values.catalogId,
-      qty: values.qty,
-      amount: values.amount,
-      remark: values.remark,
-      ...(serviceCaseId ? { serviceCaseId } : {}),
-    });
-    message.success('事件扣罚已登记');
-    form.resetFields();
-    form.setFieldsValue({
-      qty: 1,
-      userId: multiPerson ? undefined : people[0]?.id,
-    });
-    await reload();
-    onChanged?.();
+    try {
+      await createAssessmentEvent({
+        month,
+        userId: targetUserId,
+        catalogId: values.catalogId,
+        qty: values.qty,
+        amount: values.amount,
+        remark: values.remark,
+        ...(caseMode && serviceCaseId ? { serviceCaseId } : {}),
+      });
+      message.success(caseMode ? '本案例事件扣罚已登记' : '月度补录已登记');
+      form.resetFields();
+      form.setFieldsValue({
+        qty: 1,
+        userId: multiPerson ? undefined : people[0]?.id,
+      });
+      await reload();
+      onChanged?.();
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : '登记失败');
+    }
   };
 
-  const removeEvent = (id: string) => {
+  const removeEvent = (row: AssessmentEventRow) => {
+    if (!caseMode && row.serviceCaseId) {
+      message.warning('案例关联的扣罚请到结算审核删除');
+      return;
+    }
     Modal.confirm({
       title: '删除该事件扣罚？',
+      content: caseMode
+        ? '删除后本案例与月度汇总会同步更新。'
+        : '仅删除月度补录；案例关联记录不受影响。',
       onOk: async () => {
-        await deleteAssessmentEvent(id);
+        await deleteAssessmentEvent(row.id, caseMode ? 'case' : 'monthly');
         await reload();
         onChanged?.();
         message.success('已删除');
@@ -127,23 +139,19 @@ export default function AssessmentEventDrawer({
     });
   };
 
-  const title = serviceCaseId
-    ? `事件扣罚 · ${caseLabel || ''}`
-    : `事件明细 · ${userName || people[0]?.realName || ''}`;
+  const title = caseMode
+    ? `本案例事件扣罚 · ${caseLabel || ''}`
+    : `本月事件汇总 · ${userName || people[0]?.realName || ''}`;
+
+  const tip = caseMode
+    ? multiPerson
+      ? `多人案例请先选择扣罚对象。归属月按案例完工日（当前按 ${month}）计入月结；此处只登记本案例，考核管理里会只读展示。`
+      : `审单时登记本案例扣罚。归属月按案例完工日（当前按 ${month}）计入月结；考核管理可查看但不可在那边删除。`
+    : `本月汇总（含结算审核已挂案例的扣罚 + 下方月度补录）。有案例请到结算审核登记；此处仅补录无案例的月度扣罚，避免两边重复计。`;
 
   return (
     <Drawer {...drawerProps} open={open} onClose={onClose} title={title}>
-      {serviceCaseId ? (
-        <div style={{ marginBottom: 12, color: '#666' }}>
-          {multiPerson
-            ? `多人案例请先选择扣罚对象；扣罚只计入该工程师 ${month} 月汇总，并关联本案例追溯（与考核管理同一数据）。`
-            : `审单时登记最顺手。本条计入工程师 ${month} 月事件扣罚汇总，并关联当前案例（与考核管理同一数据）。`}
-        </div>
-      ) : (
-        <div style={{ marginBottom: 12, color: '#666' }}>
-          与「结算审核」共用同一套事件扣罚。有案例时建议优先在结算审核登记；本页用于补录或查看，最终都进月度结算。
-        </div>
-      )}
+      <div style={{ marginBottom: 12, color: '#666' }}>{tip}</div>
       <Form form={form} layout="vertical" initialValues={{ qty: 1 }}>
         <Form.Item
           name="userId"
@@ -181,7 +189,7 @@ export default function AssessmentEventDrawer({
           <Input.TextArea rows={2} />
         </Form.Item>
         <Button type="primary" onClick={() => void submitEvent()}>
-          登记扣罚
+          {caseMode ? '登记本案例扣罚' : '登记月度补录'}
         </Button>
       </Form>
       <Table
@@ -192,7 +200,7 @@ export default function AssessmentEventDrawer({
         dataSource={events}
         pagination={false}
         columns={[
-          ...(serviceCaseId || multiPerson
+          ...(caseMode || multiPerson
             ? [
                 {
                   title: '工程师',
@@ -217,24 +225,33 @@ export default function AssessmentEventDrawer({
             width: 90,
             render: (v: string) => `¥${Number(v).toFixed(2)}`,
           },
-          ...(!serviceCaseId
+          ...(!caseMode
             ? [
                 {
-                  title: '关联案例',
-                  width: 100,
+                  title: '来源',
+                  width: 140,
                   render: (_: unknown, row: AssessmentEventRow) =>
-                    row.serviceCaseId ? <Tag color="blue">已关联</Tag> : <Tag>月度</Tag>,
+                    row.serviceCaseId ? (
+                      <Tag color="blue">案例 {row.gspCaseNo || '已关联'}</Tag>
+                    ) : (
+                      <Tag>月度补录</Tag>
+                    ),
                 },
               ]
             : []),
           {
             title: '操作',
-            width: 80,
-            render: (_: unknown, row: AssessmentEventRow) => (
-              <Button type="link" danger onClick={() => removeEvent(row.id)}>
-                删除
-              </Button>
-            ),
+            width: 100,
+            render: (_: unknown, row: AssessmentEventRow) => {
+              if (!caseMode && row.serviceCaseId) {
+                return <span style={{ color: '#8c8c8c' }}>只读</span>;
+              }
+              return (
+                <Button type="link" danger onClick={() => removeEvent(row)}>
+                  删除
+                </Button>
+              );
+            },
           },
         ]}
       />

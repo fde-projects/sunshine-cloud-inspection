@@ -32,7 +32,7 @@ import {
   type AuditTrailEvent,
   resolveEntryKind,
 } from '../../api/record';
-import { fetchSites } from '../../api/site';
+import { fetchActiveSitesCached } from '../../api/option-cache';
 import { downloadRecordsExport } from '../../api/stats';
 import type { SiteItem } from '../../types';
 import { useAuthStore } from '../../stores/auth';
@@ -163,19 +163,23 @@ export default function RecordsPage() {
   const detailDrawer = useMobileDrawer(760);
   const compareModalWidth = useDrawerWidth(900);
 
+  const [appliedKeyword, setAppliedKeyword] = useState(() =>
+    String(searchParams.get('keyword') || '').trim(),
+  );
+
   useEffect(() => {
-    fetchSites({ limit: 100, status: 'active' }).then((res) => setSites(res.list));
+    void fetchActiveSitesCached().then(setSites);
   }, []);
 
   const filterParams = useCallback(() => {
     const params: Record<string, unknown> = { scope: 'history' };
     if (siteId) params.siteId = siteId;
     if (status) params.status = status;
-    if (keyword.trim()) params.keyword = keyword.trim();
+    if (appliedKeyword.trim()) params.keyword = appliedKeyword.trim();
     if (dateRange?.[0]) params.startDate = dateRange[0].format('YYYY-MM-DD');
     if (dateRange?.[1]) params.endDate = dateRange[1].format('YYYY-MM-DD');
     return params;
-  }, [siteId, status, keyword, dateRange]);
+  }, [siteId, status, appliedKeyword, dateRange]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -654,7 +658,12 @@ export default function RecordsPage() {
           onChange={(e) => setKeyword(e.target.value)}
           onPressEnter={() => {
             setPage(1);
-            void load();
+            setAppliedKeyword(keyword.trim());
+          }}
+          onClear={() => {
+            setKeyword('');
+            setPage(1);
+            setAppliedKeyword('');
           }}
         />
         <Select
@@ -699,7 +708,7 @@ export default function RecordsPage() {
             type="primary"
             onClick={() => {
               setPage(1);
-              void load();
+              setAppliedKeyword(keyword.trim());
             }}
           >
             查询

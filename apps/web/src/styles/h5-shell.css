@@ -165,8 +165,14 @@
   flex: 1;
   /* 只留底栏高度；勿再开 Tabbar placeholder，否则会叠出一条空白带 */
   padding-bottom: calc(72px + env(safe-area-inset-bottom));
-  /* 切页淡入会让按钮像「慢半拍」，缩短到几乎无感 */
-  animation: h5-page-in 0.12s var(--h5-ease) both;
+}
+
+.tab-pane[hidden] {
+  display: none !important;
+}
+
+.tab-pane {
+  min-height: 100%;
 }
 
 .tab-layout--no-tab .tab-layout__content {
@@ -200,15 +206,6 @@
 }
 .tab-layout--no-tab:has(.case-detail-shell) .tab-layout__content {
   padding-bottom: 0;
-}
-
-@keyframes h5-page-in {
-  from {
-    opacity: 0.55;
-  }
-  to {
-    opacity: 1;
-  }
 }
 
 @keyframes h5-rise {
@@ -457,6 +454,91 @@
   text-align: center;
 }
 
+.m-page-skeleton {
+  min-height: 70vh;
+  padding: 12px 16px 24px;
+}
+
+.m-page-skeleton__nav {
+  display: grid;
+  grid-template-columns: 36px 1fr 36px;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.m-page-skeleton__back,
+.m-page-skeleton__title,
+.m-page-skeleton__action {
+  display: block;
+  border-radius: 10px;
+  background: linear-gradient(100deg, #e4ede8 20%, #f7faf8 42%, #e4ede8 64%);
+  background-size: 220% 100%;
+  animation: mobile-skeleton 1.2s ease-in-out infinite;
+}
+
+.m-page-skeleton__back,
+.m-page-skeleton__action {
+  height: 36px;
+}
+
+.m-page-skeleton__title {
+  height: 22px;
+  width: min(48%, 180px);
+  margin: 0 auto;
+}
+
+.m-page-skeleton .mobile-summary-skeleton {
+  margin-bottom: 16px;
+}
+
+.m-boot-tabbar {
+  position: fixed;
+  left: 50%;
+  bottom: 0;
+  z-index: 100;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  width: min(100%, var(--h5-shell-max, 430px));
+  transform: translateX(-50%);
+  padding: 8px 0 calc(8px + env(safe-area-inset-bottom));
+  background: rgba(255, 255, 255, 0.94);
+  border-top: 1px solid rgba(15, 122, 88, 0.08);
+  box-sizing: border-box;
+}
+
+.m-boot-tabbar__item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  color: rgba(0, 0, 0, 0.45);
+  font-size: 11px;
+}
+
+.m-boot-tabbar__item i {
+  width: 22px;
+  height: 22px;
+  border-radius: 8px;
+  background: #e4ede8;
+}
+
+.m-boot-tabbar__item em {
+  font-style: normal;
+}
+
+.m-boot-tabbar__item.is-active {
+  color: var(--h5-brand, #0f7a58);
+}
+
+.m-boot-tabbar__item.is-active i {
+  background: rgba(15, 122, 88, 0.22);
+}
+
+#m-boot-splash {
+  display: none;
+}
+
 @keyframes mobile-skeleton {
   from {
     background-position: 100% 0;
@@ -469,7 +551,10 @@
 @media (prefers-reduced-motion: reduce) {
   .mobile-list-skeleton i,
   .mobile-summary-skeleton i,
-  .home-stats--loading i {
+  .home-stats--loading i,
+  .m-page-skeleton__back,
+  .m-page-skeleton__title,
+  .m-page-skeleton__action {
     animation: none;
   }
 }

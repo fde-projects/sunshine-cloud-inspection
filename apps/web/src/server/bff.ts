@@ -40,6 +40,13 @@ import { ensureOriginalCatalog, healBuiltinHardRuleBindings } from "./catalog-se
 import { rematchCasesForTemplate, syncBoundCaseNames } from "./finance/demand-type-match";
 import { decideRecordAuditRoute, recordNeedsHumanAudit } from "./record-audit-route";
 import {
+  AI_ANALYZE_ATTEMPTS,
+  aiErrorResult,
+  isPassOrFail,
+  patchEntryAiResult,
+  persistFinalizedAiEntries,
+} from "./ai-result-write";
+import {
   downloadTemplate,
   fileFromForm,
   importGsp,
@@ -3256,9 +3263,11 @@ async function removeTask(user: AppUser, id: string) {
 const RECORD_FIELDS = `
   id task_id device_type entries report_photos location status submitted_at approved_at reject_reason audit_trail created_at
   task {
-    id task_name site_id device_id ai_enabled template_snapshot inspector { id real_name }
+    id task_name site_id device_id inspector_id ai_enabled template_snapshot
+    inspector { id real_name }
+    work_unit { id seq title inspector { id real_name } }
     site { id name }
-    service_case { id gsp_case_no project_name }
+    service_case { id gsp_case_no project_name unit_label }
   }
 `;
 
@@ -3387,7 +3396,29 @@ async function getRecord(id: string) {
     { id },
   );
   if (!d.inspection_records_by_pk) throw new HttpError(404, "记录不存在");
-  return ok(mapRecord(d.inspection_records_by_pk));
+  const row = d.inspection_records_by_pk;
+  const task = (row.task || row.inspection_task) as
+    | { template_snapshot?: unknown }
+    | undefined;
+  const wrote = await persistFinalizedAiEntries(
+    id,
+    row.entries,
+    task?.template_snapshot,
+    {
+      submittedAt: row.submitted_at ? String(row.submitted_at) : null,
+      recordStatus: row.status ? String(row.status) : null,
+    },
+  ).catch(() => false);
+  if (wrote) {
+    const fresh = await adminGql<{ inspection_records_by_pk: Record<string, unknown> | null }>(
+      `query ($id: uuid!) { inspection_records_by_pk(id: $id) { ${RECORD_FIELDS} } }`,
+      { id },
+    );
+    if (fresh.inspection_records_by_pk) {
+      return ok(mapRecord(fresh.inspection_records_by_pk));
+    }
+  }
+  return ok(mapRecord(row));
 }
 
 /** 提交后 / AI 完成后：全合格自动通过；需人审则保持 submitted */
@@ -3469,31 +3500,71 @@ async function routeRecordAudit(recordId: string): Promise<"auto_approve" | "nee
   return "auto_approve";
 }
 
-async function saveDraft(user: AppUser, id: string, body: Record<string, unknown>) {
-  await adminGql(
-    `mutation ($id: uuid!, $set: inspection_records_set_input!) {
-      update_inspection_records_by_pk(pk_columns: { id: $id }, _set: $set) { id }
-    }`,
-    { id, set: { entries: body.entries, location: body.location, report_photos: body.reportPhotos } },
+function mergeRecordEntries(current: unknown, incoming: unknown): Array<Record<string, unknown>> {
+  const prevList = Array.isArray(current) ? (current as Array<Record<string, unknown>>) : [];
+  if (!Array.isArray(incoming)) return prevList;
+  const prevById = new Map(prevList.map((e) => [String(e.templateEntryId || ""), e]));
+  return incoming.map((raw) => {
+    const next = (raw || {}) as Record<string, unknown>;
+    const id = String(next.templateEntryId || "");
+    const prev = prevById.get(id) || {};
+    const prevAi = prev.aiResult as { status?: string } | undefined;
+    return {
+      ...prev,
+      ...next,
+      photos: Array.isArray(next.photos) ? next.photos : prev.photos || [],
+      // AI 结论只由服务端分析写入，草稿/提交不得覆盖
+      aiResult: prevAi || {
+        status: "pending",
+        confidence: 0,
+        reason: "",
+      },
+    };
+  });
+}
+
+async function loadRecordEntries(id: string): Promise<unknown> {
+  const rec = await adminGql<{ inspection_records_by_pk: { entries?: unknown } | null }>(
+    `query ($id: uuid!) { inspection_records_by_pk(id: $id) { entries } }`,
+    { id },
   );
+  return rec.inspection_records_by_pk?.entries || [];
+}
+
+async function saveDraft(user: AppUser, id: string, body: Record<string, unknown>) {
+  const entries = Array.isArray(body.entries)
+    ? mergeRecordEntries(await loadRecordEntries(id), body.entries)
+    : undefined;
+  const set: Record<string, unknown> = {};
+  if (entries) set.entries = entries;
+  if (body.location !== undefined) set.location = body.location;
+  if (body.reportPhotos !== undefined) set.report_photos = body.reportPhotos;
+  if (Object.keys(set).length) {
+    await adminGql(
+      `mutation ($id: uuid!, $set: inspection_records_set_input!) {
+        update_inspection_records_by_pk(pk_columns: { id: $id }, _set: $set) { id }
+      }`,
+      { id, set },
+    );
+  }
   return getRecord(id);
 }
 
 async function submitRecord(user: AppUser, id: string, body: Record<string, unknown>) {
+  const set: Record<string, unknown> = {
+    status: "submitted",
+    submitted_at: new Date().toISOString(),
+    audit_trail: [{ action: "submitted", at: new Date().toISOString(), by: user.id, byName: user.realName }],
+  };
+  if (body.location !== undefined) set.location = body.location;
+  if (Array.isArray(body.entries)) {
+    set.entries = mergeRecordEntries(await loadRecordEntries(id), body.entries);
+  }
   await adminGql(
     `mutation ($id: uuid!, $set: inspection_records_set_input!) {
       update_inspection_records_by_pk(pk_columns: { id: $id }, _set: $set) { id task_id }
     }`,
-    {
-      id,
-      set: {
-        entries: body.entries,
-        location: body.location,
-        status: "submitted",
-        submitted_at: new Date().toISOString(),
-        audit_trail: [{ action: "submitted", at: new Date().toISOString(), by: user.id, byName: user.realName }],
-      },
-    },
+    { id, set },
   );
   const rec = await adminGql<{ inspection_records_by_pk: { task_id: string } | null }>(
     `query ($id: uuid!) { inspection_records_by_pk(id: $id) { task_id } }`,
@@ -3764,41 +3835,88 @@ async function runAnalyze(user: AppUser, body: Record<string, unknown>) {
       templateId = String(task?.service_case?.task_template_id || task?.service_case?.task_template?.id || "");
     }
   }
-  const result = await analyzePhotos({
-    title,
-    description,
-    photoUrls: takeLatestPhotos(body.photoUrls, 8),
-    templateId: templateId || undefined,
-    entryId: entryId || undefined,
-  });
+  const startedAt = new Date().toISOString();
   if (recordId && entryId) {
-    const rec = await adminGql<{ inspection_records_by_pk: { entries: Array<Record<string, unknown>> } | null }>(
-      `query ($id: uuid!) { inspection_records_by_pk(id: $id) { entries } }`,
-      { id: recordId },
-    );
-    const entries = rec.inspection_records_by_pk?.entries || [];
-    const next = entries.map((e) =>
-      e.templateEntryId === entryId ? { ...e, aiResult: result } : e,
-    );
-    await adminGql(
-      `mutation ($id: uuid!, $entries: jsonb!) {
-        update_inspection_records_by_pk(pk_columns: { id: $id }, _set: { entries: $entries }) { id }
-      }`,
-      { id: recordId, entries: next },
-    );
+    await patchEntryAiResult(recordId, entryId, {
+      status: "pending",
+      confidence: 0,
+      reason: "",
+      startedAt,
+      attempts: 0,
+    }).catch(() => null);
+  }
+
+  let lastReason = "分析未返回合格或不合格";
+  let result: Awaited<ReturnType<typeof analyzePhotos>> | null = null;
+  for (let attempt = 1; attempt <= AI_ANALYZE_ATTEMPTS; attempt += 1) {
+    try {
+      result = await analyzePhotos({
+        title,
+        description,
+        photoUrls: takeLatestPhotos(body.photoUrls, 8),
+        templateId: templateId || undefined,
+        entryId: entryId || undefined,
+      });
+      if (isPassOrFail(result.status)) {
+        if (recordId && entryId) {
+          await patchEntryAiResult(recordId, entryId, {
+            ...result,
+            startedAt,
+            attempts: attempt,
+          });
+          await routeRecordAudit(recordId).catch(() => null);
+        }
+        return ok({ queued: false, completed: true, ...result, aiResult: result });
+      }
+      lastReason = result.reason || lastReason;
+    } catch (error) {
+      lastReason = error instanceof Error ? error.message : lastReason;
+      result = null;
+    }
+  }
+
+  const failed = {
+    ...(result || {}),
+    ...aiErrorResult(`已自动分析 ${AI_ANALYZE_ATTEMPTS} 次仍无合格/不合格：${lastReason}`, AI_ANALYZE_ATTEMPTS),
+  };
+  if (recordId && entryId) {
+    await patchEntryAiResult(recordId, entryId, { ...failed, startedAt }).catch(() => null);
     await routeRecordAudit(recordId).catch(() => null);
   }
-  return ok({ queued: false, completed: true, ...result, aiResult: result });
+  return ok({ queued: false, completed: true, ...failed, aiResult: failed });
 }
 
 async function aiResult(entryId: string, recordId: string | null) {
-  if (!recordId) return ok({ status: "pending" });
-  const rec = await adminGql<{ inspection_records_by_pk: { entries: Array<Record<string, unknown>> } | null }>(
-    `query ($id: uuid!) { inspection_records_by_pk(id: $id) { entries } }`,
+  if (!recordId) return ok(aiErrorResult("缺少记录，无法读取分析结果"));
+  const rec = await adminGql<{
+    inspection_records_by_pk: {
+      entries: Array<Record<string, unknown>>;
+      status?: string;
+      submitted_at?: string | null;
+      task?: { template_snapshot?: unknown } | null;
+    } | null;
+  }>(
+    `query ($id: uuid!) {
+      inspection_records_by_pk(id: $id) {
+        entries status submitted_at
+        task { template_snapshot }
+      }
+    }`,
     { id: recordId },
   );
-  const entry = (rec.inspection_records_by_pk?.entries || []).find((e) => e.templateEntryId === entryId);
-  return ok(entry?.aiResult || { status: "pending" });
+  const row = rec.inspection_records_by_pk;
+  if (!row) return ok(aiErrorResult("记录不存在"));
+  await persistFinalizedAiEntries(recordId, row.entries, row.task?.template_snapshot, {
+    submittedAt: row.submitted_at,
+    recordStatus: row.status,
+  }).catch(() => false);
+  const fresh = await adminGql<{
+    inspection_records_by_pk: { entries: Array<Record<string, unknown>> } | null;
+  }>(`query ($id: uuid!) { inspection_records_by_pk(id: $id) { entries } }`, { id: recordId });
+  const entry = (fresh.inspection_records_by_pk?.entries || []).find(
+    (item) => item.templateEntryId === entryId,
+  );
+  return ok(entry?.aiResult || aiErrorResult("分析未写出合格或不合格，已转为异常"));
 }
 
 async function checkLocation(body: Record<string, unknown>) {

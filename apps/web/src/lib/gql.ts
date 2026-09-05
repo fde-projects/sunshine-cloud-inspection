@@ -1,16 +1,12 @@
 import { getStoredUser, getToken } from "./session";
 
-let graphqlUrlCache: string | null = null;
-
-export async function getGraphqlUrl(): Promise<string> {
-  if (graphqlUrlCache) return graphqlUrlCache;
-  const res = await fetch("/api/config");
-  if (!res.ok) throw new Error("无法读取 GraphQL 配置");
-  const data = (await res.json()) as { graphqlUrl?: string };
-  const url = String(data.graphqlUrl || "").trim();
-  if (!url) throw new Error("未配置数据服务地址，请检查环境变量 HASURA_GRAPHQL_URL");
-  graphqlUrlCache = url;
-  return graphqlUrlCache;
+function graphqlEndpoint(): string {
+  if (typeof window === "undefined") {
+    const url = String(process.env.HASURA_GRAPHQL_URL || "").trim();
+    if (!url) throw new Error("未配置数据服务地址，请检查环境变量 HASURA_GRAPHQL_URL");
+    return url;
+  }
+  return "/api/graphql";
 }
 
 function roleAllowedByJwt(jwt: string, role: string): boolean {
@@ -30,7 +26,7 @@ export async function gql<T>(
   variables?: Record<string, unknown>,
   token?: string | null,
 ): Promise<T> {
-  const url = await getGraphqlUrl();
+  const url = graphqlEndpoint();
   const jwt = token === undefined ? getToken() : token;
   const activeRole = getStoredUser()?.role;
   const roleHeader =

@@ -125,9 +125,11 @@ const monthStatusLabel: Record<string, string> = {
 function CaseSheet({
   item,
   onClose,
+  onOpenCase,
 }: {
   item: IncomeLedger;
   onClose: () => void;
+  onOpenCase?: (caseId: string) => void;
 }) {
   const [showItems, setShowItems] = useState(false);
   const penalties = item.eventPenalties || [];
@@ -145,6 +147,7 @@ function CaseSheet({
     approved: '已通过',
     rejected: '已驳回',
   };
+  const caseId = item.serviceCase?.id;
 
   return (
     <div className="inc-bill-sheet">
@@ -264,6 +267,16 @@ function CaseSheet({
           )}
         </div>
       )}
+
+      {caseId && onOpenCase ? (
+        <button
+          type="button"
+          className="inc-bill-sheet-cta"
+          onClick={() => onOpenCase(caseId)}
+        >
+          查看作业单 ›
+        </button>
+      ) : null}
     </div>
   );
 }
@@ -665,7 +678,16 @@ export default function MyIncomePage() {
         closeable={false}
         onClose={() => setActive(undefined)}
       >
-        {active && <CaseSheet item={active} onClose={() => setActive(undefined)} />}
+        {active && (
+          <CaseSheet
+            item={active}
+            onClose={() => setActive(undefined)}
+            onOpenCase={(caseId) => {
+              setActive(undefined);
+              navigate(`/m/finance-cases/${caseId}`);
+            }}
+          />
+        )}
       </Popup>
     </div>
   );

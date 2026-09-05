@@ -7,7 +7,7 @@
   background:
     radial-gradient(circle at 88% -4%, rgba(90, 220, 170, 0.28), transparent 18rem),
     radial-gradient(circle at 8% 18%, rgba(20, 90, 70, 0.35), transparent 12rem),
-    linear-gradient(165deg, #063d2d 0%, #0f7a58 46%, #e8f1ec 46.05%, #e8f1ec 100%);
+    linear-gradient(165deg, #045239 0%, #0a6b4c 46%, #eef2f0 46.05%, #eef2f0 100%);
 }
 
 @media (min-width: 641px) {

@@ -9,7 +9,7 @@ import type { AppRole } from '@/lib/types';
 import { fetchInspectorSummary, type InspectorSummary } from '../../api/stats';
 import { mobileCacheKeys } from '../../utils/mobileCacheKeys';
 import { useCachedResource } from '../../utils/useCachedResource';
-import { isStandaloneDisplay, tryNativeInstall } from '../../utils/addToHome';
+import { isStandaloneDisplay, isIosDevice, isSecureInstallContext, tryNativeInstall } from '../../utils/addToHome';
 import AddToHomePrompt from '../../components/AddToHomePrompt';
 import './my.css';
 
@@ -67,7 +67,7 @@ export default function MyPage() {
           />
         </Cell.Group>
 
-        <div className="my-stats-card" style={{ marginTop: 12 }}>
+        <div className="my-stats-card">
           <h3 className="my-stats-card__title">本月统计</h3>
           {loading ? (
             <div className="mobile-summary-skeleton" aria-label="正在加载本月统计">
@@ -81,18 +81,18 @@ export default function MyPage() {
             </button>
           ) : month ? (
             <div className="my-stats-grid">
-              <div>
+              <button type="button" onClick={() => navigate('/m/tasks')}>
                 <b>{month.total ?? 0}</b>
                 <span>作业数</span>
-              </div>
-              <div>
+              </button>
+              <button type="button" onClick={() => navigate('/m/tasks')}>
                 <b>{month.completed ?? 0}</b>
                 <span>已完成</span>
-              </div>
-              <div>
+              </button>
+              <button type="button" onClick={() => navigate('/m/income')}>
                 <b>{month.completionRate ?? 0}%</b>
                 <span>完成率</span>
-              </div>
+              </button>
             </div>
           ) : (
             <Empty description="暂无数据" imageSize={64} />
@@ -109,8 +109,25 @@ export default function MyPage() {
               isLink
               onClick={() => {
                 void (async () => {
-                  const installed = await tryNativeInstall();
-                  if (!installed) setShowA2hs(true);
+                  const showGuide = () => {
+                    setShowA2hs(true);
+                  };
+                  // 局域网 http / iOS：系统装不了，直接出说明弹窗
+                  if (!isSecureInstallContext() || isIosDevice()) {
+                    showGuide();
+                    return;
+                  }
+                  try {
+                    const installed = await Promise.race([
+                      tryNativeInstall(),
+                      new Promise<false>((resolve) => {
+                        window.setTimeout(() => resolve(false), 1200);
+                      }),
+                    ]);
+                    if (!installed) showGuide();
+                  } catch {
+                    showGuide();
+                  }
                 })();
               }}
             />

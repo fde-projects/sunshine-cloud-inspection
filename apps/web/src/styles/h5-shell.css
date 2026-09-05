@@ -1,17 +1,18 @@
 :root {
-  /* Field Solar — 光伏现场巡检 */
-  --h5-green: #0f7a58;
-  --h5-green-bright: #1a9a6e;
-  --h5-green-dark: #0a5a40;
-  --h5-green-soft: rgba(15, 122, 88, 0.1);
+  /* Field Solar — 工程师端统一皮肤（与首页一致） */
+  --h5-green: #0c6b4c;
+  --h5-green-bright: #128560;
+  --h5-green-dark: #08553c;
+  --h5-green-deep: #045239;
+  --h5-green-soft: rgba(12, 107, 76, 0.1);
   --h5-ink: #132820;
   --h5-ink-soft: #2a463a;
-  --h5-muted: #61756b;
+  --h5-muted: #6a8278;
   --h5-line: rgba(18, 70, 52, 0.1);
   --h5-line-soft: rgba(18, 70, 52, 0.06);
-  --h5-bg: #e6efe9;
-  --h5-bg-deep: #d8e6de;
-  --h5-surface: #fbfcfb;
+  --h5-bg: #eef2f0;
+  --h5-bg-deep: #e4ebe7;
+  --h5-surface: #f7f9f8;
   --h5-surface-elevated: #ffffff;
   --h5-warn: #9a6b1f;
   --h5-warn-bg: #f8f1e3;
@@ -19,16 +20,22 @@
   --h5-danger-bg: #f7ecea;
   --h5-info: #3d6a7a;
   --h5-info-bg: #eaf2f5;
-  --h5-radius-sm: 10px;
-  --h5-radius: 14px;
-  --h5-radius-lg: 18px;
-  --h5-radius-xl: 22px;
-  --h5-shadow: 0 10px 28px rgba(14, 52, 38, 0.06);
-  --h5-shadow-soft: 0 4px 14px rgba(14, 52, 38, 0.04);
+  --h5-radius-sm: 12px;
+  --h5-radius: 16px;
+  --h5-radius-lg: 20px;
+  --h5-radius-xl: 24px;
+  --h5-shadow: 0 12px 32px rgba(8, 48, 34, 0.1);
+  --h5-shadow-soft: 0 4px 16px rgba(12, 40, 30, 0.05);
   --h5-ease: cubic-bezier(0.22, 1, 0.36, 1);
   --h5-font: 'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', sans-serif;
   --h5-font-display: 'Outfit', 'Noto Sans SC', 'PingFang SC', sans-serif;
   --h5-shell-max: 640px;
+  --h5-hero-bg:
+    radial-gradient(circle at 88% 12%, rgba(140, 236, 190, 0.2), transparent 40%),
+    linear-gradient(160deg, #045239 0%, #0a6b4c 48%, #128560 100%);
+  --h5-page-bg:
+    radial-gradient(ellipse 90% 48% at 50% -12%, rgba(18, 133, 96, 0.14), transparent 52%),
+    linear-gradient(180deg, #eaf3ee 0%, var(--h5-bg) 38%, #e9efec 100%);
   --rv-primary-color: var(--h5-green);
   --rv-tabbar-z-index: 100;
   color: var(--h5-ink);
@@ -43,14 +50,36 @@
   -webkit-text-size-adjust: 100%;
 }
 
+/* 只给可点控件加 manipulation，不要绑在整页上，避免干扰整页滚动 */
+.h5-app button,
+.h5-app a,
+.h5-app [role='button'],
+.h5-app .rv-tabbar-item,
+.h5-app .rv-cell,
+.h5-app .rv-button {
+  touch-action: manipulation;
+}
+
+/* 立刻给按下反馈，避免「点了半天才动」的空窗感 */
+.h5-app button:not(:disabled):active,
+.h5-app a:active,
+.h5-app [role='button']:active,
+.h5-app .rv-tabbar-item:active,
+.h5-app .rv-cell:active {
+  opacity: 0.72;
+}
+
+.sites-page {
+  min-height: 100%;
+  padding-bottom: 24px;
+  background: transparent;
+}
+
 .h5-app {
   min-height: 100%;
   min-height: 100dvh;
   color: var(--h5-ink);
-  background:
-    radial-gradient(ellipse 90% 55% at 12% -8%, rgba(46, 168, 122, 0.14), transparent 52%),
-    radial-gradient(ellipse 70% 40% at 96% 8%, rgba(90, 140, 120, 0.1), transparent 48%),
-    linear-gradient(180deg, #eef5f1 0%, var(--h5-bg) 42%, #e9f0ec 100%);
+  background: var(--h5-page-bg);
   -webkit-font-smoothing: antialiased;
 }
 
@@ -61,17 +90,67 @@
   min-height: 100dvh;
   max-width: var(--h5-shell-max);
   margin: 0 auto;
-  background:
-    radial-gradient(ellipse 120% 40% at 50% -5%, rgba(26, 154, 110, 0.09), transparent 55%),
-    linear-gradient(180deg, rgba(251, 252, 251, 0.55) 0%, transparent 28%),
-    var(--h5-bg);
+  background: var(--h5-page-bg);
 }
 
-@supports (padding: env(safe-area-inset-bottom)) {
-  .h5-app {
-    padding-bottom: env(safe-area-inset-bottom);
-  }
+/* 统一：深绿头图 / 白卡 / 描边按钮 */
+.h5-page-hero {
+  position: relative;
+  overflow: hidden;
+  padding: max(14px, env(safe-area-inset-top)) 18px 36px;
+  color: #fff;
+  background: var(--h5-hero-bg);
 }
+
+.h5-page-hero::after {
+  content: '';
+  position: absolute;
+  width: 280px;
+  height: 280px;
+  right: -130px;
+  top: -120px;
+  border: 32px solid rgba(255, 255, 255, 0.055);
+  border-radius: 50%;
+  pointer-events: none;
+}
+
+.h5-card {
+  border: 0;
+  border-radius: var(--h5-radius-lg);
+  background: var(--h5-surface-elevated);
+  box-shadow: var(--h5-shadow-soft);
+}
+
+.h5-card--lift {
+  box-shadow: var(--h5-shadow);
+}
+
+.h5-ghost-btn {
+  padding: 7px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  border-radius: 999px;
+  color: rgba(255, 255, 255, 0.95);
+  background: transparent;
+  font-size: 12px;
+  font-weight: 600;
+  font-family: inherit;
+}
+
+.h5-ghost-btn:active {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.h5-primary-btn {
+  border: 0;
+  border-radius: var(--h5-radius);
+  color: #fff;
+  background: linear-gradient(135deg, var(--h5-green) 0%, var(--h5-green-dark) 100%);
+  box-shadow: 0 10px 22px rgba(8, 72, 50, 0.28);
+  font-family: inherit;
+  font-weight: 700;
+}
+
+/* safe-area 由底栏 / 各页自己处理，勿给 .h5-app 再垫一层，否则底栏上方会出现空白带 */
 
 .tab-layout {
   flex: 1;
@@ -84,27 +163,34 @@
 
 .tab-layout__content {
   flex: 1;
-  padding-bottom: calc(78px + env(safe-area-inset-bottom));
-  animation: h5-page-in 0.38s var(--h5-ease) both;
+  /* 只留底栏高度；勿再开 Tabbar placeholder，否则会叠出一条空白带 */
+  padding-bottom: calc(72px + env(safe-area-inset-bottom));
+  /* 切页淡入会让按钮像「慢半拍」，缩短到几乎无感 */
+  animation: h5-page-in 0.12s var(--h5-ease) both;
 }
 
 .tab-layout--no-tab .tab-layout__content {
   padding-bottom: env(safe-area-inset-bottom);
 }
 
-/* 作业列表 / 作业详情：外层锁视口，内部自己滚。
-   首页不锁：手机浏览器有地址栏和底栏，100dvh + overflow:hidden 会裁掉待办且滑不动。 */
-.tab-layout:has(.tasks-page--shell),
+/* 作业详情：外层锁视口，内部自己滚。
+   首页 / 作业列表跟浏览器一起滚，避免套一层抢手势。 */
 .tab-layout:has(.case-detail-shell) {
   height: 100dvh;
   max-height: 100dvh;
   overflow: hidden;
 }
-.tab-layout:has(.page-home--shell) .tab-layout__content {
+.tab-layout:has(.page-home--shell) {
+  height: auto;
+  max-height: none;
   overflow: visible;
-  padding-bottom: calc(78px + env(safe-area-inset-bottom));
 }
-.tab-layout:has(.tasks-page--shell) .tab-layout__content,
+.tab-layout:has(.page-home--shell) .tab-layout__content,
+.tab-layout:has(.tasks-page--shell) .tab-layout__content {
+  flex: 0 0 auto;
+  overflow: visible;
+  padding-bottom: calc(72px + env(safe-area-inset-bottom));
+}
 .tab-layout:has(.case-detail-shell) .tab-layout__content {
   min-height: 0;
   overflow: hidden;
@@ -191,7 +277,7 @@
   min-height: 48px;
   font-weight: 600;
   letter-spacing: 0.01em;
-  transition: transform 0.18s var(--h5-ease), box-shadow 0.18s var(--h5-ease), opacity 0.18s ease;
+  transition: transform 0.1s var(--h5-ease), opacity 0.1s ease;
 }
 
 .rv-button--primary {
@@ -236,9 +322,9 @@
 
 .rv-nav-bar {
   height: 54px;
-  background: rgba(251, 252, 251, 0.88);
+  background: rgba(251, 252, 251, 0.94);
+  backdrop-filter: blur(10px);
   box-shadow: 0 1px 0 var(--h5-line-soft);
-  backdrop-filter: blur(18px) saturate(1.2);
 }
 
 .rv-nav-bar__title {
@@ -261,10 +347,8 @@
   padding: 6px 8px calc(6px + env(safe-area-inset-bottom));
   transform: translateX(-50%);
   border-top: 1px solid var(--h5-line-soft);
-  background: rgba(251, 252, 251, 0.92);
-  box-shadow: 0 -12px 32px rgba(14, 52, 38, 0.06);
-  backdrop-filter: blur(20px) saturate(1.15);
-  isolation: isolate;
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 -6px 20px rgba(8, 48, 34, 0.06);
 }
 
 .rv-tabbar-item {
@@ -302,7 +386,7 @@
 
 .rv-cell-group--inset {
   overflow: hidden;
-  border: 1px solid var(--h5-line-soft);
+  border: 0;
   border-radius: var(--h5-radius-lg);
   background: var(--h5-surface-elevated);
   box-shadow: var(--h5-shadow-soft);
@@ -462,15 +546,15 @@
     min-height: 0;
   }
 
-  /* 锁视口页：填满手机框，勿用 100dvh 顶破圆角（首页随内容增高，框内可滚） */
-  .tab-layout:has(.tasks-page--shell),
+  /* 锁视口页：填满手机框，勿用 100dvh 顶破圆角（首页/作业列表随内容增高） */
   .tab-layout:has(.case-detail-shell) {
     flex: 1;
     min-height: 0;
     height: 100%;
     max-height: 100%;
   }
-  .tab-layout:has(.page-home--shell) {
+  .tab-layout:has(.page-home--shell),
+  .tab-layout:has(.tasks-page--shell) {
     flex: 1 0 auto;
     height: auto;
     max-height: none;
@@ -513,7 +597,7 @@
   }
 
   .tab-layout__content {
-    padding-bottom: calc(84px + env(safe-area-inset-bottom));
+    padding-bottom: calc(72px + env(safe-area-inset-bottom));
   }
 }
 

@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { Empty, PullRefresh, Toast } from '@/m/lib/react-vant';
+import { Empty, Toast } from '@/m/lib/react-vant';
 import { fetchTasks, type TaskItem } from '../../api/task';
 import { fetchMyFinanceCases, type MobileFinanceCase } from '../../api/finance';
 import { useAuthStore } from '../../stores/auth';
@@ -146,9 +146,9 @@ export default function TasksPage() {
       : `site-jobs|${tab}|${appliedKeyword}`,
   );
 
-  const { data, loading, error, reload } = useCachedResource(cacheKey, loader);
+  const { data, loading, refreshing, error, reload } = useCachedResource(cacheKey, loader);
 
-  useVisiblePolling({ reload, intervalMs: 30_000 });
+  useVisiblePolling({ reload, intervalMs: 45_000 });
 
   const activeCaseIds = useMemo(
     () =>
@@ -234,16 +234,15 @@ export default function TasksPage() {
   useEffect(() => {
     setVisibleCount(PAGE_SIZE);
     setLoadingMore(false);
-    if (scrollRef.current) scrollRef.current.scrollTop = 0;
+    window.scrollTo({ top: 0, left: 0, behavior: 'auto' });
   }, [tab, appliedKeyword, previewMode, currentSite?.id, cacheKey]);
 
   const visibleList = list.slice(0, visibleCount);
   const hasMore = visibleCount < list.length;
 
   useEffect(() => {
-    const root = scrollRef.current;
     const sentinel = sentinelRef.current;
-    if (!root || !sentinel || !hasMore || loading) return;
+    if (!sentinel || !hasMore || loading) return;
 
     const io = new IntersectionObserver(
       (entries) => {
@@ -254,7 +253,7 @@ export default function TasksPage() {
           setLoadingMore(false);
         }, 180);
       },
-      { root, rootMargin: '120px 0px', threshold: 0 },
+      { root: null, rootMargin: '160px 0px', threshold: 0 },
     );
     io.observe(sentinel);
     return () => io.disconnect();
@@ -269,14 +268,35 @@ export default function TasksPage() {
     <div className={`tasks-page tasks-page--shell${previewMode ? ' is-preview' : ''}`}>
       <div className="tasks-page__sticky">
         <header className="tasks-page__header">
-          <h1 className="tasks-page__title">作业</h1>
+          <div className="tasks-page__title-row">
+            <h1 className="tasks-page__title">作业</h1>
+            <button
+              type="button"
+              className="tasks-page__refresh"
+              disabled={loading || refreshing}
+              onClick={() => {
+                void onRefresh().then(() => Toast.success('已刷新'));
+              }}
+            >
+              {refreshing || loading ? '刷新中' : '刷新'}
+            </button>
+          </div>
           <p className="tasks-page__sub">
             {previewMode
               ? `排版预览 · ${PREVIEW_TOTAL} 条模拟作业（每次加载 ${PAGE_SIZE} 条）`
               : currentSite?.name
                 ? `当前网格 · ${currentSite.name}`
-                : '未选择网格，请先在首页切换网格'}
+                : '未选择网格'}
           </p>
+          {!previewMode && !currentSite ? (
+            <button
+              type="button"
+              className="tasks-page__site-cta"
+              onClick={() => navigate('/m/sites')}
+            >
+              去选择网格 ›
+            </button>
+          ) : null}
         </header>
 
         {previewMode ? (
@@ -361,8 +381,7 @@ export default function TasksPage() {
         </div>
       </div>
 
-      <PullRefresh onRefresh={() => void onRefresh()}>
-        <div className="tasks-page__scroll" ref={scrollRef}>
+      <div className="tasks-page__scroll" ref={scrollRef}>
           <div className="tasks-page__list">
             {loading ? (
               <div className="mobile-list-skeleton" aria-label="正在加载作业">
@@ -441,7 +460,6 @@ export default function TasksPage() {
             )}
           </div>
         </div>
-      </PullRefresh>
     </div>
   );
 }

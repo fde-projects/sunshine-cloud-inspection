@@ -39,6 +39,15 @@ function writeStored<T>(key: string, value: T) {
   }
 }
 
+function stableEqual(a: unknown, b: unknown) {
+  if (a === b) return true;
+  try {
+    return JSON.stringify(a) === JSON.stringify(b);
+  } catch {
+    return false;
+  }
+}
+
 async function requestResource<T>(key: string, loader: () => Promise<T>, force = false) {
   if (force) inflight.delete(key);
   const pending = inflight.get(key) as Promise<T> | undefined;
@@ -89,12 +98,18 @@ export function useCachedResource<T>(
   const load = useCallback(
     async (force = false) => {
       const cached = readStored<T>(key, maxAge);
+      // 轮询 force 刷新时不闪 refreshing，避免整页像「卡一下」
       if (cached === undefined) setLoading(true);
-      else setRefreshing(true);
+      else if (!force) setRefreshing(true);
       setError(false);
       try {
         const value = await requestResource(key, loader, force);
-        if (activeKey.current === key) setState({ key, data: value });
+        if (activeKey.current === key) {
+          setState((prev) => {
+            if (prev.key === key && stableEqual(prev.data, value)) return prev;
+            return { key, data: value };
+          });
+        }
         return value;
       } catch (reason) {
         if (activeKey.current === key) setError(true);

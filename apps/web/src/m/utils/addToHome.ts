@@ -50,10 +50,20 @@ export function isSecureInstallContext(): boolean {
 export async function tryNativeInstall(): Promise<boolean> {
   const event = deferredPrompt;
   if (!event) return false;
-  await event.prompt();
-  await event.userChoice;
-  deferredPrompt = null;
-  notify();
+  try {
+    await event.prompt();
+    await Promise.race([
+      event.userChoice,
+      new Promise<{ outcome: "dismissed" }>((resolve) => {
+        window.setTimeout(() => resolve({ outcome: "dismissed" }), 8000);
+      }),
+    ]);
+  } catch {
+    return false;
+  } finally {
+    deferredPrompt = null;
+    notify();
+  }
   return true;
 }
 

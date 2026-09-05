@@ -1,6 +1,64 @@
 import { parseHardRuleBindings, parseHardRuleSamples } from "@/lib/hard-rule-match";
 import { adminGql } from "@/lib/hasura-admin";
 import type { AppUser } from "./http";
+import { resolveEntryAiEnabled } from "./record-audit-route";
+
+function summarizeRecordAi(entries: unknown, snapshot: unknown) {
+  const list = Array.isArray(entries) ? entries : [];
+  const snaps = Array.isArray(snapshot) ? snapshot : [];
+  const byId = new Map<string, { aiEnabled?: boolean; entryKind?: string; checkType?: string }>();
+  for (const raw of snaps) {
+    const item = (raw || {}) as {
+      id?: string;
+      aiEnabled?: boolean;
+      entryKind?: string;
+      checkType?: string;
+    };
+    if (item.id) byId.set(String(item.id), item);
+  }
+  const summary = { pass: 0, fail: 0, pending: 0, error: 0 };
+  for (const raw of list) {
+    const entry = (raw || {}) as {
+      templateEntryId?: string;
+      aiResult?: { status?: string } | null;
+    };
+    const tpl = byId.get(String(entry.templateEntryId || ""));
+    const aiOn = tpl ? resolveEntryAiEnabled(tpl) : !!entry.aiResult;
+    if (!aiOn) continue;
+    const status = entry.aiResult?.status || "error";
+    if (status === "pass") summary.pass += 1;
+    else if (status === "fail") summary.fail += 1;
+    else if (status === "pending") summary.pending += 1;
+    else summary.error += 1;
+  }
+  return summary;
+}
+
+function personName(raw: unknown) {
+  const person = (raw || {}) as { real_name?: string; realName?: string };
+  return person.real_name || person.realName || null;
+}
+
+function inspectorNameFromRecord(row: Record<string, unknown>, task?: Record<string, unknown>) {
+  const fromTask = personName(task?.inspector);
+  if (fromTask) return fromTask;
+  const fromUnit = personName((task?.work_unit as { inspector?: unknown } | undefined)?.inspector);
+  if (fromUnit) return fromUnit;
+  const trail = Array.isArray(row.audit_trail) ? row.audit_trail : [];
+  for (let i = trail.length - 1; i >= 0; i -= 1) {
+    const ev = (trail[i] || {}) as { action?: string; byName?: string; by_name?: string };
+    const name = ev.byName || ev.by_name;
+    if ((ev.action === "submitted" || ev.action === "resubmitted") && name && name !== "系统") {
+      return String(name);
+    }
+  }
+  for (let i = trail.length - 1; i >= 0; i -= 1) {
+    const ev = (trail[i] || {}) as { byName?: string; by_name?: string };
+    const name = ev.byName || ev.by_name;
+    if (name && name !== "系统") return String(name);
+  }
+  return null;
+}
 
 export const CASE_CORE_FIELDS = `
   id gsp_case_no project_name service_type product_line creator province city site_desc
@@ -387,6 +445,9 @@ export function mapRecord(row: Record<string, unknown>) {
     approvedAt: row.approved_at,
     rejectReason: row.reject_reason,
     auditTrail: row.audit_trail || [],
+    inspectorName: inspectorNameFromRecord(row, t),
+    gspCaseNo: (t?.service_case as { gsp_case_no?: string } | undefined)?.gsp_case_no || null,
+    aiSummary: summarizeRecordAi(row.entries, t?.template_snapshot),
     createdAt: row.created_at,
     task: t
       ? {

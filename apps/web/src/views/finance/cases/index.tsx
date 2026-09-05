@@ -405,10 +405,10 @@ export default function FinanceCasesPage() {
         width: 140,
         render: (_, row) => {
           const a = row.aiSummary;
-          if (!a) return '-';
+          if (!a || a.pass + a.fail + a.pending + a.error === 0) return '-';
           if (a.fail > 0) return <Tag color="error">不合格 {a.fail}</Tag>;
-          if (a.pending > 0) return <Tag color="processing">分析中 {a.pending}</Tag>;
-          if (a.error > 0) return <Tag color="warning">待人工判断 {a.error}</Tag>;
+          if (a.error > 0) return <Tag color="warning">异常 {a.error}</Tag>;
+          if (a.pending > 0) return <Tag color="processing">正在分析 {a.pending}</Tag>;
           return <Tag color="success">合格 {a.pass}</Tag>;
         },
       },

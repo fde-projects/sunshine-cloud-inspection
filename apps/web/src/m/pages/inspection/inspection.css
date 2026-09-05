@@ -1,17 +1,48 @@
 .inspection-page {
   --rv-primary-color: var(--h5-green);
-  min-height: 100vh;
-  padding-bottom: calc(96px + env(safe-area-inset-bottom));
+  min-height: 100%;
+  padding-bottom: calc(88px + env(safe-area-inset-bottom));
   color: var(--h5-ink);
+  overflow: visible;
   background:
     radial-gradient(circle at 100% 0, rgba(26, 154, 110, 0.1), transparent 260px),
     transparent;
 }
 
 .inspection-header {
-  background: rgba(251, 252, 251, 0.9) !important;
-  box-shadow: 0 6px 22px rgba(24, 73, 55, 0.05);
-  backdrop-filter: blur(18px) saturate(1.15);
+  position: sticky;
+  top: 0;
+  z-index: 80;
+  background: rgba(251, 252, 251, 0.94) !important;
+  backdrop-filter: blur(10px);
+  border-bottom: 1px solid var(--h5-line-soft);
+}
+
+.inspection-header__bar {
+  display: flex;
+  align-items: center;
+  height: 46px;
+  padding: 0 8px;
+}
+
+.inspection-header__back {
+  min-width: 72px;
+  padding: 8px 12px;
+  border: 0;
+  background: transparent;
+  color: var(--h5-green);
+  font-size: 16px;
+  font-weight: 600;
+  font-family: inherit;
+}
+
+.inspection-header__title {
+  flex: 1;
+  margin-right: 72px;
+  text-align: center;
+  color: var(--h5-ink);
+  font-size: 16px;
+  font-weight: 600;
 }
 
 .inspection-body {
@@ -375,9 +406,19 @@
 }
 
 .inspection-bottom-actions {
-  background: rgba(251, 252, 251, 0.94) !important;
-  box-shadow: 0 -10px 30px rgba(24, 73, 55, 0.08);
-  backdrop-filter: blur(18px) saturate(1.1);
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 90;
+  max-width: var(--h5-shell-max, 640px);
+  margin: 0 auto;
+  display: flex;
+  gap: 8px;
+  padding: 10px 12px calc(10px + env(safe-area-inset-bottom));
+  background: #fbfcfb !important;
+  border-top: 1px solid #e8eeea;
+  box-shadow: 0 -4px 14px rgba(24, 73, 55, 0.05);
 }
 
 .inspection-bottom-actions .rv-button--primary {

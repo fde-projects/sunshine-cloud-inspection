@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { NavBar, Cell, Empty, Tag, Image, PullRefresh, Button, Toast, Dialog } from '@/m/lib/react-vant';
+import { NavBar, Cell, Empty, Tag, Button, Toast, Dialog } from '@/m/lib/react-vant';
 import {
   fetchRecord,
   setRecordManualResult,
@@ -21,8 +21,7 @@ import './report.css';
 const AI_LABEL: Record<string, string> = {
   pass: '合格',
   fail: '不合格',
-  pending: '分析中',
-  error: '分析失败',
+  error: '异常',
 };
 
 /** 巡检报告：查看各条目 AI 分析结果；网格长/管理员可人工确认 */
@@ -39,19 +38,20 @@ export default function ReportPage() {
     index: number;
   } | null>(null);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (opts?: { silent?: boolean }) => {
     if (!recordId) return;
-    setLoading(true);
+    const silent = !!opts?.silent;
+    if (!silent) setLoading(true);
     try {
       const r = await fetchRecord(recordId);
       setRecord(r);
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }, [recordId]);
 
   useEffect(() => {
-    load().catch(() => undefined);
+    void load().catch(() => undefined);
   }, [load]);
 
   useEffect(() => {
@@ -64,9 +64,10 @@ export default function ReportPage() {
       return !e.aiResult || e.aiResult.status === 'pending';
     });
     if (!pending) return;
+    // 静默轮询，避免打断手指滑动
     const t = window.setInterval(() => {
-      void load();
-    }, 3000);
+      void load({ silent: true });
+    }, 4000);
     return () => window.clearInterval(t);
   }, [record, load]);
 
@@ -91,11 +92,11 @@ export default function ReportPage() {
       const st =
         e.finalResult === 'pass' || e.finalResult === 'fail'
           ? e.finalResult
-          : e.aiResult?.status || 'pending';
+          : e.aiResult?.status || 'error';
       if (st === 'pass') pass += 1;
       else if (st === 'fail') fail += 1;
-      else if (st === 'error') error += 1;
-      else pending += 1;
+      else if (st === 'pending') pending += 1;
+      else error += 1;
     }
     return { pass, fail, pending, error };
   }, [record]);
@@ -132,6 +133,11 @@ export default function ReportPage() {
       Toast.info('该检查项没有现场照片，无法重新分析');
       return;
     }
+    const st = entry.aiResult?.status;
+    if (st === 'pass' || st === 'fail') {
+      Toast.info('合格、不合格无需重新分析');
+      return;
+    }
     const tpl = snapshot.get(entry.templateEntryId);
     if (!resolveEntryAiEnabled(tpl || {})) {
       Toast.info('该条目未启用 AI');
@@ -166,15 +172,20 @@ export default function ReportPage() {
 
   return (
     <div className="report-page">
-      <NavBar title="智能分析报告" leftText="返回" onClickLeft={() => navigate(-1)} />
+      <NavBar
+        title="智能分析报告"
+        leftText="返回"
+        onClickLeft={() => navigate(-1)}
+        rightText="刷新"
+        onClickRight={() => void load()}
+      />
 
       {loading && !record ? (
         <Empty description="加载中..." />
       ) : !record ? (
         <Empty description="报告不存在" />
       ) : (
-        <PullRefresh onRefresh={load}>
-          <div className="report-body">
+        <div className="report-body">
             <Cell.Group inset>
               <Cell
                 title={
@@ -203,7 +214,7 @@ export default function ReportPage() {
               </div>
               <div className="is-error">
                 <b>{summary.error}</b>
-                <span>失败</span>
+                <span>异常</span>
               </div>
             </div>
 
@@ -282,8 +293,8 @@ export default function ReportPage() {
 
             {summary.pending > 0 && (
               <div className="report-alert report-alert--pending">
-                仍有 {summary.pending} 项正在分析，页面会自动刷新；超过 3
-                分钟将自动转人工审核。
+                仍有 {summary.pending} 项正在分析（最多自动 3
+                次），完成后只会显示合格、不合格或异常。
               </div>
             )}
 
@@ -291,12 +302,21 @@ export default function ReportPage() {
               const tpl = snapshot.get(entry.templateEntryId);
               const aiOn = resolveEntryAiEnabled(tpl || {});
               const isText = tpl?.checkType === 'text';
-              const st = entry.aiResult?.status || 'pending';
+              const st = entry.aiResult?.status || 'error';
               const needRedo = record.rejectReason?.entryIds?.includes(entry.templateEntryId);
               const selected =
                 entry.manualResult === 'pass' || entry.manualResult === 'fail'
                   ? entry.manualResult
                   : null;
+              const photos = entry.photos || [];
+              const showManagerConfirm = canManualConfirm && statusAllowsConfirm;
+              const canRetryError =
+                aiOn &&
+                photos.length > 0 &&
+                statusAllowsConfirm &&
+                (busyKey === `${entry.templateEntryId}:retry` ||
+                  st === 'error' ||
+                  !entry.aiResult);
               return (
                 <div
                   key={entry.templateEntryId}
@@ -324,7 +344,7 @@ export default function ReportPage() {
                                     : 'primary'
                             }
                           >
-                            {AI_LABEL[st] || '待判断'}
+                            {AI_LABEL[st] || (st === 'pending' ? '正在分析…' : '异常')}
                             {['pass', 'fail'].includes(st)
                               ? ` ${Math.round((entry.aiResult?.confidence || 0) * 100)}%`
                               : ''}
@@ -334,13 +354,11 @@ export default function ReportPage() {
                         )
                       }
                       label={
-                        aiOn
-                          ? entry.aiResult?.reason
-                            ? entry.aiResult.reason
-                            : entry.aiResult
-                              ? undefined
-                              : '等待 AI 分析'
-                          : '本项仅存证，不触发 AI'
+                        !aiOn
+                          ? '本项仅存证，不触发 AI'
+                          : st === 'pending'
+                            ? '正在分析，完成后只会是合格、不合格或异常'
+                            : undefined
                       }
                     />
                     {selected ? (
@@ -359,6 +377,9 @@ export default function ReportPage() {
                         }
                       />
                     ) : null}
+                    {aiOn && entry.aiResult?.reason ? (
+                      <p className="report-ai-reason">{entry.aiResult.reason}</p>
+                    ) : null}
                     {(entry.photos || []).length > 0 && (
                       <Cell title="现场照片">
                         <div className="report-photos">
@@ -371,46 +392,42 @@ export default function ReportPage() {
                                 setPhotoPreview({ urls: entry.photos, index: photoIdx })
                               }
                             >
-                              <Image
-                                src={displayPhotoUrl(url)}
-                                width={72}
-                                height={72}
-                                fit="cover"
-                                radius={10}
-                              />
+                              <img src={displayPhotoUrl(url)} alt="" />
                             </button>
                           ))}
                         </div>
                       </Cell>
                     )}
                     {entry.remark ? <Cell title="备注" label={entry.remark} /> : null}
-                    {canManualConfirm && statusAllowsConfirm ? (
+                    {showManagerConfirm || canRetryError ? (
                       <Cell>
                         <div className="report-entry-actions">
-                          <div className="report-entry-confirm">
-                            <span className="report-entry-confirm-label">点击可人工确认</span>
-                            <div className="report-entry-toggle">
-                              <Button
-                                size="small"
-                                round
-                                className={`report-btn-pass${selected === 'pass' ? ' is-active' : ''}`}
-                                loading={busyKey === `${entry.templateEntryId}:pass`}
-                                onClick={() => void confirmManual(entry, 'pass')}
-                              >
-                                合格
-                              </Button>
-                              <Button
-                                size="small"
-                                round
-                                className={`report-btn-fail${selected === 'fail' ? ' is-active' : ''}`}
-                                loading={busyKey === `${entry.templateEntryId}:fail`}
-                                onClick={() => void confirmManual(entry, 'fail')}
-                              >
-                                不合格
-                              </Button>
+                          {showManagerConfirm ? (
+                            <div className="report-entry-confirm">
+                              <span className="report-entry-confirm-label">点击可人工确认</span>
+                              <div className="report-entry-toggle">
+                                <Button
+                                  size="small"
+                                  round
+                                  className={`report-btn-pass${selected === 'pass' ? ' is-active' : ''}`}
+                                  loading={busyKey === `${entry.templateEntryId}:pass`}
+                                  onClick={() => void confirmManual(entry, 'pass')}
+                                >
+                                  合格
+                                </Button>
+                                <Button
+                                  size="small"
+                                  round
+                                  className={`report-btn-fail${selected === 'fail' ? ' is-active' : ''}`}
+                                  loading={busyKey === `${entry.templateEntryId}:fail`}
+                                  onClick={() => void confirmManual(entry, 'fail')}
+                                >
+                                  不合格
+                                </Button>
+                              </div>
                             </div>
-                          </div>
-                          {(entry.photos || []).length > 0 ? (
+                          ) : null}
+                          {canRetryError ? (
                             <Button
                               size="small"
                               round
@@ -436,7 +453,6 @@ export default function ReportPage() {
               </Button>
             </div>
           </div>
-        </PullRefresh>
       )}
       {photoPreview && (
         <PhotoViewerOverlay

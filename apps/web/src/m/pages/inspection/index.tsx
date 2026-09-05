@@ -653,25 +653,29 @@ export default function InspectionPage() {
         window.clearInterval(pollRefs.current[templateEntryId]);
         delete pollRefs.current[templateEntryId];
         setAnalyzingIds((ids) => ids.filter((id) => id !== templateEntryId));
-        // 超时按待人工，不阻塞
-        setRecord((prev) => {
-          if (!prev) return prev;
-          return {
-            ...prev,
-            entries: prev.entries.map((e) =>
-              e.templateEntryId === templateEntryId
-                ? {
-                    ...e,
-                    aiResult: {
-                      status: 'error',
-                      confidence: 0,
-                      reason: 'AI 超时，请人工判断',
-                    },
-                  }
-                : e,
-            ),
-          };
-        });
+        try {
+          const fresh = await fetchRecord(recordId);
+          setRecord(fresh);
+        } catch {
+          setRecord((prev) => {
+            if (!prev) return prev;
+            return {
+              ...prev,
+              entries: prev.entries.map((e) =>
+                e.templateEntryId === templateEntryId
+                  ? {
+                      ...e,
+                      aiResult: {
+                        status: 'error',
+                        confidence: 0,
+                        reason: '分析未写出合格或不合格，已转为异常',
+                      },
+                    }
+                  : e,
+              ),
+            };
+          });
+        }
         return;
       }
       try {
@@ -890,6 +894,12 @@ export default function InspectionPage() {
               startPoll(capturedRecordId, capturedEntryId);
             } catch {
               setAnalyzingIds((ids) => ids.filter((id) => id !== capturedEntryId));
+              try {
+                const fresh = await fetchRecord(capturedRecordId);
+                setRecord(fresh);
+              } catch {
+                // 服务端会写异常，这里只同步屏幕
+              }
             }
           }
         } catch {
@@ -1104,50 +1114,12 @@ export default function InspectionPage() {
 
   return (
     <div className="inspection-page">
-      <div
-        className="inspection-header"
-        style={{
-          position: 'sticky',
-          top: 0,
-          zIndex: 200,
-          background: '#fff',
-          borderBottom: '1px solid #e8eeea',
-        }}
-      >
-        <div
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            height: 46,
-            padding: '0 8px',
-          }}
-        >
-          <button
-            type="button"
-            onClick={onClickBack}
-            style={{
-              border: 'none',
-              background: 'transparent',
-              color: '#2f9b6a',
-              fontSize: 16,
-              padding: '8px 12px',
-              cursor: 'pointer',
-              fontWeight: 600,
-              minWidth: 72,
-            }}
-          >
+      <div className="inspection-header">
+        <div className="inspection-header__bar">
+          <button type="button" className="inspection-header__back" onClick={onClickBack}>
             ← 返回
           </button>
-          <div
-            style={{
-              flex: 1,
-              textAlign: 'center',
-              fontSize: 16,
-              fontWeight: 600,
-              color: '#1a2e24',
-              marginRight: 72,
-            }}
-          >
+          <div className="inspection-header__title">
             {workActionLabel(workType, 'executing')}
           </div>
         </div>
@@ -1777,23 +1749,7 @@ export default function InspectionPage() {
       )}
 
       {task && record && showWorkSteps && (currentWizard || wizardSteps.length === 0) && (
-        <div
-          className="inspection-bottom-actions"
-          style={{
-            position: 'fixed',
-            left: 0,
-            right: 0,
-            bottom: 0,
-            zIndex: 100,
-            maxWidth: 640,
-            margin: '0 auto',
-            display: 'flex',
-            gap: 8,
-            padding: '10px 12px calc(10px + env(safe-area-inset-bottom))',
-            background: '#fff',
-            borderTop: '1px solid #e8eeea',
-          }}
-        >
+        <div className="inspection-bottom-actions">
           <Button
             round
             style={{ height: 48, flex: 1 }}

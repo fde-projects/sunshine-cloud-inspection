@@ -5,8 +5,11 @@ import type { RecordEntry } from '../api/record';
 import { displayPhotoUrl } from '../utils/photo-url';
 import './EntryReviewCard.css';
 
-function aiTagView(entry: RecordEntry) {
-  const status = entry.aiResult?.status || 'pending';
+function aiTagView(entry: RecordEntry, retrying?: boolean) {
+  if (retrying) {
+    return { label: '正在分析…', color: 'processing' as const };
+  }
+  const status = entry.aiResult?.status;
   const confidence = Math.round((entry.aiResult?.confidence || 0) * 100);
   if (status === 'pass') {
     return { label: `AI分析：合格 ${confidence}%`, color: 'success' as const };
@@ -14,10 +17,7 @@ function aiTagView(entry: RecordEntry) {
   if (status === 'fail') {
     return { label: `AI分析：不合格 ${confidence}%`, color: 'error' as const };
   }
-  if (status === 'error') {
-    return { label: 'AI分析：异常', color: 'warning' as const };
-  }
-  return { label: 'AI分析：进行中', color: 'processing' as const };
+  return { label: 'AI分析：异常', color: 'warning' as const };
 }
 
 function manualSelected(entry: RecordEntry): 'pass' | 'fail' | null {
@@ -54,9 +54,11 @@ export default function EntryReviewCard({
   onConfirm,
   onRetry,
 }: EntryReviewCardProps) {
-  const ai = aiTagView(entry);
+  const ai = aiTagView(entry, retrying);
   const selected = manualSelected(entry);
-  const reason = showAi ? entry.aiResult?.reason?.trim() : '';
+  const reason = showAi
+    ? entry.aiResult?.reason?.trim().replace(/^重新分析中…$/, '')
+    : '';
   const photos = entry.photos || [];
   const aiStatus = entry.aiResult?.status;
   const manualOverridesAi =
@@ -135,7 +137,7 @@ export default function EntryReviewCard({
               </Button>
             </div>
           </div>
-          {showAi && photos.length > 0 ? (
+          {showAi && photos.length > 0 && (retrying || aiStatus === 'error' || !aiStatus) ? (
             <Button type="link" size="small" loading={retrying} onClick={onRetry}>
               重新分析
             </Button>

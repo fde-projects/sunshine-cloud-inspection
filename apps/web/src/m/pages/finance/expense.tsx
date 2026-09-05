@@ -20,6 +20,8 @@ import { useAuthStore } from '../../stores/auth';
 import PhotoViewerOverlay from '../../components/PhotoViewerOverlay';
 import { displayPhotoUrl } from '../../utils/photo-url';
 import { compressImage } from '../../utils/imageCompress';
+import { isPreviewCaseId } from '../../utils/mobilePreview';
+import { buildPreviewCaseDetail } from '../../utils/mobilePreviewData';
 import './finance.css';
 
 const STATUS_LABEL: Record<string, string> = {
@@ -337,6 +339,7 @@ export default function FinanceExpensePage() {
   const [retryTick, setRetryTick] = useState(0);
   const [unitId, setUnitId] = useState(search.get('unitId') || '');
   const [busy, setBusy] = useState(false);
+  const [busyMode, setBusyMode] = useState<'save' | 'submit' | null>(null);
   const [uploading, setUploading] = useState(false);
   const [ocrBusy, setOcrBusy] = useState(false);
   const [viewer, setViewer] = useState<{ urls: string[]; index: number } | null>(null);
@@ -404,6 +407,13 @@ export default function FinanceExpensePage() {
       setLoading(true);
       setLoadError('');
       try {
+        if (isPreviewCaseId(id)) {
+          const data = buildPreviewCaseDetail(userId, id);
+          setItem(data);
+          setUnitId(data.activeUnit?.id || data.units?.[0]?.id || '');
+          applyClaim(null);
+          return;
+        }
         const data = await fetchMyFinanceCase(id);
         setItem(data);
         const units = data.units || [];
@@ -742,8 +752,13 @@ export default function FinanceExpensePage() {
   };
 
   const save = async (submit: boolean) => {
+    if (isPreviewCaseId(id)) {
+      Toast.info('预览数据仅看排版，不会真实提交');
+      return;
+    }
     if (!validateDraft(submit)) return;
     const autoFinish = search.get('autoFinish') === '1';
+    setBusyMode(submit ? 'submit' : 'save');
     setBusy(true);
     try {
       const saved = await saveMyTripExpense(id, {
@@ -772,6 +787,7 @@ export default function FinanceExpensePage() {
       /* */
     } finally {
       setBusy(false);
+      setBusyMode(null);
     }
   };
 
@@ -1312,7 +1328,7 @@ export default function FinanceExpensePage() {
                 disabled={busy}
                 onClick={() => void save(false)}
               >
-                保存草稿
+                {busyMode === 'save' ? '保存中…' : '保存草稿'}
               </button>
               <button
                 type="button"
@@ -1320,7 +1336,7 @@ export default function FinanceExpensePage() {
                 disabled={busy}
                 onClick={() => void save(true)}
               >
-                提交审核
+                {busyMode === 'submit' ? '提交中…' : '提交审核'}
               </button>
             </div>
           </div>,

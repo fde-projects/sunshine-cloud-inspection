@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams, useLocation } from 'react-router-dom';
@@ -58,6 +58,7 @@ export default function FinanceCaseDetailPage() {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [busyHint, setBusyHint] = useState('');
   const [unitFilter, setUnitFilter] = useState<UnitFilter>('mine');
   const [unitSearch, setUnitSearch] = useState('');
   const [gridLimit, setGridLimit] = useState(GRID_PAGE);
@@ -392,6 +393,11 @@ export default function FinanceCaseDetailPage() {
   })();
 
   const goInspectUnit = async (unit: UnitItem | null | undefined, autoStart: boolean) => {
+    if (previewMode) {
+      Toast.info('预览数据仅看排版，不会真实提交');
+      return;
+    }
+    setBusyHint('进入作业…');
     setBusy(true);
     try {
       let current = item;
@@ -417,14 +423,17 @@ export default function FinanceCaseDetailPage() {
       /* 拦截器 */
     } finally {
       setBusy(false);
+      setBusyHint('');
     }
   };
 
   const viewUnitReport = async (taskId?: string | null) => {
+    if (guardPreview()) return;
     if (!taskId) {
       Toast.fail('该台暂无报告可查看');
       return;
     }
+    setBusyHint('打开报告…');
     setBusy(true);
     try {
       const t = await fetchTask(taskId);
@@ -437,6 +446,7 @@ export default function FinanceCaseDetailPage() {
       /* 拦截器 */
     } finally {
       setBusy(false);
+      setBusyHint('');
     }
   };
 
@@ -445,6 +455,7 @@ export default function FinanceCaseDetailPage() {
       await goInspectUnit(myActive, autoStart);
       return;
     }
+    setBusyHint('进入作业…');
     setBusy(true);
     try {
       let current = item;
@@ -467,6 +478,7 @@ export default function FinanceCaseDetailPage() {
       /* 拦截器 */
     } finally {
       setBusy(false);
+      setBusyHint('');
     }
   };
 
@@ -487,6 +499,7 @@ export default function FinanceCaseDetailPage() {
     } catch {
       return;
     }
+    setBusyHint(goAfter ? '认领并进入…' : '认领中…');
     setBusy(true);
     try {
       if (item.status === 'assigned') {
@@ -505,6 +518,7 @@ export default function FinanceCaseDetailPage() {
       /* */
     } finally {
       setBusy(false);
+      setBusyHint('');
     }
   };
 
@@ -522,6 +536,7 @@ export default function FinanceCaseDetailPage() {
     } catch {
       return;
     }
+    setBusyHint('取消认领…');
     setBusy(true);
     try {
       const next = await unclaimFinanceUnit(id, unitId);
@@ -532,6 +547,7 @@ export default function FinanceCaseDetailPage() {
       /* 拦截器 */
     } finally {
       setBusy(false);
+      setBusyHint('');
     }
   };
 
@@ -1023,7 +1039,12 @@ export default function FinanceCaseDetailPage() {
         ) : null}
 
         {finished ? (
-          <p className="case-empty">本单已结束，收入请到「我的」查看</p>
+          <div className="case-empty case-empty--action">
+            <p>本单已结束</p>
+            <button type="button" className="case-row-btn" onClick={() => navigate('/m/income')}>
+              去「我的收入」查看 ›
+            </button>
+          </div>
         ) : null}
       </div>
 
@@ -1036,7 +1057,7 @@ export default function FinanceCaseDetailPage() {
               disabled={busy}
               onClick={primaryAction.onClick}
             >
-              {primaryAction.label}
+              {busy ? busyHint || '处理中…' : primaryAction.label}
             </button>
           ) : null}
           {(showClaimSide || showExpenseDock) && (

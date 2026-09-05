@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { Empty, PullRefresh, Toast } from '@/m/lib/react-vant';
+import { Empty, Toast } from '@/m/lib/react-vant';
 import { useAuthStore } from '../../stores/auth';
 import { fetchTasks, type TaskItem } from '../../api/task';
 import { fetchMyFinanceCases, type MobileFinanceCase } from '../../api/finance';
@@ -112,7 +112,7 @@ export default function HomePage() {
 
   const { data, loading, error, reload } = useCachedResource(cacheKey, loader);
 
-  useVisiblePolling({ reload, intervalMs: 30_000 });
+  useVisiblePolling({ reload, intervalMs: 45_000 });
 
   const activeCaseIds = useMemo(
     () =>
@@ -214,25 +214,39 @@ export default function HomePage() {
 
   return (
     <div className={`page-home${previewMode ? ' page-home--preview' : ''} page-home--shell`}>
-      <PullRefresh onRefresh={() => void reload()}>
         <header className="home-hero">
           <div className="home-hero__top">
             <div className="home-brand">
               <span>光</span>
               <b>现场作业台</b>
             </div>
-            <button type="button" className="home-site-switch" onClick={() => navigate('/m/sites')}>
-              切换网格 ›
-            </button>
+            <div className="home-hero__actions">
+              <button
+                type="button"
+                className="home-site-switch home-site-switch--ghost"
+                disabled={loading}
+                aria-label="刷新"
+                onClick={() => {
+                  void reload().then(() => Toast.success('已刷新'));
+                }}
+              >
+                刷新
+              </button>
+              <button type="button" className="home-site-switch" onClick={() => navigate('/m/sites')}>
+                切换网格
+              </button>
+            </div>
           </div>
           <div className="home-hero__site">
-            <small>当前网格</small>
-            <h1>{currentSite?.name || '尚未选择网格'}</h1>
-            <p>
-              {currentSite
-                ? `${currentSite.province || ''}${currentSite.city || ''} · ${currentSite.code}`
-                : '请先选择今日要作业的网格'}
-            </p>
+            <div className="home-hero__site-main">
+              <small>当前网格</small>
+              <h1>{currentSite?.name || '尚未选择网格'}</h1>
+              <p>
+                {currentSite
+                  ? `${[currentSite.province, currentSite.city].filter(Boolean).join('') || '未填省市'} · ${currentSite.code}`
+                  : '请先选择今日要作业的网格'}
+              </p>
+            </div>
           </div>
         </header>
 
@@ -280,19 +294,19 @@ export default function HomePage() {
           )}
 
           <section className="home-overview">
-            <div className="home-greeting">
-              <div>
-                <small>
+            <div className="home-overview__head">
+              <div className="home-greeting">
+                <b>
                   {new Date().getHours() < 12
                     ? '早上好'
                     : new Date().getHours() < 18
                       ? '下午好'
-                      : '晚上好'}
-                </small>
-                <h2>{user?.realName || user?.username}</h2>
+                      : '晚上好'}{' '}
+                  {user?.realName || user?.username || '工程师'}
+                </b>
               </div>
-              <span>
-                {new Date().toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' })}
+              <span className="home-date-badge">
+                {new Date().toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric' })}
               </span>
             </div>
 
@@ -330,8 +344,10 @@ export default function HomePage() {
                 else navigate('/m/tasks');
               }}
             >
-              <span className="home-start__icon">→</span>
-              <span>
+              <span className="home-start__icon" aria-hidden>
+                ›
+              </span>
+              <span className="home-start__text">
                 <b>{previewMode ? action.title : !currentSite ? '先选择网格' : action.title}</b>
                 <small>
                   {previewMode
@@ -351,7 +367,7 @@ export default function HomePage() {
               <h3>本网格待办</h3>
               <span>
                 {previewMode
-                  ? `预览 ${previewTotal || items.length} 条 · 显示前 8 条`
+                  ? `预览 ${previewTotal || items.length} 条`
                   : currentSite
                     ? `仅显示 ${currentSite.name}`
                     : '请先选择网格'}
@@ -411,7 +427,6 @@ export default function HomePage() {
           )}
           </div>
         </main>
-      </PullRefresh>
     </div>
   );
 }

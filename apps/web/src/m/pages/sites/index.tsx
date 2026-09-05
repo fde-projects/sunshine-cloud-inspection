@@ -65,7 +65,7 @@ export default function SitesPage() {
   };
 
   return (
-    <div>
+    <div className="sites-page">
       <NavBar
         title="选择网格"
         onClickLeft={() => navigate('/m', { replace: true })}

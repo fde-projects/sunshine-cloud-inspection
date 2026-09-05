@@ -1,12 +1,14 @@
 .report-page {
-  min-height: 100vh;
-  padding-bottom: 28px;
+  min-height: 100%;
+  padding-bottom: calc(28px + env(safe-area-inset-bottom, 0px));
   background: transparent;
+  /* 整页跟浏览器一起滚，不要再套一层抢手势的容器 */
+  overflow: visible;
+  -webkit-overflow-scrolling: touch;
 }
 
 .report-body {
   padding: 12px 14px 8px;
-  animation: h5-rise 0.4s var(--h5-ease) both;
 }
 
 .report-summary {
@@ -15,7 +17,7 @@
   gap: 8px;
   margin: 12px 0 4px;
   padding: 14px 10px;
-  border: 1px solid var(--h5-line-soft);
+  border: 0;
   border-radius: var(--h5-radius-lg);
   background: var(--h5-surface-elevated);
   box-shadow: var(--h5-shadow-soft);
@@ -153,25 +155,40 @@
 }
 
 .report-photos {
-  display: flex;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
-  flex-wrap: wrap;
+  width: 100%;
   margin-top: 8px;
 }
 
 .report-photo-btn {
+  display: block;
+  width: 100%;
+  aspect-ratio: 1;
   padding: 0;
   border: 0;
-  background: transparent;
-  cursor: pointer;
-  line-height: 0;
+  overflow: hidden;
   border-radius: 10px;
+  background: #eef3f0;
+  line-height: 0;
 }
 
-.report-photos .rv-image {
-  border-radius: 10px;
-  overflow: hidden;
-  box-shadow: var(--h5-shadow-soft);
+.report-photo-btn img,
+.report-photos .rv-image,
+.report-photos .rv-image__img {
+  width: 100% !important;
+  height: 100% !important;
+  max-width: none !important;
+  object-fit: cover;
+}
+
+.report-ai-reason {
+  margin: 0;
+  padding: 4px 16px 12px;
+  color: #5f746d;
+  font-size: 13px;
+  line-height: 1.55;
 }
 
 .report-actions {

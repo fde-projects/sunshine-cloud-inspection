@@ -67,13 +67,19 @@ export default function TabLayout({ children }: { children?: ReactNode }) {
     return '/m';
   }, [location.pathname]);
 
-  // 详情页等不显示底部导航
+  // 详情/二级页不显示底部导航，避免挡内容、抢高度
   const hideTab =
     location.pathname.includes('/inspection/') ||
     location.pathname.includes('/photo') ||
     location.pathname.includes('/success') ||
     location.pathname.includes('/login') ||
     location.pathname.includes('/finance-cases/') ||
+    location.pathname.includes('/report/') ||
+    location.pathname.includes('/m/sites') ||
+    location.pathname.includes('/m/settings') ||
+    location.pathname.includes('/m/income') ||
+    location.pathname.includes('/m/history') ||
+    location.pathname.includes('/m/start') ||
     /\/m\/tasks\/[^/]+$/.test(location.pathname);
 
   return (
@@ -86,7 +92,7 @@ export default function TabLayout({ children }: { children?: ReactNode }) {
           value={active}
           onChange={(v) => navigate(String(v))}
           fixed
-          placeholder
+          placeholder={false}
         >
           <Tabbar.Item name="/m" icon={<HomeIcon />}>
             首页

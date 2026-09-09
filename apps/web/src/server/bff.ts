@@ -2409,6 +2409,68 @@ async function caseInspectors(caseId: string) {
   );
 }
 
+function inspectorHasStartedWork(
+  inspectorId: string,
+  assignments: Array<{ inspector_id: string; status: string; completed_units?: number | null }>,
+  tasks: Array<{ inspector_id?: string | null; status: string }>,
+) {
+  const a = assignments.find((x) => x.inspector_id === inspectorId);
+  if (a && (a.status === "working" || Number(a.completed_units || 0) > 0)) return true;
+  return tasks.some(
+    (t) =>
+      t.inspector_id === inspectorId && !["pending", "draft"].includes(String(t.status || "")),
+  );
+}
+
+async function loadActiveAssignmentWork(caseId: string) {
+  return adminGql<{
+    case_assignments: Array<{
+      inspector_id: string;
+      status: string;
+      completed_units?: number | null;
+      inspector?: { real_name?: string } | null;
+    }>;
+    inspection_tasks: Array<{ inspector_id?: string | null; status: string }>;
+  }>(
+    `query ($cid: uuid!) {
+      case_assignments(
+        where: { service_case_id: { _eq: $cid }, status: { _neq: "withdrawn" } }
+      ) {
+        inspector_id status completed_units
+        inspector { real_name }
+      }
+      inspection_tasks(where: { service_case_id: { _eq: $cid } }) { inspector_id status }
+    }`,
+    { cid: caseId },
+  );
+}
+
+/** 作业中只按「还留在单上的人有没有开工」决定，不看已撤回的人。 */
+async function syncCaseDispatchStatus(caseId: string) {
+  const row = await loadCase(caseId);
+  if (!row) return;
+  const cur = String(row.status || "");
+  if (!["pending_assign", "assigned", "working"].includes(cur)) return;
+  const work = await loadActiveAssignmentWork(caseId);
+  let next = "assigned";
+  if (!work.case_assignments.length) {
+    next = "pending_assign";
+  } else if (
+    work.case_assignments.some((a) =>
+      inspectorHasStartedWork(a.inspector_id, work.case_assignments, work.inspection_tasks),
+    )
+  ) {
+    next = "working";
+  }
+  if (next === cur) return;
+  await adminGql(
+    `mutation ($id: uuid!, $st: String!) {
+      update_service_cases_by_pk(pk_columns: { id: $id }, _set: { status: $st }) { id }
+    }`,
+    { id: caseId, st: next },
+  );
+}
+
 async function assignCase(user: AppUser, caseId: string, body: Record<string, unknown>) {
   const ids = [
     ...new Set(
@@ -2421,6 +2483,10 @@ async function assignCase(user: AppUser, caseId: string, body: Record<string, un
   if (!ids.length) throw new HttpError(400, "请选择至少一名工程师");
   const row = await loadCase(caseId);
   if (!row) throw new HttpError(404, "案例不存在");
+  const curStatus = String(row.status || "");
+  if (!["pending_assign", "assigned", "working"].includes(curStatus)) {
+    throw new HttpError(400, "当前状态不可派单或换人");
+  }
   if (!row.site_id) throw new HttpError(400, "请先将案例分配到网格，再派给本网格工程师");
   if (user.role === "site_manager") {
     // 越权防护：网格长只能给本人管理（正/副）的网格派单
@@ -2470,6 +2536,17 @@ async function assignCase(user: AppUser, caseId: string, body: Record<string, un
     device_type?: string;
   } | null;
 
+  const currentWork = await loadActiveAssignmentWork(caseId);
+  const keep = new Set(ids);
+  const toDrop = currentWork.case_assignments.filter((a) => !keep.has(a.inspector_id));
+  if (assignMode === "single") {
+    const blocked = toDrop.find((a) => Number(a.completed_units || 0) > 0);
+    if (blocked) {
+      const name = blocked.inspector?.real_name || blocked.inspector_id;
+      throw new HttpError(400, `${name} 已有完成台，不能撤回；请保留该工程师或改用多人模式`);
+    }
+  }
+
   await adminGql(
     `mutation ($id: uuid!, $set: service_cases_set_input!) {
       update_service_cases_by_pk(pk_columns: { id: $id }, _set: $set) { id }
@@ -2485,20 +2562,21 @@ async function assignCase(user: AppUser, caseId: string, body: Record<string, un
         inspector_id: ids[0],
         assign_by_id: user.id,
         assign_time: new Date().toISOString(),
-        status: "assigned",
       },
     },
   );
 
+  const prevById = new Map(currentWork.case_assignments.map((a) => [a.inspector_id, a]));
   for (const inspectorId of ids) {
+    const assignStatus = prevById.get(inspectorId)?.status === "working" ? "working" : "assigned";
     const upd = await adminGql<{ update_case_assignments: { affected_rows: number } }>(
-      `mutation ($cid: uuid!, $uid: uuid!, $by: uuid!, $now: timestamptz!) {
+      `mutation ($cid: uuid!, $uid: uuid!, $by: uuid!, $now: timestamptz!, $st: String!) {
         update_case_assignments(
           where: { service_case_id: { _eq: $cid }, inspector_id: { _eq: $uid } }
-          _set: { status: "assigned", assign_by_id: $by, assign_time: $now }
+          _set: { status: $st, assign_by_id: $by, assign_time: $now }
         ) { affected_rows }
       }`,
-      { cid: caseId, uid: inspectorId, by: user.id, now: new Date().toISOString() },
+      { cid: caseId, uid: inspectorId, by: user.id, now: new Date().toISOString(), st: assignStatus },
     );
     if (!upd.update_case_assignments.affected_rows) {
       await adminGql(
@@ -2511,39 +2589,15 @@ async function assignCase(user: AppUser, caseId: string, body: Record<string, un
             inspector_id: inspectorId,
             assign_by_id: user.id,
             assign_time: new Date().toISOString(),
-            status: "assigned",
+            status: assignStatus,
           },
         },
       );
     }
   }
 
-  // 单人模式：撤回未保留的工程师；有完成台则禁止整单改成单人/换人
+  // 单人模式：撤回未保留的工程师
   if (assignMode === "single") {
-    const keep = new Set(ids);
-    const others = await adminGql<{
-      case_assignments: Array<{
-        inspector_id: string;
-        completed_units?: number | null;
-        inspector?: { real_name?: string } | null;
-      }>;
-    }>(
-      `query ($cid: uuid!) {
-        case_assignments(
-          where: { service_case_id: { _eq: $cid }, status: { _neq: "withdrawn" } }
-        ) {
-          inspector_id completed_units
-          inspector { real_name }
-        }
-      }`,
-      { cid: caseId },
-    );
-    const toDrop = others.case_assignments.filter((a) => !keep.has(a.inspector_id));
-    const blocked = toDrop.find((a) => Number(a.completed_units || 0) > 0);
-    if (blocked) {
-      const name = blocked.inspector?.real_name || blocked.inspector_id;
-      throw new HttpError(400, `${name} 已有完成台，不能撤回；请保留该工程师或改用多人模式`);
-    }
     for (const a of toDrop) {
       await adminGql(
         `mutation ($cid: uuid!, $uid: uuid!) {
@@ -2625,6 +2679,7 @@ async function assignCase(user: AppUser, caseId: string, body: Record<string, un
     }
   }
 
+  await syncCaseDispatchStatus(caseId);
   const next = await loadCase(caseId);
   return ok(mapCase(next!));
 }
@@ -3271,26 +3326,40 @@ async function withdrawAssignee(user: AppUser, caseId: string, inspectorId: stri
     }`,
     { cid: caseId, uid: inspectorId },
   );
+  await syncCaseDispatchStatus(caseId);
   return ok({ success: true });
 }
 
 async function startMyCase(user: AppUser, caseId: string) {
-  await adminGql(
-    `mutation ($id: uuid!, $uid: uuid!) {
-      update_service_cases_by_pk(pk_columns: { id: $id }, _set: { status: "working" }) { id }
-      update_case_assignments(
-        where: { service_case_id: { _eq: $id }, inspector_id: { _eq: $uid } }
-        _set: { status: "working" }
-      ) { affected_rows }
-    }`,
-    { id: caseId, uid: user.id },
-  );
   const row = await loadCase(caseId);
-  if (row) await ensureInspectorInspectionTask(user, caseId, row);
+  if (!row) throw new HttpError(404, "案例不存在");
+  const status = String(row.status || "");
+  if (["finished", "settle_review", "settled", "month_locked"].includes(status)) {
+    throw new HttpError(400, "案例已完工，不能再开工");
+  }
+  if (status === "pending_assign") {
+    throw new HttpError(400, "案例尚未派单，不能开工");
+  }
+  if (status !== "assigned" && status !== "working") {
+    throw new HttpError(400, "当前状态不能开工");
+  }
+  await markCaseWorking(caseId, user.id);
+  const next = await loadCase(caseId);
+  if (next) await ensureInspectorInspectionTask(user, caseId, next);
   return myCase(user, caseId);
 }
 
 async function finishMyCase(user: AppUser, caseId: string) {
+  const row = await loadCase(caseId);
+  if (!row) throw new HttpError(404, "案例不存在");
+  const status = String(row.status || "");
+  if (["settle_review", "finished", "settled", "month_locked"].includes(status)) {
+    await recalculateLedgers([caseId]).catch(() => null);
+    return myCase(user, caseId);
+  }
+  if (!["assigned", "working"].includes(status)) {
+    throw new HttpError(400, "当前状态不能完工");
+  }
   await adminGql(
     `mutation ($id: uuid!, $now: timestamptz!) {
       update_service_cases_by_pk(pk_columns: { id: $id }, _set: { status: "settle_review", finish_time: $now }) { id }
@@ -3351,6 +3420,7 @@ async function claimUnit(user: AppUser, caseId: string, unitId: string) {
     }`,
     { id: unitId, uid: user.id, tid: task.insert_inspection_tasks_one.id, now: new Date().toISOString() },
   );
+  await markCaseWorking(caseId, user.id);
   return ok({
     inspectionTaskId: task.insert_inspection_tasks_one.id,
     case: await loadMyCaseData(user, caseId),
@@ -5570,6 +5640,13 @@ async function reviewApprove(user: AppUser, caseId: string, body: Record<string,
   const comment = String(body.comment || body.reason || "").trim() || null;
   const row = await loadCase(caseId);
   if (!row) throw new HttpError(404, "案例不存在");
+  const status = String(row.status || "");
+  if (pass && !["finished", "settle_review"].includes(status)) {
+    throw new HttpError(400, "仅待结算审核的案例可以通过");
+  }
+  if (!pass && !["finished", "settle_review", "settled"].includes(status)) {
+    throw new HttpError(400, "当前状态不能驳回");
+  }
 
   // 先按最新 PO 计价刷新台账，再写入审核结论与工程师
   await recalculateLedgers([caseId]).catch(() => null);

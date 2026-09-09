@@ -8,6 +8,7 @@ import { fail, HttpError, ok, parseBody, q, requireUser, type AppUser } from "./
 import {
   CASE_FIELDS,
   caseWhere,
+  caseWorkStarted,
   loadCase,
   loadCaseDetail,
   mapCase,
@@ -37,7 +38,7 @@ import {
   stampHardRuleReview,
 } from "@/lib/hard-rule-stats";
 import { ensureOriginalCatalog, healBuiltinHardRuleBindings } from "./catalog-seed";
-import { rematchCasesForTemplate, syncBoundCaseNames } from "./finance/demand-type-match";
+import { applyDemandTypeForCases, rematchCasesForTemplate, syncBoundCaseNames } from "./finance/demand-type-match";
 import { decideRecordAuditRoute, recordNeedsHumanAudit } from "./record-audit-route";
 import {
   AI_ANALYZE_ATTEMPTS,
@@ -433,6 +434,8 @@ async function dispatch(ctx: {
     if (w && method === "PUT") return setWorkPlan(needFinanceMgr(user), w.id, body);
     const p = match(path, "cases/:id/profile");
     if (p && method === "PATCH") return updateCaseProfile(needFinanceMgr(user), p.id, body);
+    const rst = match(path, "cases/:id/reset");
+    if (rst && method === "POST") return resetCase(needAdmin(user), rst.id, body);
     const st = match(path, "cases/:id/start");
     if (st && method === "POST") return startMyCase(need(user), st.id);
     const fin = match(path, "cases/:id/finish");
@@ -473,6 +476,9 @@ async function dispatch(ctx: {
       const linked = (row.po_orders as unknown[]) || [];
       if (!linked.length) await recalculateLedgers([c1.id]);
       return ok(mapCaseDetail(row, need(user)));
+    }
+    if (c1 && method === "DELETE") {
+      return deleteCase(needAdmin(user), c1.id, query.get("confirm"));
     }
   }
 
@@ -2452,7 +2458,8 @@ async function assignCase(user: AppUser, caseId: string, body: Record<string, un
     if (outsiders.length) throw new HttpError(400, "所选工程师不在本网格编制内");
   }
   if (!row.task_template_id && !row.task_type) throw new HttpError(400, "请先设置案例服务类型");
-  const assignMode = (body.assignMode as string) || (row.assign_mode as string) || "single";
+  const requestedMode = (body.assignMode as string) || (row.assign_mode as string) || "single";
+  const assignMode = ids.length >= 2 ? "multi" : requestedMode;
   const plannedUnits = Math.max(1, Number(body.plannedUnits ?? row.planned_units ?? 1));
   const remark = body.reason !== undefined ? String(body.reason || "").trim() : row.assign_remark;
   const tpl = row.task_template as {
@@ -2507,6 +2514,59 @@ async function assignCase(user: AppUser, caseId: string, body: Record<string, un
             status: "assigned",
           },
         },
+      );
+    }
+  }
+
+  // 单人模式：撤回未保留的工程师；有完成台则禁止整单改成单人/换人
+  if (assignMode === "single") {
+    const keep = new Set(ids);
+    const others = await adminGql<{
+      case_assignments: Array<{
+        inspector_id: string;
+        completed_units?: number | null;
+        inspector?: { real_name?: string } | null;
+      }>;
+    }>(
+      `query ($cid: uuid!) {
+        case_assignments(
+          where: { service_case_id: { _eq: $cid }, status: { _neq: "withdrawn" } }
+        ) {
+          inspector_id completed_units
+          inspector { real_name }
+        }
+      }`,
+      { cid: caseId },
+    );
+    const toDrop = others.case_assignments.filter((a) => !keep.has(a.inspector_id));
+    const blocked = toDrop.find((a) => Number(a.completed_units || 0) > 0);
+    if (blocked) {
+      const name = blocked.inspector?.real_name || blocked.inspector_id;
+      throw new HttpError(400, `${name} 已有完成台，不能撤回；请保留该工程师或改用多人模式`);
+    }
+    for (const a of toDrop) {
+      await adminGql(
+        `mutation ($cid: uuid!, $uid: uuid!) {
+          update_case_assignments(
+            where: { service_case_id: { _eq: $cid }, inspector_id: { _eq: $uid }, status: { _neq: "withdrawn" } }
+            _set: { status: "withdrawn" }
+          ) { affected_rows }
+        }`,
+        { cid: caseId, uid: a.inspector_id },
+      );
+      // 释放该人未提交的认领台，回可认领池
+      await adminGql(
+        `mutation ($cid: uuid!, $uid: uuid!) {
+          update_case_work_units(
+            where: {
+              service_case_id: { _eq: $cid }
+              inspector_id: { _eq: $uid }
+              status: { _in: ["claimed"] }
+            }
+            _set: { status: "open", inspector_id: null, inspection_task_id: null, claimed_at: null }
+          ) { affected_rows }
+        }`,
+        { cid: caseId, uid: a.inspector_id },
       );
     }
   }
@@ -2569,9 +2629,204 @@ async function assignCase(user: AppUser, caseId: string, body: Record<string, un
   return ok(mapCase(next!));
 }
 
+function caseBeforeWork(status: string) {
+  return status === "pending_assign" || status === "assigned";
+}
+
+async function loadCaseTaskStatuses(caseId: string) {
+  const d = await adminGql<{ inspection_tasks: Array<{ status: string }> }>(
+    `query ($cid: uuid!) {
+      inspection_tasks(where: { service_case_id: { _eq: $cid } }) { status }
+    }`,
+    { cid: caseId },
+  );
+  return d.inspection_tasks;
+}
+
+async function assertCaseTasksNotStarted(caseId: string) {
+  if (caseWorkStarted({ inspection_tasks: await loadCaseTaskStatuses(caseId) })) {
+    throw new HttpError(400, "工程师已开工，网格/类型请先重置为待分配后再改");
+  }
+}
+
+async function markCaseWorking(caseId: string, inspectorId?: string) {
+  await adminGql(
+    `mutation ($id: uuid!) {
+      update_service_cases(
+        where: { id: { _eq: $id }, status: { _in: ["pending_assign", "assigned"] } }
+        _set: { status: "working" }
+      ) { affected_rows }
+    }`,
+    { id: caseId },
+  );
+  if (!inspectorId) return;
+  await adminGql(
+    `mutation ($id: uuid!, $uid: uuid!) {
+      update_case_assignments(
+        where: { service_case_id: { _eq: $id }, inspector_id: { _eq: $uid }, status: { _neq: "withdrawn" } }
+        _set: { status: "working" }
+      ) { affected_rows }
+    }`,
+    { id: caseId, uid: inspectorId },
+  );
+}
+
+async function withdrawCaseDispatch(caseId: string) {
+  await adminGql(
+    `mutation ($cid: uuid!) {
+      update_case_work_units(
+        where: { service_case_id: { _eq: $cid } }
+        _set: {
+          inspection_task_id: null
+          inspector_id: null
+          status: "open"
+          claimed_at: null
+        }
+      ) { affected_rows }
+    }`,
+    { cid: caseId },
+  );
+  await adminGql(
+    `mutation ($cid: uuid!) {
+      delete_inspection_tasks(where: { service_case_id: { _eq: $cid } }) { affected_rows }
+    }`,
+    { cid: caseId },
+  );
+  await adminGql(
+    `mutation ($cid: uuid!) {
+      update_case_assignments(
+        where: { service_case_id: { _eq: $cid }, status: { _neq: "withdrawn" } }
+        _set: { status: "withdrawn" }
+      ) { affected_rows }
+    }`,
+    { cid: caseId },
+  );
+  await adminGql(
+    `mutation ($id: uuid!, $set: service_cases_set_input!) {
+      update_service_cases_by_pk(pk_columns: { id: $id }, _set: $set) { id }
+    }`,
+    {
+      id: caseId,
+      set: {
+        status: "pending_assign",
+        inspector_id: null,
+        assign_by_id: null,
+        assign_time: null,
+        assign_remark: null,
+      },
+    },
+  );
+}
+
+async function rebuildPendingCaseTaskSnapshots(
+  caseId: string,
+  templateId: string | null,
+  productLine: string | null,
+) {
+  if (!templateId) {
+    await adminGql(
+      `mutation ($cid: uuid!) {
+        update_case_work_units(
+          where: { service_case_id: { _eq: $cid } }
+          _set: { inspection_task_id: null }
+        ) { affected_rows }
+      }`,
+      { cid: caseId },
+    );
+    await adminGql(
+      `mutation ($cid: uuid!) {
+        delete_inspection_tasks(where: { service_case_id: { _eq: $cid } }) { affected_rows }
+      }`,
+      { cid: caseId },
+    );
+    return;
+  }
+  const snap = await loadTemplateSnapshot(templateId, productLine);
+  const d = await adminGql<{
+    inspection_tasks: Array<{
+      id: string;
+      status: string;
+      inspection_records?: Array<{ id: string; status?: string; entries?: unknown }>;
+    }>;
+  }>(
+    `query ($cid: uuid!) {
+      inspection_tasks(where: { service_case_id: { _eq: $cid } }) {
+        id status
+        inspection_records { id status entries }
+      }
+    }`,
+    { cid: caseId },
+  );
+  for (const task of d.inspection_tasks) {
+    if (!["pending", "draft"].includes(String(task.status))) continue;
+    await adminGql(
+      `mutation ($id: uuid!, $snap: jsonb!) {
+        update_inspection_tasks_by_pk(pk_columns: { id: $id }, _set: { template_snapshot: $snap }) { id }
+      }`,
+      { id: task.id, snap },
+    );
+    const rec = (task.inspection_records || [])[0];
+    if (!rec || String(rec.status || "") !== "draft") continue;
+    const entries = (Array.isArray(rec.entries) ? rec.entries : []) as Array<{ photos?: unknown[] }>;
+    if (entries.some((e) => Array.isArray(e.photos) && e.photos.length > 0)) continue;
+    await adminGql(
+      `mutation ($id: uuid!, $entries: jsonb!) {
+        update_inspection_records_by_pk(pk_columns: { id: $id }, _set: { entries: $entries }) { id }
+      }`,
+      {
+        id: rec.id,
+        entries: (snap as Array<{ id?: string }>).map((e) => ({
+          templateEntryId: e.id,
+          photos: [],
+          aiResult: { status: "pending", confidence: 0, reason: "" },
+          manualResult: "pending",
+          finalResult: null,
+          remark: "",
+        })),
+      },
+    );
+  }
+}
+
+async function applyTemplateToCaseSet(
+  templateId: string,
+  productLineRaw: unknown,
+): Promise<Record<string, unknown>> {
+  const tpl = await adminGql<{ inspection_templates_by_pk: Record<string, unknown> | null }>(
+    `query ($id: uuid!) {
+      inspection_templates_by_pk(id: $id) {
+        id name assign_mode unit_label expense_enabled_default product_lines
+      }
+    }`,
+    { id: templateId },
+  );
+  const t = tpl.inspection_templates_by_pk;
+  if (!t) throw new HttpError(404, "服务类型不存在");
+  const lines = Array.isArray(t.product_lines) ? t.product_lines : [];
+  const productLine = productLineRaw ? String(productLineRaw).trim() : "";
+  if (lines.length && !productLine) throw new HttpError(400, "请选择产品线");
+  return {
+    task_template_id: templateId,
+    task_type: t.name,
+    product_line: productLine || null,
+    assign_mode: t.assign_mode,
+    unit_label: t.unit_label,
+    expense_enabled: t.expense_enabled_default,
+  };
+}
+
 async function setCaseSite(user: AppUser, caseId: string, body: Record<string, unknown>) {
   const siteId = String(body.siteId || "");
   if (!siteId) throw new HttpError(400, "请选择网格");
+  const row = await loadCase(caseId);
+  if (!row) throw new HttpError(404, "案例不存在");
+  const status = String(row.status || "");
+  if (!caseBeforeWork(status)) {
+    throw new HttpError(400, "工程师已开工，网格请先重置为待分配后再改");
+  }
+  if (status !== "pending_assign") {
+    throw new HttpError(400, "仅待派单可直接分配网格；已派单请走编辑（会撤回工程师）");
+  }
   await adminGql(
     `mutation ($id: uuid!, $siteId: uuid!) {
       update_service_cases_by_pk(pk_columns: { id: $id }, _set: { site_id: $siteId }) { id }
@@ -2589,38 +2844,62 @@ async function assignSites(user: AppUser, body: Record<string, unknown>) {
     `query ($id: uuid!) { sites_by_pk(id: $id) { name } }`,
     { id: siteId },
   );
-  await adminGql(
-    `mutation ($ids: [uuid!]!, $siteId: uuid!) {
-      update_service_cases(where: { id: { _in: $ids } }, _set: { site_id: $siteId }) { affected_rows }
+  const rows = await adminGql<{
+    service_cases: Array<{ id: string; status?: string | null; gsp_case_no?: string | null }>;
+  }>(
+    `query ($ids: [uuid!]!) {
+      service_cases(where: { id: { _in: $ids } }) { id status gsp_case_no }
     }`,
-    { ids: caseIds, siteId },
+    { ids: caseIds },
   );
-  return ok({ updated: caseIds.length, siteId, siteName: site.sites_by_pk?.name || "", skipped: [] });
+  const skipped: Array<{ caseId: string; reason: string }> = [];
+  const okIds: string[] = [];
+  for (const c of rows.service_cases) {
+    if (String(c.status || "") !== "pending_assign") {
+      skipped.push({
+        caseId: c.gsp_case_no || c.id,
+        reason: "仅待派单可批量分配网格，已派单请走编辑（会撤回工程师）",
+      });
+      continue;
+    }
+    okIds.push(c.id);
+  }
+  if (okIds.length) {
+    await adminGql(
+      `mutation ($ids: [uuid!]!, $siteId: uuid!) {
+        update_service_cases(where: { id: { _in: $ids } }, _set: { site_id: $siteId }) { affected_rows }
+      }`,
+      { ids: okIds, siteId },
+    );
+  }
+  return ok({
+    updated: okIds.length,
+    siteId,
+    siteName: site.sites_by_pk?.name || "",
+    skipped,
+  });
 }
 
 async function setCaseTaskType(user: AppUser, caseId: string, body: Record<string, unknown>) {
+  const row = await loadCase(caseId);
+  if (!row) throw new HttpError(404, "案例不存在");
+  if (!caseBeforeWork(String(row.status))) {
+    throw new HttpError(400, "工程师已开工，类型请先重置为待分配后再改");
+  }
+  await assertCaseTasksNotStarted(caseId);
   const templateId = String(body.templateId || "");
-  const tpl = await adminGql<{ inspection_templates_by_pk: Record<string, unknown> | null }>(
-    `query ($id: uuid!) { inspection_templates_by_pk(id: $id) { id name assign_mode unit_label expense_enabled_default } }`,
-    { id: templateId },
-  );
-  const t = tpl.inspection_templates_by_pk;
-  if (!t) throw new HttpError(404, "服务类型不存在");
+  if (!templateId) throw new HttpError(400, "请选择服务类型");
+  const set = await applyTemplateToCaseSet(templateId, body.productLine);
   await adminGql(
     `mutation ($id: uuid!, $set: service_cases_set_input!) {
       update_service_cases_by_pk(pk_columns: { id: $id }, _set: $set) { id }
     }`,
-    {
-      id: caseId,
-      set: {
-        task_template_id: templateId,
-        task_type: t.name,
-        product_line: body.productLine || null,
-        assign_mode: t.assign_mode,
-        unit_label: t.unit_label,
-        expense_enabled: t.expense_enabled_default,
-      },
-    },
+    { id: caseId, set },
+  );
+  await rebuildPendingCaseTaskSnapshots(
+    caseId,
+    templateId,
+    set.product_line ? String(set.product_line) : null,
   );
   return ok(mapCase((await loadCase(caseId))!));
 }
@@ -2647,6 +2926,243 @@ async function setWorkPlan(user: AppUser, caseId: string, body: Record<string, u
 }
 
 async function updateCaseProfile(user: AppUser, caseId: string, body: Record<string, unknown>) {
+  const row = await loadCase(caseId);
+  if (!row) throw new HttpError(404, "案例不存在");
+  if (String(row.status) === "month_locked") throw new HttpError(400, "已月结案例不可编辑");
+
+  const tasksStarted =
+    caseWorkStarted(row) ||
+    caseWorkStarted({ inspection_tasks: await loadCaseTaskStatuses(caseId) });
+  const beforeWork = caseBeforeWork(String(row.status)) && !tasksStarted;
+  const set: Record<string, unknown> = {
+    project_name: body.projectName,
+    province: body.province,
+    city: body.city,
+    site_desc: body.siteDesc,
+  };
+  if (body.province !== undefined) {
+    set.region = String(body.province || "").includes("云南") ? "yunnan" : "south_china";
+  }
+  if (tasksStarted && caseBeforeWork(String(row.status))) {
+    set.status = "working";
+  }
+
+  const prevSite = row.site_id ? String(row.site_id) : "";
+  let nextSite = prevSite;
+  let siteChanging = false;
+  let typeChanging = false;
+  let nextTemplateId = row.task_template_id ? String(row.task_template_id) : "";
+  let nextProductLine = row.product_line ? String(row.product_line) : "";
+  if (user.role === "super_admin" && "siteId" in body) {
+    nextSite = body.siteId ? String(body.siteId) : "";
+    siteChanging = prevSite !== nextSite;
+  }
+  if ("templateId" in body) {
+    const templateId = String(body.templateId || "").trim();
+    const productLine = body.productLine ? String(body.productLine).trim() : "";
+    typeChanging = templateId !== nextTemplateId || productLine !== nextProductLine;
+  } else if ("productLine" in body) {
+    const productLine = body.productLine ? String(body.productLine).trim() : "";
+    typeChanging = productLine !== nextProductLine;
+  }
+  const structureLocked = !beforeWork && (siteChanging || typeChanging);
+
+  if (beforeWork) {
+    if (user.role === "super_admin" && "siteId" in body) {
+      set.site_id = nextSite || null;
+    }
+    if ("templateId" in body) {
+      const templateId = String(body.templateId || "").trim();
+      if (!templateId) {
+        set.task_template_id = null;
+        set.task_type = null;
+        set.product_line = null;
+        nextTemplateId = "";
+        nextProductLine = "";
+      } else {
+        Object.assign(set, await applyTemplateToCaseSet(templateId, body.productLine));
+        nextTemplateId = templateId;
+        nextProductLine = set.product_line ? String(set.product_line) : "";
+      }
+    } else if ("productLine" in body) {
+      const productLine = body.productLine ? String(body.productLine).trim() : "";
+      set.product_line = productLine || null;
+      nextProductLine = productLine;
+    }
+  }
+
+  await adminGql(
+    `mutation ($id: uuid!, $set: service_cases_set_input!) {
+      update_service_cases_by_pk(pk_columns: { id: $id }, _set: $set) { id }
+    }`,
+    { id: caseId, set },
+  );
+
+  if (body.projectName != null) {
+    const gsp = String(row.gsp_case_no || "").trim();
+    const name = `${gsp} ${String(body.projectName || "").trim()}`.trim();
+    if (name) {
+      await adminGql(
+        `mutation ($cid: uuid!, $name: String!) {
+          update_inspection_tasks(
+            where: { service_case_id: { _eq: $cid } }
+            _set: { task_name: $name }
+          ) { affected_rows }
+        }`,
+        { cid: caseId, name },
+      );
+    }
+  }
+
+  let dispatchWithdrawn = false;
+  if (beforeWork && siteChanging && (String(row.status) === "assigned" || row.inspector_id)) {
+    await withdrawCaseDispatch(caseId);
+    dispatchWithdrawn = true;
+  } else if (beforeWork && typeChanging) {
+    await rebuildPendingCaseTaskSnapshots(
+      caseId,
+      nextTemplateId || null,
+      nextProductLine || null,
+    );
+  }
+
+  return ok({
+    ...mapCase((await loadCase(caseId))!),
+    dispatchWithdrawn,
+    structureLocked,
+  });
+}
+
+async function assertCaseMonthsUnlocked(months: string[]) {
+  const uniq = [...new Set(months.map((m) => String(m || "").trim()).filter(Boolean))];
+  if (!uniq.length) return;
+  const d = await adminGql<{
+    monthly_settlements_aggregate: { aggregate: { count: number } };
+  }>(
+    `query ($months: [String!]!) {
+      monthly_settlements_aggregate(
+        where: { month: { _in: $months }, status: { _eq: "locked" } }
+      ) { aggregate { count } }
+    }`,
+    { months: uniq },
+  );
+  if (Number(d.monthly_settlements_aggregate.aggregate.count || 0) > 0) {
+    throw new HttpError(400, `相关月份（${uniq.join("、")}）已月结锁定，请先解锁该月后再重置`);
+  }
+}
+
+/** 清掉案例作业/结算痕迹，保留案例主数据。返回需重算的月份。 */
+async function wipeCaseLifecycle(caseId: string) {
+  const d = await adminGql<{
+    service_cases_by_pk: {
+      id: string;
+      status: string;
+      finish_time?: string | null;
+      case_performance?: { month?: string | null } | null;
+      case_expense_claims?: Array<{ month?: string | null }>;
+      inspection_tasks?: Array<{
+        id: string;
+        device_id?: string | null;
+        device?: { serial_number?: string | null } | null;
+      }>;
+    } | null;
+  }>(
+    `query ($id: uuid!) {
+      service_cases_by_pk(id: $id) {
+        id status finish_time
+        case_performance { month }
+        case_expense_claims { month }
+        inspection_tasks { id device_id device { serial_number } }
+      }
+    }`,
+    { id: caseId },
+  );
+  const row = d.service_cases_by_pk;
+  if (!row) throw new HttpError(404, "案例不存在");
+  if (row.status === "month_locked") throw new HttpError(400, "已月结案例不可重置，请先解锁该月");
+
+  const months: string[] = [];
+  if (row.case_performance?.month) months.push(row.case_performance.month);
+  if (row.finish_time) months.push(monthKeyShanghai(row.finish_time));
+  for (const e of row.case_expense_claims || []) {
+    if (e.month) months.push(e.month);
+  }
+  await assertCaseMonthsUnlocked(months);
+
+  const placeholderDeviceIds = [
+    ...new Set(
+      (row.inspection_tasks || [])
+        .filter((t) => String(t.device?.serial_number || "").startsWith("CASE-") && t.device_id)
+        .map((t) => String(t.device_id)),
+    ),
+  ];
+
+  await adminGql(
+    `mutation ($cid: uuid!) {
+      update_po_orders(
+        where: { service_case_id: { _eq: $cid } }
+        _set: { service_case_id: null, match_status: "pending" }
+      ) { affected_rows }
+      delete_assessment_events(where: { service_case_id: { _eq: $cid } }) { affected_rows }
+      delete_case_expense_claims(where: { service_case_id: { _eq: $cid } }) { affected_rows }
+      delete_case_perf_shares(where: { service_case_id: { _eq: $cid } }) { affected_rows }
+      delete_case_performances(where: { service_case_id: { _eq: $cid } }) { affected_rows }
+    }`,
+    { cid: caseId },
+  );
+  await adminGql(
+    `mutation ($cid: uuid!) {
+      update_case_work_units(
+        where: { service_case_id: { _eq: $cid } }
+        _set: { inspection_task_id: null, inspector_id: null }
+      ) { affected_rows }
+    }`,
+    { cid: caseId },
+  );
+  await adminGql(
+    `mutation ($cid: uuid!) {
+      delete_inspection_tasks(where: { service_case_id: { _eq: $cid } }) { affected_rows }
+    }`,
+    { cid: caseId },
+  );
+  await adminGql(
+    `mutation ($cid: uuid!) {
+      delete_case_work_units(where: { service_case_id: { _eq: $cid } }) { affected_rows }
+      delete_case_assignments(where: { service_case_id: { _eq: $cid } }) { affected_rows }
+    }`,
+    { cid: caseId },
+  );
+
+  if (placeholderDeviceIds.length) {
+    await adminGql(
+      `mutation ($ids: [uuid!]!) {
+        delete_devices(where: { id: { _in: $ids } }) { affected_rows }
+      }`,
+      { ids: placeholderDeviceIds },
+    ).catch(() => null);
+  }
+
+  return [...new Set(months.filter(Boolean))];
+}
+
+async function resetCase(_user: AppUser, caseId: string, body: Record<string, unknown>) {
+  const row = await loadCase(caseId);
+  if (!row) throw new HttpError(404, "案例不存在");
+  const gsp = String(row.gsp_case_no || "");
+  if (String(body.confirm || "").trim() !== gsp) {
+    throw new HttpError(400, `请输入案例号 ${gsp} 确认重置`);
+  }
+
+  const poCount = await adminGql<{
+    po_orders_aggregate: { aggregate: { count: number } };
+  }>(
+    `query ($cid: uuid!) {
+      po_orders_aggregate(where: { service_case_id: { _eq: $cid } }) { aggregate { count } }
+    }`,
+    { cid: caseId },
+  );
+  const unbound = Number(poCount.po_orders_aggregate.aggregate.count || 0);
+  const months = await wipeCaseLifecycle(caseId);
   await adminGql(
     `mutation ($id: uuid!, $set: service_cases_set_input!) {
       update_service_cases_by_pk(pk_columns: { id: $id }, _set: $set) { id }
@@ -2654,24 +3170,103 @@ async function updateCaseProfile(user: AppUser, caseId: string, body: Record<str
     {
       id: caseId,
       set: {
-        project_name: body.projectName,
-        province: body.province,
-        city: body.city,
-        site_desc: body.siteDesc,
-        service_type: body.serviceType,
-        product_line: body.productLine,
+        status: "pending_assign",
+        site_id: null,
+        task_template_id: null,
+        task_type: null,
+        assign_mode: "single",
+        planned_units: 1,
+        completed_units: 0,
+        expense_enabled: false,
+        unit_label: "台",
+        inspector_id: null,
+        assign_by_id: null,
+        assign_time: null,
+        assign_remark: null,
+        finish_time: null,
       },
     },
   );
-  return ok(mapCase((await loadCase(caseId))!));
+  for (const month of months) {
+    await syncMonthlySettlements(month).catch(() => null);
+  }
+  const rematched = (await loadCase(caseId))!;
+  await applyDemandTypeForCases([
+    {
+      id: caseId,
+      gspCaseNo: gsp,
+      serviceType: (rematched.service_type as string | null) || null,
+      productLine: (rematched.product_line as string | null) || null,
+      taskTemplateId: null,
+      plannedUnits: 1,
+    },
+  ]).catch(() => null);
+  const next = (await loadCase(caseId))!;
+  return ok({
+    ...mapCase(next),
+    unboundPoCount: unbound,
+    resyncedMonths: months,
+  });
+}
+
+async function deleteCase(_user: AppUser, caseId: string, confirm?: string | null) {
+  const row = await loadCase(caseId);
+  if (!row) throw new HttpError(404, "案例不存在");
+  const status = String(row.status || "");
+  if (!["pending_assign", "assigned"].includes(status) || caseWorkStarted(row)) {
+    throw new HttpError(400, "工程师已接单，请先重置为待分配后再删除");
+  }
+  const gsp = String(row.gsp_case_no || "");
+  if (String(confirm || "").trim() !== gsp) {
+    throw new HttpError(400, `请输入案例号 ${gsp} 确认删除`);
+  }
+  await wipeCaseLifecycle(caseId);
+  await adminGql(
+    `mutation ($id: uuid!) { delete_service_cases_by_pk(id: $id) { id } }`,
+    { id: caseId },
+  );
+  return ok({ success: true, gspCaseNo: gsp });
 }
 
 async function withdrawAssignee(user: AppUser, caseId: string, inspectorId: string) {
+  const existing = await adminGql<{
+    case_assignments: Array<{ completed_units?: number | null; inspector?: { real_name?: string } | null }>;
+  }>(
+    `query ($cid: uuid!, $uid: uuid!) {
+      case_assignments(
+        where: { service_case_id: { _eq: $cid }, inspector_id: { _eq: $uid }, status: { _neq: "withdrawn" } }
+        limit: 1
+      ) {
+        completed_units
+        inspector { real_name }
+      }
+    }`,
+    { cid: caseId, uid: inspectorId },
+  );
+  const row = existing.case_assignments[0];
+  if (!row) throw new HttpError(404, "派单记录不存在或已撤回");
+  if (Number(row.completed_units || 0) > 0) {
+    const name = row.inspector?.real_name || inspectorId;
+    throw new HttpError(400, `${name} 已有完成台，不能撤回`);
+  }
   await adminGql(
     `mutation ($cid: uuid!, $uid: uuid!) {
       update_case_assignments(
         where: { service_case_id: { _eq: $cid }, inspector_id: { _eq: $uid } }
         _set: { status: "withdrawn" }
+      ) { affected_rows }
+    }`,
+    { cid: caseId, uid: inspectorId },
+  );
+  await adminGql(
+    `mutation ($cid: uuid!, $uid: uuid!) {
+      update_case_work_units(
+        where: {
+          service_case_id: { _eq: $cid }
+          inspector_id: { _eq: $uid }
+          status: { _in: ["claimed"] }
+        }
+        _set: { status: "open", inspector_id: null, inspection_task_id: null, claimed_at: null }
       ) { affected_rows }
     }`,
     { cid: caseId, uid: inspectorId },
@@ -3649,6 +4244,11 @@ async function startTask(user: AppUser, id: string) {
     `query ($id: uuid!) { inspection_tasks_by_pk(id: $id) { ${TASK_FIELDS} } }`,
     { id },
   );
+  const started = t.inspection_tasks_by_pk;
+  const linkedCaseId = started?.service_case_id ? String(started.service_case_id) : "";
+  if (linkedCaseId) {
+    await markCaseWorking(linkedCaseId, user.id);
+  }
   let task = t.inspection_tasks_by_pk!;
   task = await healServiceTaskSnapshot(id, task);
   const recs = (task.inspection_records as unknown[]) || [];
@@ -6044,23 +6644,57 @@ async function syncMonthlySettlements(month: string) {
     });
   }
 
-  if (!objects.length) return;
+  if (objects.length) {
+    await adminGql(
+      `mutation ($objects: [monthly_settlements_insert_input!]!) {
+        insert_monthly_settlements(
+          objects: $objects
+          on_conflict: {
+            constraint: monthly_settlements_month_user_id_key
+            update_columns: [
+              perf_total expense_total reward_total event_penalty
+              subsidy_total correction_total final_amount updated_at
+            ]
+          }
+        ) { affected_rows }
+      }`,
+      { objects },
+    );
+  }
 
-  await adminGql(
-    `mutation ($objects: [monthly_settlements_insert_input!]!) {
-      insert_monthly_settlements(
-        objects: $objects
-        on_conflict: {
-          constraint: monthly_settlements_month_user_id_key
-          update_columns: [
-            perf_total expense_total reward_total event_penalty
-            subsidy_total correction_total final_amount updated_at
-          ]
-        }
-      ) { affected_rows }
+  const activeUsers = new Set(objects.map((o) => String(o.user_id)));
+  const existing = await adminGql<{
+    monthly_settlements: Array<{ user_id: string }>;
+  }>(
+    `query ($m: String!) {
+      monthly_settlements(where: { month: { _eq: $m }, status: { _neq: "locked" } }) {
+        user_id
+      }
     }`,
-    { objects },
+    { m: month },
   );
+  const staleIds = existing.monthly_settlements
+    .map((r) => r.user_id)
+    .filter((id) => !skipUsers.has(id) && !activeUsers.has(id));
+  if (staleIds.length) {
+    await adminGql(
+      `mutation ($m: String!, $ids: [uuid!]!) {
+        update_monthly_settlements(
+          where: { month: { _eq: $m }, user_id: { _in: $ids }, status: { _neq: "locked" } }
+          _set: {
+            perf_total: "0.00"
+            expense_total: "0.00"
+            reward_total: "0.00"
+            event_penalty: "0.00"
+            subsidy_total: "0.00"
+            correction_total: "0.00"
+            final_amount: "0.00"
+          }
+        ) { affected_rows }
+      }`,
+      { m: month, ids: staleIds },
+    );
+  }
 }
 
 async function listMonthly(user: AppUser, query: URLSearchParams) {

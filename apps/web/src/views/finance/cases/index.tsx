@@ -1,12 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from 'react';
 import {
   Alert,
   Button,
   Card,
   Descriptions,
   Drawer,
+  Dropdown,
   Form,
   Input,
   Modal,
@@ -21,6 +22,7 @@ import {
 import {
   DeleteOutlined,
   DownloadOutlined,
+  DownOutlined,
   EditOutlined,
   EyeOutlined,
   SettingOutlined,
@@ -43,6 +45,8 @@ import {
   setFinanceCaseTaskType,
   setFinanceCaseWorkPlan,
   updateCaseProfile,
+  resetFinanceCase,
+  deleteFinanceCase,
   withdrawFinanceAssignee,
 } from '../../../api/finance';
 import {
@@ -82,6 +86,14 @@ function inspectorOptionLabel(item: {
   return `${name}${user}${phonePart}${busy}`;
 }
 
+function caseBeforeWork(status?: string) {
+  return status === 'pending_assign' || status === 'assigned';
+}
+
+function caseStructureOpen(row?: Pick<FinanceCase, 'status' | 'workStarted'> | null) {
+  return caseBeforeWork(row?.status) && !row?.workStarted;
+}
+
 const dispatchStatusLabel: Record<string, string> = {
   pending_assign: '待派单',
   assigned: '已派单',
@@ -91,6 +103,25 @@ const dispatchStatusLabel: Record<string, string> = {
   settled: '已结算',
   month_locked: '已月结',
 };
+
+/** 筛选：未分网格单独成「待分配」，已分网格未派人才是「待派单」 */
+const STATUS_FILTER_OPTIONS = [
+  { value: 'pending_unassigned', label: '待分配' },
+  ...Object.entries(dispatchStatusLabel).map(([value, label]) => ({ value, label })),
+];
+
+function resolveCaseListFilters(
+  status?: string,
+  siteBind?: 'unassigned' | 'assigned_site',
+): { status?: string; siteBind?: 'unassigned' | 'assigned_site' } {
+  if (status === 'pending_unassigned') {
+    return { status: 'pending_assign', siteBind: 'unassigned' };
+  }
+  if (status === 'pending_assign') {
+    return { status: 'pending_assign', siteBind: siteBind ?? 'assigned_site' };
+  }
+  return { status, siteBind };
+}
 
 const legacyTaskTypeLabel: Record<string, string> = {
   inspection: '巡检',
@@ -103,6 +134,21 @@ function displayTaskType(c: Pick<FinanceCase, 'taskTypeName' | 'taskType' | 'tas
 
 function hasTaskType(c: Pick<FinanceCase, 'taskTypeName' | 'taskType' | 'taskTemplateId'>) {
   return !!(c.taskTemplateId || c.taskType);
+}
+
+/** 在派工程师人数：优先 assignments，其次姓名串（「张工、李工」） */
+function assigneeCount(c: Pick<FinanceCase, 'inspectorName' | 'assignments'>) {
+  const fromAssigns = (c.assignments || []).filter((a) => a.status !== 'withdrawn').length;
+  const fromNames = String(c.inspectorName || '')
+    .split(/[、,，]/)
+    .map((s) => s.trim())
+    .filter(Boolean).length;
+  return Math.max(fromAssigns, fromNames);
+}
+
+/** 多人：明确 multi，或实际已派 2 人以上（避免库里仍是 single 却显示换人） */
+function caseIsMulti(c: Pick<FinanceCase, 'assignMode' | 'inspectorName' | 'assignments'>) {
+  return c.assignMode === 'multi' || assigneeCount(c) > 1;
 }
 
 /** 产品线精确匹配缺口：缺填 / 系统尚未配置同名产品线 */
@@ -201,7 +247,10 @@ function CaseNoCell({
     </span>
   );
 }
-function dispatchStatus(c: FinanceCase) {
+function dispatchStatus(c: Pick<FinanceCase, 'status' | 'siteId'>) {
+  if (c.status === 'pending_assign' && !c.siteId) {
+    return { text: '待分配', color: 'warning' as const };
+  }
   const text = dispatchStatusLabel[c.status] || c.status;
   if (c.status === 'pending_assign') return { text, color: 'warning' as const };
   if (c.status === 'working') return { text, color: 'processing' as const };
@@ -256,6 +305,11 @@ export default function FinanceCasesPage() {
   const [profileSaving, setProfileSaving] = useState(false);
   const [profileForm] = Form.useForm();
   const profileProvince = Form.useWatch('province', profileForm);
+  const profileCity = Form.useWatch('city', profileForm);
+  const profileTaskTemplateId = Form.useWatch('taskTemplateId', profileForm);
+  const profileSiteId = Form.useWatch('siteId', profileForm);
+  const [dangerAction, setDangerAction] = useState<'reset' | 'delete'>();
+  const [dangerBusy, setDangerBusy] = useState(false);
   const [sites, setSites] = useState<SiteItem[]>([]);
   const [taskTypes, setTaskTypes] = useState<TemplateItem[]>([]);
   const [provinces, setProvinces] = useState<string[]>([]);
@@ -319,6 +373,37 @@ export default function FinanceCasesPage() {
       ...lines.map((name) => ({ value: name, label: name })),
     ];
   }, [taskTypes, filterTaskType]);
+
+  const profileTypeLines = useMemo(() => {
+    const tpl = taskTypes.find((t) => t.id === profileTaskTemplateId);
+    return (tpl?.productLines || [])
+      .map((p) => String(p.name || '').trim())
+      .filter(Boolean);
+  }, [taskTypes, profileTaskTemplateId]);
+
+  const profileSiteOptions = useMemo(() => {
+    const currentId = profileEdit?.siteId;
+    return [...sites]
+      .sort((a, b) => {
+        const score = (s: (typeof sites)[number]) => {
+          let n = 0;
+          if (currentId && s.id === currentId) n += 100;
+          if (profileProvince && s.province === profileProvince) n += 10;
+          if (profileCity && s.city === profileCity) n += 20;
+          return n;
+        };
+        const diff = score(b) - score(a);
+        if (diff) return diff;
+        return String(a.name || '').localeCompare(String(b.name || ''), 'zh');
+      })
+      .map((s) => {
+        const region = [s.province, s.city].filter(Boolean).join('');
+        return {
+          value: s.id,
+          label: `${s.name}${region ? ` · ${s.province}${s.city && s.city !== s.province ? s.city : ''}` : ''}（网格长：${s.manager?.realName || '未任命'}）`,
+        };
+      });
+  }, [sites, profileProvince, profileCity, profileEdit?.siteId]);
 
   const openCaseReports = useCallback(
     async (caseRow: {
@@ -450,14 +535,15 @@ export default function FinanceCasesPage() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
+      const filters = resolveCaseListFilters(status, siteBind);
       const r = await fetchFinanceCases({
         page,
         limit: pageSize,
         keyword,
-        status,
+        status: filters.status,
         province,
         city,
-        siteBind,
+        siteBind: filters.siteBind,
         siteId: filterSiteId,
         taskType: filterTaskType,
         productLine: filterProductLine,
@@ -494,7 +580,7 @@ export default function FinanceCasesPage() {
   }, [amountOpen]);
 
   useEffect(() => {
-    void fetchActiveSitesCached().then(setSites);
+    void fetchActiveSitesCached(500).then(setSites);
     void fetchTemplatesCached().then(setTaskTypes).catch(() => setTaskTypes([]));
     void fetchFinanceCaseLocationOptions()
       .then((r) => {
@@ -552,215 +638,276 @@ export default function FinanceCasesPage() {
       !hasTaskType(r) ||
       needsProductLine(r, taskTypes) ||
       productLineGap(r, taskTypes) === 'unbound_type';
+
+    type CaseAction = {
+      key: string;
+      label: string;
+      priority: number;
+      disabled?: boolean;
+      loading?: boolean;
+      icon?: ReactNode;
+      onClick: () => void;
+    };
+
+    const openSite = () => {
+      beforeOpen();
+      setSiteId(r.siteId || undefined);
+      setSiteModal({ mode: 'single', case: r });
+    };
+    const openType = () => {
+      beforeOpen();
+      const demand = String(r.serviceType || '').trim();
+      const matched = demand ? taskTypes.find((t) => t.name === demand) : undefined;
+      const tplId = r.taskTemplateId || matched?.id || undefined;
+      setTaskTemplateId(tplId);
+      const tpl = taskTypes.find((t) => t.id === tplId);
+      const prefer = String(r.productLine || '').trim();
+      const lines = tpl?.productLines || [];
+      const matchedPl = prefer
+        ? lines.find((p) => String(p.name || '').trim() === prefer)
+        : undefined;
+      setProductLine(matchedPl?.name || prefer || undefined);
+      setTypeModal(r);
+    };
+    const openAssign = () => {
+      beforeOpen();
+      const seq = ++assignLoadSeq.current;
+      assignModeTouched.current = false;
+      setAssignOpeningId(r.id);
+      void Promise.all([
+        fetchFinanceInspectors(r.id),
+        fetchFinanceCase(r.id).catch(() => null),
+      ])
+        .then(([list, detail]) => {
+          if (seq !== assignLoadSeq.current) return;
+          const assigns = (detail?.assignments || []).filter(
+            (a) => a.status !== 'withdrawn',
+          );
+          const active = assigns
+            .filter((a) => a.inspectorId)
+            .map((a) => ({
+              id: a.inspectorId!,
+              realName: a.inspectorName || a.username || a.inspectorId!,
+              completedUnits: Number(a.completedUnits || 0),
+            }));
+          // 详情无 assignments 时，用列表姓名兜底，避免仍闪空态
+          const fallbackActive =
+            active.length > 0
+              ? active
+              : String(r.inspectorName || '')
+                  .split(/[、,，]/)
+                  .map((s) => s.trim())
+                  .filter(Boolean)
+                  .map((name, i) => ({
+                    id:
+                      i === 0 && r.inspectorId
+                        ? r.inspectorId
+                        : `name:${name}`,
+                    realName: name,
+                    completedUnits: 0,
+                  }));
+
+          const mode: 'single' | 'multi' =
+            r.status === 'pending_assign'
+              ? 'single'
+              : caseIsMulti(detail || {}) ||
+                  caseIsMulti(r) ||
+                  fallbackActive.length > 1
+                ? 'multi'
+                : 'single';
+
+          setAssignMode(mode);
+          setActiveAssignees(fallbackActive);
+          setPlannedUnits(
+            r.status === 'pending_assign'
+              ? 1
+              : Math.max(1, Number(detail?.plannedUnits ?? r.plannedUnits) || 1),
+          );
+          setAssignReason(String(detail?.assignRemark || r.assignRemark || '').trim());
+          if (mode === 'single' && fallbackActive[0]) {
+            setInspectorId(fallbackActive[0].id);
+            setInspectorIds([fallbackActive[0].id]);
+          } else {
+            setInspectorId(undefined);
+            setInspectorIds([]);
+          }
+          const byId = new Map(list.map((item) => [item.id, item]));
+          for (const a of fallbackActive) {
+            if (a.id.startsWith('name:') || byId.has(a.id)) continue;
+            byId.set(a.id, {
+              id: a.id,
+              realName: a.realName,
+              phone: '',
+              region: '',
+              available: true,
+            });
+          }
+          setInspectors([...byId.values()]);
+          setAssigning({
+            ...r,
+            ...(detail
+              ? {
+                  assignMode: detail.assignMode || r.assignMode,
+                  plannedUnits: detail.plannedUnits ?? r.plannedUnits,
+                  inspectorId: detail.inspectorId ?? r.inspectorId,
+                  inspectorName: detail.inspectorName ?? r.inspectorName,
+                  status: detail.status || r.status,
+                }
+              : null),
+          });
+        })
+        .catch(() => {
+          if (seq !== assignLoadSeq.current) return;
+          message.error('加载派单信息失败，请重试');
+        })
+        .finally(() => {
+          if (seq === assignLoadSeq.current) setAssignOpeningId(undefined);
+        });
+    };
+    const openPlan = () => {
+      beforeOpen();
+      setPlanModal(r);
+      setPlanUnits(Math.max(1, Number(r.plannedUnits) || 1));
+    };
+    const openEdit = () => {
+      beforeOpen();
+      const demand = String(r.serviceType || '').trim();
+      const matched = demand ? taskTypes.find((t) => t.name === demand) : undefined;
+      const tplId = r.taskTemplateId || matched?.id || undefined;
+      setProfileEdit(r);
+      setDangerAction(undefined);
+      profileForm.setFieldsValue({
+        projectName: r.projectName || '',
+        province: r.province || undefined,
+        city: r.city || undefined,
+        siteDesc: r.siteDesc || '',
+        siteId: r.siteId || undefined,
+        taskTemplateId: tplId,
+        productLine: r.productLine || undefined,
+      });
+    };
+    const openDetail = () => {
+      beforeOpen();
+      void fetchFinanceCase(r.id).then(setDetail);
+    };
+
+    const actions: CaseAction[] = [];
+
+    if (admin && !r.siteId && caseStructureOpen(r)) {
+      actions.push({
+        key: 'site',
+        label: '分配网格',
+        priority: 100,
+        onClick: openSite,
+      });
+    }
+
+    if (['pending_assign', 'assigned'].includes(r.status) && typeActionNeeded) {
+      actions.push({
+        key: 'type',
+        label: needsProductLine(r, taskTypes) ? '选产品线' : '设类型',
+        priority: r.siteId && r.status === 'pending_assign' ? 90 : 50,
+        disabled: !r.siteId,
+        onClick: openType,
+      });
+    }
+
+    if (['pending_assign', 'assigned', 'working'].includes(r.status)) {
+      const assignLabel =
+        r.status === 'pending_assign'
+          ? '派单'
+          : caseIsMulti(r)
+            ? '加人/撤回'
+            : '换人';
+      actions.push({
+        key: 'assign',
+        label: assignLabel,
+        priority:
+          r.status === 'pending_assign' && r.siteId && hasTaskType(r) && !typeActionNeeded
+            ? 95
+            : ['assigned', 'working'].includes(r.status)
+              ? 95
+              : 70,
+        icon: <UserAddOutlined />,
+        loading: assignOpeningId === r.id,
+        disabled:
+          !r.siteId ||
+          !hasTaskType(r) ||
+          needsProductLine(r, taskTypes) ||
+          (!!assignOpeningId && assignOpeningId !== r.id),
+        onClick: openAssign,
+      });
+    }
+
+    if (['assigned', 'working', 'finished', 'settle_review'].includes(r.status)) {
+      actions.push({
+        key: 'plan',
+        label: ['finished', 'settle_review'].includes(r.status) ? '增补台数' : '调台数',
+        priority: 30,
+        onClick: openPlan,
+      });
+    }
+
+    if (r.status !== 'month_locked') {
+      actions.push({
+        key: 'edit',
+        label: '编辑',
+        priority: 20,
+        icon: <EditOutlined />,
+        onClick: openEdit,
+      });
+    }
+
+    actions.push({
+      key: 'detail',
+      label: '详情',
+      // 待结算/已结算/已月结以外，详情通常进「更多」
+      priority: ['finished', 'settle_review', 'settled', 'month_locked'].includes(r.status)
+        ? 100
+        : 10,
+      icon: <EyeOutlined />,
+      onClick: openDetail,
+    });
+
+    const sorted = [...actions].sort((a, b) => b.priority - a.priority);
+    const primaryIdx = sorted.findIndex((a) => !a.disabled);
+    const primary = sorted[primaryIdx >= 0 ? primaryIdx : 0];
+    const more = sorted.filter((a) => a !== primary);
+
     return (
-      <Space size={0} style={{ flexWrap: 'nowrap' }}>
-        {admin &&
-          !['finished', 'settle_review', 'settled', 'month_locked'].includes(r.status) && (
+      <Space size={0} style={{ flexWrap: 'nowrap' }} onClick={(e) => e.stopPropagation()}>
+        {primary && (
           <Button
             type="link"
-            style={!r.siteId ? { fontWeight: 600 } : undefined}
-            onClick={() => {
-              beforeOpen();
-              setSiteId(r.siteId || undefined);
-              setSiteModal({ mode: 'single', case: r });
-            }}
+            icon={primary.icon}
+            loading={primary.loading}
+            disabled={primary.disabled}
+            style={{ fontWeight: 600 }}
+            onClick={primary.onClick}
           >
-            {r.siteId ? '改网格' : '分配网格'}
+            {primary.label}
           </Button>
         )}
-        {['pending_assign', 'assigned'].includes(r.status) && typeActionNeeded && (
-          <Button
-            type="link"
-            style={isManager && r.siteId ? { fontWeight: 600 } : undefined}
-            disabled={!r.siteId}
-            onClick={() => {
-              beforeOpen();
-              const demand = String(r.serviceType || '').trim();
-              const matched = demand
-                ? taskTypes.find((t) => t.name === demand)
-                : undefined;
-              const tplId = r.taskTemplateId || matched?.id || undefined;
-              setTaskTemplateId(tplId);
-              const tpl = taskTypes.find((t) => t.id === tplId);
-              const prefer = String(r.productLine || '').trim();
-              const lines = tpl?.productLines || [];
-              const matchedPl = prefer
-                ? lines.find((p) => String(p.name || '').trim() === prefer)
-                : undefined;
-              setProductLine(matchedPl?.name || prefer || undefined);
-              setTypeModal(r);
+        {more.length > 0 && (
+          <Dropdown
+            menu={{
+              items: more.map((a) => ({
+                key: a.key,
+                label: a.label,
+                icon: a.icon,
+                disabled: a.disabled,
+                onClick: () => {
+                  if (!a.disabled) a.onClick();
+                },
+              })),
             }}
+            trigger={['click']}
           >
-            {needsProductLine(r, taskTypes) ? '选产品线' : '设类型'}
-          </Button>
-        )}
-        {['pending_assign', 'assigned', 'working'].includes(r.status) && (
-          <Button
-            type="link"
-            style={
-              isManager && r.siteId && hasTaskType(r) && r.status === 'pending_assign'
-                ? { fontWeight: 600 }
-                : undefined
-            }
-            icon={<UserAddOutlined />}
-            loading={assignOpeningId === r.id}
-            disabled={
-              !r.siteId ||
-              !hasTaskType(r) ||
-              needsProductLine(r, taskTypes) ||
-              (!!assignOpeningId && assignOpeningId !== r.id)
-            }
-            onClick={() => {
-              beforeOpen();
-              const seq = ++assignLoadSeq.current;
-              assignModeTouched.current = false;
-              setAssignOpeningId(r.id);
-              void Promise.all([
-                fetchFinanceInspectors(r.id),
-                fetchFinanceCase(r.id).catch(() => null),
-              ])
-                .then(([list, detail]) => {
-                  if (seq !== assignLoadSeq.current) return;
-                  const assigns = (detail?.assignments || []).filter(
-                    (a) => a.status !== 'withdrawn',
-                  );
-                  const active = assigns
-                    .filter((a) => a.inspectorId)
-                    .map((a) => ({
-                      id: a.inspectorId!,
-                      realName: a.inspectorName || a.username || a.inspectorId!,
-                      completedUnits: Number(a.completedUnits || 0),
-                    }));
-                  // 详情无 assignments 时，用列表姓名兜底，避免仍闪空态
-                  const fallbackActive =
-                    active.length > 0
-                      ? active
-                      : String(r.inspectorName || '')
-                          .split(/[、,，]/)
-                          .map((s) => s.trim())
-                          .filter(Boolean)
-                          .map((name, i) => ({
-                            id:
-                              i === 0 && r.inspectorId
-                                ? r.inspectorId
-                                : `name:${name}`,
-                            realName: name,
-                            completedUnits: 0,
-                          }));
-
-                  const mode: 'single' | 'multi' =
-                    r.status === 'pending_assign'
-                      ? 'single'
-                      : detail?.assignMode === 'multi' ||
-                          detail?.assignMode === 'single'
-                        ? detail.assignMode
-                        : r.assignMode === 'multi'
-                          ? 'multi'
-                          : 'single';
-
-                  setAssignMode(mode);
-                  setActiveAssignees(fallbackActive);
-                  setPlannedUnits(
-                    r.status === 'pending_assign'
-                      ? 1
-                      : Math.max(
-                          1,
-                          Number(detail?.plannedUnits ?? r.plannedUnits) || 1,
-                        ),
-                  );
-                  setAssignReason(
-                    String(detail?.assignRemark || r.assignRemark || '').trim(),
-                  );
-                  if (mode === 'single' && fallbackActive[0]) {
-                    setInspectorId(fallbackActive[0].id);
-                    setInspectorIds([fallbackActive[0].id]);
-                  } else {
-                    setInspectorId(undefined);
-                    setInspectorIds([]);
-                  }
-                  const byId = new Map(list.map((item) => [item.id, item]));
-                  for (const a of fallbackActive) {
-                    if (a.id.startsWith('name:') || byId.has(a.id)) continue;
-                    byId.set(a.id, {
-                      id: a.id,
-                      realName: a.realName,
-                      phone: '',
-                      region: '',
-                      available: true,
-                    });
-                  }
-                  setInspectors([...byId.values()]);
-                  setAssigning({
-                    ...r,
-                    ...(detail
-                      ? {
-                          assignMode: detail.assignMode || r.assignMode,
-                          plannedUnits: detail.plannedUnits ?? r.plannedUnits,
-                          inspectorId: detail.inspectorId ?? r.inspectorId,
-                          inspectorName: detail.inspectorName ?? r.inspectorName,
-                          status: detail.status || r.status,
-                        }
-                      : null),
-                  });
-                })
-                .catch(() => {
-                  if (seq !== assignLoadSeq.current) return;
-                  message.error('加载派单信息失败，请重试');
-                })
-                .finally(() => {
-                  if (seq === assignLoadSeq.current) setAssignOpeningId(undefined);
-                });
-            }}
-          >
-            {r.status === 'pending_assign'
-              ? '派单'
-              : r.assignMode === 'multi'
-                ? '加人/撤回'
-                : '换人'}
-          </Button>
-        )}
-        {['assigned', 'working', 'finished', 'settle_review'].includes(r.status) && (
-            <Button
-              type="link"
-              onClick={() => {
-                beforeOpen();
-                setPlanModal(r);
-                setPlanUnits(Math.max(1, Number(r.plannedUnits) || 1));
-              }}
-            >
-              {['finished', 'settle_review'].includes(r.status) ? '增补台数' : '调台数'}
+            <Button type="link">
+              更多 <DownOutlined style={{ fontSize: 10 }} />
             </Button>
-          )}
-        {r.status !== 'month_locked' && (
-          <Button
-            type="link"
-            icon={<EditOutlined />}
-            onClick={() => {
-              beforeOpen();
-              setProfileEdit(r);
-              profileForm.setFieldsValue({
-                projectName: r.projectName || '',
-                province: r.province || undefined,
-                city: r.city || undefined,
-                siteDesc: r.siteDesc || '',
-                serviceType: r.serviceType || '',
-                productLine: r.productLine || '',
-              });
-            }}
-          >
-            编辑
-          </Button>
+          </Dropdown>
         )}
-        <Button
-          type="link"
-          icon={<EyeOutlined />}
-          onClick={() => {
-            beforeOpen();
-            void fetchFinanceCase(r.id).then(setDetail);
-          }}
-        >
-          详情
-        </Button>
       </Space>
     );
   };
@@ -775,14 +922,14 @@ export default function FinanceCasesPage() {
           <Tooltip
             title={
               admin
-                ? '建议批量：按省份/城市筛选 → 勾选未分配案例 → 批量分配网格 → 设服务类型 → 再批量派单（须同一网格）。改网格会清空全部原派单；设类型仅开工前可改；改工程师支持换人/加人/撤回。'
-                : '仅显示已分配到本网格的案例。设类型仅开工前可改；改工程师支持换人/加人/撤回；报告已提交后不可改派。'
+                ? '建议批量：按省份/城市筛选 → 勾选未分配案例 → 批量分配网格 → 缺类型时设服务类型 → 再批量派单（须同一网格）。已有网格后改网格走编辑（开工前可改，已派单会撤回工程师）。类型齐了也走编辑。'
+                : '仅显示已分配到本网格的案例。缺类型时设服务类型；齐了要改走编辑。开工前可改网格/类型/产品线；改工程师支持换人/加人/撤回；报告已提交后不可改派。'
             }
           >
             <span>
               {admin
-                ? '管理员：分配/改派网格，可协助设服务类型与派单（点此看流程）'
-                : '网格长：设服务类型、派单与改派工程师（点此看说明）'}
+                ? '管理员：分配网格，缺类型时设服务类型，再派单（点此看流程）'
+                : '网格长：缺类型时设服务类型，再派单与改派工程师（点此看说明）'}
             </span>
           </Tooltip>
         }
@@ -857,10 +1004,7 @@ export default function FinanceCasesPage() {
               setStatus(v);
               setSelectedRowKeys([]);
             }}
-            options={Object.entries(dispatchStatusLabel).map(([value, label]) => ({
-              value,
-              label,
-            }))}
+            options={STATUS_FILTER_OPTIONS}
           />
           <Select
             allowClear
@@ -943,18 +1087,21 @@ export default function FinanceCasesPage() {
                   await exportFinanceCases(
                     ids.length
                       ? { ids }
-                      : {
-                          keyword: keyword || undefined,
-                          status,
-                          province,
-                          city,
-                          siteBind,
-                          siteId: filterSiteId,
-                          taskType: filterTaskType,
-                          productLine: filterProductLine,
-                          dateFrom: dateFrom || undefined,
-                          dateTo: dateTo || undefined,
-                        },
+                      : (() => {
+                          const filters = resolveCaseListFilters(status, siteBind);
+                          return {
+                            keyword: keyword || undefined,
+                            status: filters.status,
+                            province,
+                            city,
+                            siteBind: filters.siteBind,
+                            siteId: filterSiteId,
+                            taskType: filterTaskType,
+                            productLine: filterProductLine,
+                            dateFrom: dateFrom || undefined,
+                            dateTo: dateTo || undefined,
+                          };
+                        })(),
                   );
                   message.success(ids.length ? `已导出勾选 ${ids.length} 条` : '已按当前筛选导出');
                 } catch (error) {
@@ -989,7 +1136,7 @@ export default function FinanceCasesPage() {
                   setSiteModal({ mode: 'batch' });
                 }}
               >
-                批量分配/改派网格
+                批量分配网格
               </Button>
             </>
           )}
@@ -1134,7 +1281,7 @@ export default function FinanceCasesPage() {
                   ) : (
                     <Tag>未匹配类型</Tag>
                   )}
-                  {r.assignMode === 'multi' ? <Tag color="purple">多人</Tag> : null}
+                  {caseIsMulti(r) ? <Tag color="purple">多人</Tag> : null}
                   {gap === 'unbound_type' ? (
                     <Tag
                       color="orange"
@@ -1212,7 +1359,7 @@ export default function FinanceCasesPage() {
               return (
                 <span>
                   <EllipsisTip text={short} empty="-" />
-                  {row.assignMode === 'multi' || names.length > 1 ? (
+                  {caseIsMulti(row) ? (
                     <Tag color="purple" style={{ marginLeft: 6 }}>
                       {names.length}人
                     </Tag>
@@ -1245,7 +1392,7 @@ export default function FinanceCasesPage() {
           },
           {
             title: '操作',
-            width: 260,
+            width: 148,
             fixed: 'right',
             render: (_, r) => renderCaseActions(r),
           },
@@ -1268,8 +1415,8 @@ export default function FinanceCasesPage() {
         open={!!siteModal}
         title={
           siteModal?.mode === 'batch'
-            ? '批量分配/改派到网格'
-            : `${siteModal?.case?.siteId ? '改派网格' : '分配网格'} · ${siteModal?.case?.gspCaseNo || ''}`
+            ? '批量分配网格'
+            : `分配网格 · ${siteModal?.case?.gspCaseNo || ''}`
         }
         okText="确认"
         cancelText="取消"
@@ -1286,10 +1433,14 @@ export default function FinanceCasesPage() {
           if (siteModal.mode === 'batch') {
             const ids = selectedRowKeys.map(String);
             const result = await batchAssignFinanceCasesToSites(ids, siteId);
-            message.success(`已将 ${result.updated} 个案例分配到「${result.siteName}」`);
+            if (result.updated) {
+              message.success(`已将 ${result.updated} 个案例分配到「${result.siteName}」`);
+            } else if (result.skipped?.length) {
+              message.warning('没有可分配的待派单案例');
+            }
             if (result.skipped?.length) {
               Modal.info({
-                title: '部分案例未改派',
+                title: '部分案例未分配',
                 width: 520,
                 content: (
                   <ul style={{ paddingLeft: 18, margin: 0 }}>
@@ -1304,44 +1455,13 @@ export default function FinanceCasesPage() {
             }
             setSelectedRowKeys([]);
           } else if (siteModal.case) {
-            const prevSiteId = siteModal.case.siteId || '';
-            if (prevSiteId && prevSiteId === siteId) {
-              message.info('未更换网格，无需改派');
-              setSiteModal(undefined);
-              return;
-            }
-            const wasAssigned = !!prevSiteId;
-            const hadDispatch =
-              siteModal.case.status !== 'pending_assign' || !!siteModal.case.inspectorId;
             await setFinanceCaseSite(siteModal.case.id, siteId);
-            message.success(
-              wasAssigned
-                ? hadDispatch
-                  ? '已改派网格，原派单已全部清空，请新网格重新派单'
-                  : '已改派网格'
-                : '网格已分配',
-            );
+            message.success('网格已分配');
           }
           setSiteModal(undefined);
           await load();
         }}
       >
-        {!!siteModal?.case?.siteId && siteId && siteId !== siteModal.case.siteId && (
-          <Alert
-            type="warning"
-            showIcon
-            style={{ marginBottom: 12 }}
-            message="改派到其他网格后，原工程师派单与未提交巡检将清空，需由新网格网格长重新派单。"
-          />
-        )}
-        {!!siteModal?.case?.siteId && siteId === siteModal.case.siteId && (
-          <Alert
-            type="info"
-            showIcon
-            style={{ marginBottom: 12 }}
-            message="当前已是该网格。请选择其他网格后再确认改派。"
-          />
-        )}
         <Select
           style={{ width: '100%' }}
           showSearch
@@ -2133,7 +2253,7 @@ export default function FinanceCasesPage() {
           当前进度：{planModal?.completedUnits || 0} / {planModal?.plannedUnits || 1}{' '}
           {planModal?.unitLabel || '台'}
           {planModal?.status
-            ? ` · ${dispatchStatusLabel[planModal.status] || planModal.status}`
+            ? ` · ${dispatchStatus(planModal).text}`
             : ''}
         </div>
         <div style={{ marginBottom: 6 }}>新的计划台数</div>
@@ -2148,10 +2268,11 @@ export default function FinanceCasesPage() {
       <Drawer
         {...profileDrawer}
         open={!!profileEdit}
-        title={`编辑案例主数据 · ${profileEdit?.gspCaseNo || ''}`}
+        title={`编辑案例 · ${profileEdit?.gspCaseNo || ''}`}
         onClose={() => {
-          if (profileSaving) return;
+          if (profileSaving || dangerBusy) return;
           setProfileEdit(undefined);
+          setDangerAction(undefined);
           profileForm.resetFields();
         }}
         destroyOnHidden
@@ -2159,8 +2280,9 @@ export default function FinanceCasesPage() {
           <Space wrap className="admin-drawer-extra-actions">
             <Button
               onClick={() => {
-                if (profileSaving) return;
+                if (profileSaving || dangerBusy) return;
                 setProfileEdit(undefined);
+                setDangerAction(undefined);
                 profileForm.resetFields();
               }}
             >
@@ -2169,24 +2291,45 @@ export default function FinanceCasesPage() {
             <Button
               type="primary"
               loading={profileSaving}
+              disabled={dangerBusy}
               onClick={() => {
                 void (async () => {
                   if (!profileEdit) return;
                   const values = await profileForm.validateFields();
+                  const beforeWork = caseStructureOpen(profileEdit);
+                  if (beforeWork && profileTypeLines.length && !values.productLine) {
+                    message.warning('请选择产品线');
+                    return;
+                  }
                   setProfileSaving(true);
                   try {
-                    await updateCaseProfile(profileEdit.id, {
+                    const saved = await updateCaseProfile(profileEdit.id, {
                       projectName: String(values.projectName || '').trim(),
                       province: values.province ? String(values.province).trim() : null,
                       city: values.city ? String(values.city).trim() : null,
                       siteDesc: values.siteDesc ? String(values.siteDesc).trim() : null,
-                      serviceType: values.serviceType ? String(values.serviceType).trim() : null,
-                      productLine: values.productLine ? String(values.productLine).trim() : null,
+                      ...(beforeWork
+                        ? {
+                            ...(admin ? { siteId: values.siteId || null } : {}),
+                            templateId: values.taskTemplateId || null,
+                            productLine: values.productLine || null,
+                          }
+                        : {}),
                     });
-                    message.success('案例主数据已保存');
+                    if (saved.structureLocked) {
+                      message.warning('工程师已开工，网格/类型未改动；要改请先重置为待分配');
+                    } else {
+                      message.success(
+                        saved.dispatchWithdrawn
+                          ? '已保存，原派单已撤回，请重新派单'
+                          : '案例已保存',
+                      );
+                    }
                     setProfileEdit(undefined);
                     profileForm.resetFields();
                     void load();
+                  } catch {
+                    /* request 已提示 */
                   } finally {
                     setProfileSaving(false);
                   }
@@ -2202,10 +2345,36 @@ export default function FinanceCasesPage() {
           type="info"
           showIcon
           style={{ marginBottom: 12 }}
-          message="此处仅改案例主数据"
-          description="网格、服务类型模板与派单请用列表上的对应操作。修改省份可能重算区域并影响已挂接 PO 的绩效计价。"
+          message={
+            caseStructureOpen(profileEdit)
+              ? '工程师开工前可改除案例号外的全部字段'
+              : '作业中及以后此处只改项目名、地区与描述；要改网格/类型请先重置为待分配'
+          }
+          description={
+            profileEdit?.status === 'assigned'
+              ? '已派单时改网格会撤回工程师，需重新派单；改类型会按新模板重建未开工任务。修改省份可能重算区域，并影响已挂接 PO 的绩效计价。'
+              : '修改省份可能重算区域，并影响已挂接 PO 的绩效计价。'
+          }
         />
+        {admin &&
+        profileEdit?.status === 'assigned' &&
+        String(profileSiteId || '') !== String(profileEdit.siteId || '') ? (
+          <Alert
+            type="warning"
+            showIcon
+            style={{ marginBottom: 12 }}
+            message="更换网格将撤回已派工程师，保存后需重新派单。"
+          />
+        ) : null}
         <Form form={profileForm} layout="vertical">
+          <Form.Item label="案例号">
+            <Input value={profileEdit?.gspCaseNo || ''} disabled />
+          </Form.Item>
+          {profileEdit?.serviceType ? (
+            <Form.Item label="GSP 需求原文">
+              <Input value={profileEdit.serviceType} disabled />
+            </Form.Item>
+          ) : null}
           <Form.Item
             name="projectName"
             label="项目名称"
@@ -2213,11 +2382,63 @@ export default function FinanceCasesPage() {
           >
             <Input maxLength={128} />
           </Form.Item>
-          <Form.Item name="serviceType" label="服务类型（需求类型原文）">
-            <Input maxLength={32} placeholder="如：巡检 / 故障恢复" />
+          <Form.Item
+            name="siteId"
+            label="归属网格"
+            extra={
+              admin && caseStructureOpen(profileEdit)
+                ? '可搜索全部网格；与案例同省/同城的排在前面。已派单改网格会撤回工程师。'
+                : undefined
+            }
+          >
+            <Select
+              allowClear
+              showSearch
+              optionFilterProp="label"
+              disabled={!admin || !caseStructureOpen(profileEdit)}
+              placeholder={admin ? '搜索或选择网格' : '仅管理员可改网格'}
+              options={profileSiteOptions}
+            />
           </Form.Item>
-          <Form.Item name="productLine" label="产品线">
-            <Input maxLength={64} placeholder="如：地面-组串式" />
+          <Form.Item name="taskTemplateId" label="服务类型">
+            <Select
+              allowClear
+              showSearch
+              optionFilterProp="label"
+              disabled={!caseStructureOpen(profileEdit)}
+              placeholder="选择服务类型"
+              options={taskTypes.map((t) => ({
+                value: t.id,
+                label: t.productLines?.length
+                  ? `${t.name}（${t.productLines.length} 条产品线）`
+                  : t.name,
+              }))}
+              onChange={() => profileForm.setFieldValue('productLine', undefined)}
+            />
+          </Form.Item>
+          <Form.Item
+            name="productLine"
+            label="产品线"
+            rules={
+              caseStructureOpen(profileEdit) && profileTypeLines.length
+                ? [{ required: true, message: '请选择产品线' }]
+                : undefined
+            }
+          >
+            <Select
+              allowClear
+              showSearch
+              optionFilterProp="label"
+              disabled={!caseStructureOpen(profileEdit) || !profileTaskTemplateId}
+              placeholder={
+                profileTaskTemplateId
+                  ? profileTypeLines.length
+                    ? '选择产品线'
+                    : '该类型未配置产品线'
+                  : '请先选择服务类型'
+              }
+              options={profileTypeLines.map((name) => ({ value: name, label: name }))}
+            />
           </Form.Item>
           <Form.Item name="province" label="省份">
             <Select
@@ -2243,7 +2464,112 @@ export default function FinanceCasesPage() {
             <Input.TextArea rows={3} />
           </Form.Item>
         </Form>
+        {admin ? (
+          <div
+            style={{
+              marginTop: 8,
+              paddingTop: 16,
+              borderTop: '1px solid #f0f0f0',
+            }}
+          >
+            <div style={{ marginBottom: 8, fontWeight: 600 }}>危险操作</div>
+            <Space wrap>
+              <Button
+                danger
+                disabled={profileSaving || profileEdit?.status === 'month_locked'}
+                onClick={() => {
+                  setDangerAction('reset');
+                }}
+              >
+                重置为待分配
+              </Button>
+              <Button
+                danger
+                disabled={
+                  profileSaving ||
+                  !profileEdit ||
+                  !caseStructureOpen(profileEdit)
+                }
+                onClick={() => {
+                  setDangerAction('delete');
+                }}
+              >
+                删除案例
+              </Button>
+            </Space>
+            {profileEdit && !caseStructureOpen(profileEdit) ? (
+              <div style={{ marginTop: 8, color: '#888', fontSize: 12 }}>
+                作业中及以后不能直接删除，请先重置为待分配。
+              </div>
+            ) : null}
+          </div>
+        ) : null}
       </Drawer>
+      <Modal
+        open={!!dangerAction}
+        title={dangerAction === 'delete' ? '删除案例' : '重置为待分配'}
+        okText={dangerAction === 'delete' ? '确认删除' : '确认重置'}
+        cancelText="取消"
+        confirmLoading={dangerBusy}
+        zIndex={1200}
+        getContainer={() => document.body}
+        maskClosable={!dangerBusy}
+        okButtonProps={{ type: 'primary', danger: true }}
+        onCancel={() => {
+          if (dangerBusy) return;
+          setDangerAction(undefined);
+        }}
+        onOk={() => {
+          void (async () => {
+            if (!profileEdit || !dangerAction) return;
+            const no = String(profileEdit.gspCaseNo || '').trim();
+            if (!no) {
+              message.warning('案例号缺失，无法操作');
+              return;
+            }
+            setDangerBusy(true);
+            try {
+              if (dangerAction === 'reset') {
+                const result = await resetFinanceCase(profileEdit.id, no);
+                const poHint =
+                  Number(result.unboundPoCount || 0) > 0
+                    ? `，已解绑 ${result.unboundPoCount} 张 PO`
+                    : '';
+                message.success(`已重置为待分配${poHint}`);
+              } else {
+                await deleteFinanceCase(profileEdit.id, no);
+                message.success(`已删除案例 ${no}`);
+              }
+              setDangerAction(undefined);
+              setProfileEdit(undefined);
+              profileForm.resetFields();
+              void load();
+            } finally {
+              setDangerBusy(false);
+            }
+          })();
+        }}
+      >
+        {dangerAction === 'reset' ? (
+          <Alert
+            type="warning"
+            showIcon
+            style={{ marginBottom: 12 }}
+            message="将回到刚导入时的待分配：清空网格、派单、报告、报销、绩效与案例考核；服务类型和产品线按导入原文保留。已挂 PO 会解绑回待匹配。"
+          />
+        ) : (
+          <Alert
+            type="error"
+            showIcon
+            style={{ marginBottom: 12 }}
+            message="删除后不可恢复。待分配、待派单、已派单（工程师未开工）可删；开工后请先重置为待分配。"
+          />
+        )}
+        <div>
+          当前案例：<strong>{profileEdit?.gspCaseNo}</strong>
+          {profileEdit?.projectName ? ` · ${profileEdit.projectName}` : ''}
+        </div>
+      </Modal>
       <Drawer
         {...detailDrawer}
         open={!!detail}
@@ -2257,7 +2583,7 @@ export default function FinanceCasesPage() {
           <>
             <Descriptions
               bordered
-              column={{ xs: 1, sm: 2 }}
+              column={{ xs: 1, sm: 2, md: 2, lg: 2, xl: 2, xxl: 2 }}
               items={[
                 {
                   key: 'no',
@@ -2302,7 +2628,7 @@ export default function FinanceCasesPage() {
                 {
                   key: 'siteDesc',
                   label: '失效现象描述',
-                  span: 2,
+                  span: { xs: 1, sm: 2, md: 2, lg: 2, xl: 2, xxl: 2 },
                   children: detail.siteDesc || '-',
                 },
                 {
@@ -2363,7 +2689,7 @@ export default function FinanceCasesPage() {
                 {
                   key: 'assignRemark',
                   label: '派单备注',
-                  span: 2,
+                  span: { xs: 1, sm: 2, md: 2, lg: 2, xl: 2, xxl: 2 },
                   children: detail.assignRemark?.trim() ? detail.assignRemark : '-',
                 },
                 ...(admin
@@ -2371,7 +2697,7 @@ export default function FinanceCasesPage() {
                       {
                         key: 'revenue',
                         label: '案例收入',
-                        span: 2,
+                        span: { xs: 1, sm: 2, md: 2, lg: 2, xl: 2, xxl: 2 },
                         children: (
                           <span style={{ whiteSpace: 'nowrap' }}>
                             {`¥ ${Number(detail.caseRevenue || 0).toFixed(2)}`}

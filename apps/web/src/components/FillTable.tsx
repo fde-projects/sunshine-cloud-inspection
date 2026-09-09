@@ -117,6 +117,49 @@ export default function FillTable<RecordType extends object>(props: FillTablePro
     };
   }, [hasPager, isMobile, useMobileList]);
 
+  // 横滑时同步表头/表体 scrollLeft，避免列错位
+  useEffect(() => {
+    if (isMobile || useMobileList) return;
+    const el = wrapRef.current;
+    if (!el) return;
+    let cancelled = false;
+    let cleanups: Array<() => void> = [];
+
+    const bind = () => {
+      if (cancelled) return;
+      const header = el.querySelector(".ant-table-header") as HTMLElement | null;
+      const body = el.querySelector(".ant-table-body") as HTMLElement | null;
+      if (!header || !body) return;
+      let syncing = false;
+      const onBodyScroll = () => {
+        if (syncing) return;
+        syncing = true;
+        header.scrollLeft = body.scrollLeft;
+        syncing = false;
+      };
+      const onHeaderScroll = () => {
+        if (syncing) return;
+        syncing = true;
+        body.scrollLeft = header.scrollLeft;
+        syncing = false;
+      };
+      body.addEventListener("scroll", onBodyScroll, { passive: true });
+      header.addEventListener("scroll", onHeaderScroll, { passive: true });
+      cleanups.push(() => {
+        body.removeEventListener("scroll", onBodyScroll);
+        header.removeEventListener("scroll", onHeaderScroll);
+      });
+    };
+
+    bind();
+    const t = window.setTimeout(bind, 0);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(t);
+      cleanups.forEach((fn) => fn());
+    };
+  }, [isMobile, useMobileList, dataSource, bodyY, loading]);
+
   if (useMobileList && mobileCard) {
     const rows = (Array.isArray(dataSource) ? dataSource : []) as RecordType[];
     const pager =

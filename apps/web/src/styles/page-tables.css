@@ -175,12 +175,24 @@ body:has(.app-shell) {
 
 .admin-fill-page__table .ant-table-header {
   flex: 0 0 auto;
-  overflow: hidden !important;
+  /* 预留与表体一致的纵向滚动条槽，避免横滑后表头与列错位 */
+  overflow: hidden scroll !important;
+  scrollbar-gutter: stable;
+}
+
+.admin-fill-page__table .ant-table-header::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.admin-fill-page__table .ant-table-header::-webkit-scrollbar-thumb {
+  background: transparent;
 }
 
 .admin-fill-page__table .ant-table-body,
 .admin-fill-page__table .ant-table-content {
   overflow: auto !important;
+  scrollbar-gutter: stable;
 }
 
 .admin-fill-page .ant-alert {

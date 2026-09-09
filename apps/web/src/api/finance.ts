@@ -430,10 +430,29 @@ export async function fetchFinanceCase(id: string) {
 }
 export async function updateCaseProfile(id: string, payload: UpdateCaseProfilePayload) {
   return unwrap(
-    await request.patch<ApiResponse<FinanceCase & { reprice?: Record<string, unknown> | null }>>(
-      `/cases/${id}/profile`,
-      payload,
-    ),
+    await request.patch<
+      ApiResponse<
+        FinanceCase & {
+          reprice?: Record<string, unknown> | null;
+          dispatchWithdrawn?: boolean;
+          structureLocked?: boolean;
+        }
+      >
+    >(`/cases/${id}/profile`, payload),
+  );
+}
+export async function resetFinanceCase(id: string, confirm: string) {
+  return unwrap(
+    await request.post<
+      ApiResponse<FinanceCase & { unboundPoCount?: number; resyncedMonths?: string[] }>
+    >(`/cases/${id}/reset`, { confirm }),
+  );
+}
+export async function deleteFinanceCase(id: string, confirm: string) {
+  return unwrap(
+    await request.delete<ApiResponse<{ success: boolean; gspCaseNo: string }>>(`/cases/${id}`, {
+      params: { confirm },
+    }),
   );
 }
 export async function fetchPoOrders(params: Record<string, unknown>) {

@@ -13,7 +13,7 @@ let templatesInflight: Promise<Awaited<ReturnType<typeof fetchTemplates>>> | nul
 let templatesCache: CacheEntry<Awaited<ReturnType<typeof fetchTemplates>>> | null = null;
 
 /** 筛选项用网格列表：60s 内复用，同屏多页不重复打 Hasura。 */
-export function fetchActiveSitesCached(limit = 100): Promise<SiteItem[]> {
+export function fetchActiveSitesCached(limit = 500): Promise<SiteItem[]> {
   if (sitesCache && Date.now() - sitesCache.at < TTL_MS) {
     return Promise.resolve(sitesCache.value);
   }

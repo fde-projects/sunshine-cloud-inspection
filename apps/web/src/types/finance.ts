@@ -15,6 +15,8 @@ export interface FinanceCase {
   siteDesc?: string;
   region: string;
   status: string;
+  /** 任务已开工（案例状态可能仍显示已派单） */
+  workStarted?: boolean;
   siteId?: string | null;
   siteName?: string | null;
   siteManagerName?: string | null;
@@ -122,7 +124,8 @@ export type UpdateCaseProfilePayload = {
   province?: string | null;
   city?: string | null;
   siteDesc?: string | null;
-  serviceType?: string | null;
+  siteId?: string | null;
+  templateId?: string | null;
   productLine?: string | null;
 };
 export interface PriceItem {

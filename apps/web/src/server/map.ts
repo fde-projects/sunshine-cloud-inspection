@@ -72,11 +72,20 @@ export const CASE_CORE_FIELDS = `
     inspector_id status completed_units
     inspector { real_name username phone }
   }
+  inspection_tasks { status }
   case_performance {
     id case_revenue perf_base perf_final deduction review_status review_comment
     inspector_id month
   }
 `;
+
+export function caseWorkStarted(row: Record<string, unknown>) {
+  const tasks = (row.inspection_tasks as Array<{ status?: string }> | undefined) || [];
+  return tasks.some((t) => {
+    const s = String(t.status || "");
+    return s !== "pending" && s !== "draft";
+  });
+}
 
 export const CASE_FIELDS = `
   ${CASE_CORE_FIELDS}
@@ -202,13 +211,15 @@ export function mapCase(row: Record<string, unknown>) {
     siteDesc: row.site_desc,
     region: row.region,
     status: row.status,
+    workStarted: caseWorkStarted(row),
     siteId: row.site_id,
     siteName: site?.name || null,
     siteManagerName: site?.manager?.real_name || null,
     taskType: row.task_type,
     taskTemplateId: row.task_template_id,
     taskTypeName: tpl?.name || null,
-    assignMode: row.assign_mode || "single",
+    assignMode:
+      row.assign_mode === "multi" || assignments.length > 1 ? "multi" : "single",
     plannedUnits: row.planned_units,
     completedUnits: row.completed_units,
     expenseEnabled: row.expense_enabled,
@@ -380,11 +391,15 @@ export function mapTask(row: Record<string, unknown>) {
   const recs = (row.inspection_records as Array<Record<string, unknown>>) || [];
   const rec = recs[0];
   const sc = row.service_case as Record<string, unknown> | null;
+  const liveTaskName =
+    sc?.gsp_case_no || sc?.project_name
+      ? `${String(sc.gsp_case_no || "").trim()} ${String(sc.project_name || "").trim()}`.trim()
+      : "";
   return {
     id: row.id,
     siteId: row.site_id,
     deviceId: row.device_id,
-    taskName: row.task_name,
+    taskName: liveTaskName || row.task_name,
     inspectorId: row.inspector_id,
     status: row.status,
     startedAt: row.started_at,

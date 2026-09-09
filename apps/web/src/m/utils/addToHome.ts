@@ -88,7 +88,7 @@ export function registerMobileServiceWorker(): void {
   if (typeof window === "undefined") return;
   if (!("serviceWorker" in navigator)) return;
   if (!window.location.pathname.startsWith("/m")) return;
-  void navigator.serviceWorker.register("/m/sw.js", { scope: "/m" }).catch(() => undefined);
+  void navigator.serviceWorker.register("/m/sw.js", { scope: "/m/" }).catch(() => undefined);
 }
 
 export function ensureMobileManifestLink(): void {

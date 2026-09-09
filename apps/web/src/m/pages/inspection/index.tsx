@@ -264,6 +264,7 @@ export default function InspectionPage() {
   const pendingPreviewRef = useRef('');
   const lastFilesRef = useRef<File[]>([]);
   const locationProofRef = useRef<LiveLocationProof | null>(null);
+  const locationAttemptRef = useRef(0);
   const locationMetaRef = useRef<{
     locationStatus?: 'ok' | 'weak' | 'failed' | 'skipped';
     locationReasonCode?: string;
@@ -281,17 +282,21 @@ export default function InspectionPage() {
 
   const verifyLocation = useCallback(async () => {
     if (!taskId) throw new Error('缺少作业');
+    const attempt = ++locationAttemptRef.current;
     setLocationStatus('checking');
     setLocationError('正在获取高精度现场定位…');
     try {
       const proof = await getLiveLocation((accuracy) => {
+        if (attempt !== locationAttemptRef.current) return;
         setLocationError(
           accuracy <= 200
             ? `GPS 已连接，当前精度约 ${accuracy} 米…`
             : `正在提高定位精度，当前约 ${accuracy} 米…`,
         );
       });
+      if (attempt !== locationAttemptRef.current) return null;
       const result = await checkTaskLocation({ taskId, ...proof });
+      if (attempt !== locationAttemptRef.current) return null;
       locationProofRef.current = proof;
       const status =
         result.status === 'weak' || result.status === 'ok'
@@ -311,6 +316,7 @@ export default function InspectionPage() {
       setLocationError(result.reason || '');
       return proof;
     } catch (error) {
+      if (attempt !== locationAttemptRef.current) return null;
       const message = requestErrorMessage(error, '现场定位失败');
       locationProofRef.current = null;
       locationMetaRef.current = {
@@ -326,6 +332,7 @@ export default function InspectionPage() {
   }, [taskId]);
 
   const markLocationSkipped = useCallback(() => {
+    locationAttemptRef.current += 1;
     locationProofRef.current = null;
     locationMetaRef.current = {
       locationStatus: 'skipped',

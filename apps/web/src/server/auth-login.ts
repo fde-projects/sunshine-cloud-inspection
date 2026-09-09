@@ -1,5 +1,5 @@
 import bcrypt from "bcryptjs";
-import { loginRolesFromDuties } from "@/lib/account";
+import { loginRolesFromDuties, parseAccountRole, type AccountRole } from "@/lib/account";
 import { adminGql } from "@/lib/hasura-admin";
 import { signHasuraUserJwt, type AppRole } from "@/lib/jwt";
 import { parseRoleInput, roleForPortal } from "@/lib/portal";
@@ -25,6 +25,7 @@ export type AuthSession = {
     phone: string;
     role: AppRole;
     roles: AppRole[];
+    accountRole: AccountRole;
     status: string;
   };
 };
@@ -45,6 +46,7 @@ export async function issueRoleSession(input: {
   status: string;
   role: AppRole;
   roles: AppRole[] | null | undefined;
+  accountRole?: AccountRole | string | null;
   activeRole: AppRole;
 }): Promise<AuthSession> {
   const roles = input.roles?.length ? [...new Set(input.roles)] : [input.role];
@@ -62,6 +64,7 @@ export async function issueRoleSession(input: {
       phone: input.phone,
       role: input.activeRole,
       roles,
+      accountRole: parseAccountRole(input.accountRole),
       status: input.status,
     },
   };
@@ -114,6 +117,7 @@ export async function loginWithPassword(
     status: row.status,
     role: roles[0],
     roles,
+    accountRole: row.role,
     activeRole,
   });
 }

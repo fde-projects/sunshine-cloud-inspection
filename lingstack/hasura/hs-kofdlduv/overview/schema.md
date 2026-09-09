@@ -1,6 +1,6 @@
 # Schema 鸟瞰图
 
-> 最后更新：2026-09-05  
+> 最后更新：2026-09-09  
 > Hasura CLI：v2.49.5  
 > 数据源：`default`（Postgres `public`）  
 > 状态：已 track 26 张业务表；关系均来自 FK（`foreign_key_constraint_on`）
@@ -21,6 +21,8 @@
 | 无 Token | `anonymous`，无业务权限 |
 
 `users.password` 仅 insert/update，select 不可见。登录由 Next 服务端用 Admin Secret 查哈希后签发 JWT。
+
+账号表 `users.role` 为 `super_admin` / `admin` / `user`。`admin` 登录后 JWT 仍是 `super_admin`（业务权限相同）；只有超管能开管理员，管理员不能管其他管理员或超管。
 
 ## ER 图（核心闭环 + 财务）
 
@@ -68,7 +70,7 @@ erDiagram
     text username UK "登录名"
     text password "bcrypt，GraphQL 不可读"
     text real_name "姓名"
-    text role "super_admin / user"
+    text role "super_admin / admin / user"
   }
   sites {
     uuid id PK

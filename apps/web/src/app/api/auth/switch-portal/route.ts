@@ -15,6 +15,7 @@ export async function POST(req: Request) {
       status: user.status,
       role: user.role,
       roles: user.roles,
+      accountRole: user.accountRole,
       activeRole,
     });
     return NextResponse.json({

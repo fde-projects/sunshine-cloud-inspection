@@ -1,6 +1,16 @@
 import bcrypt from "bcryptjs";
 import { adminGql } from "@/lib/hasura-admin";
-import { loginRolesFromDuties } from "@/lib/account";
+import {
+  canAssignAccountRole,
+  canCreateUserAccount,
+  canManagePlatformAccount,
+  isAdminAccount,
+  loginRolesFromDuties,
+  parseAccountRole,
+  parseRequestedAccountRole,
+  sessionAccountRole,
+  type AccountRole,
+} from "@/lib/account";
 import { pickDefaultRole, type AppRole } from "@/lib/jwt";
 import {
   dutyFlagsOf,
@@ -19,6 +29,7 @@ export type StaffUser = {
   phone: string;
   role: AppRole;
   roles: AppRole[];
+  accountRole: AccountRole;
   status: string;
   createdBy: string | null;
   createdAt?: string;
@@ -99,6 +110,7 @@ function mapUser(row: UserRow, duties?: SiteDutyFlags): StaffUser {
     phone: row.phone,
     role: pickDefaultRole(roles, "inspector"),
     roles,
+    accountRole: parseAccountRole(row.role),
     status: row.status,
     createdBy: row.created_by_id ?? null,
     createdAt: row.created_at,
@@ -133,6 +145,75 @@ function mapMember(row: MemberRow): StaffMember {
 
 function isAdmin(user: AppUser) {
   return user.role === "super_admin" || user.roles.includes("super_admin");
+}
+
+function viewerAccountRole(user: AppUser): AccountRole {
+  return sessionAccountRole({ accountRole: user.accountRole, role: user.role });
+}
+
+async function loadAccount(userId: string): Promise<{ id: string; role: AccountRole; status?: string }> {
+  const d = await adminGql<{ users_by_pk: { id: string; role: string; status?: string } | null }>(
+    `query ($id: uuid!) { users_by_pk(id: $id) { id role status } }`,
+    { id: userId },
+  );
+  if (!d.users_by_pk) throw new HttpError(404, "账号不存在");
+  return {
+    id: d.users_by_pk.id,
+    role: parseAccountRole(d.users_by_pk.role),
+    status: d.users_by_pk.status,
+  };
+}
+
+async function countActiveSuperAdmins(exceptId?: string): Promise<number> {
+  const where: Record<string, unknown> = {
+    role: { _eq: "super_admin" },
+    status: { _eq: "active" },
+  };
+  if (exceptId) where.id = { _neq: exceptId };
+  const d = await adminGql<{ users_aggregate: { aggregate: { count: number } } }>(
+    `query ($where: users_bool_exp!) {
+      users_aggregate(where: $where) { aggregate { count } }
+    }`,
+    { where },
+  );
+  return d.users_aggregate.aggregate.count;
+}
+
+async function assertKeepsOneSuperAdmin(target: { id: string; role: AccountRole }, nextRole: AccountRole, nextStatus?: string) {
+  const stayingSuper =
+    nextRole === "super_admin" && nextStatus !== "inactive";
+  if (target.role !== "super_admin" || stayingSuper) return;
+  const others = await countActiveSuperAdmins(target.id);
+  if (others < 1) {
+    throw new HttpError(400, "至少保留一个启用中的超级管理员账号");
+  }
+}
+
+async function clearSiteMemberships(userId: string) {
+  await adminGql(
+    `mutation ($uid: uuid!) {
+      delete_site_members(where: { user_id: { _eq: $uid } }) { affected_rows }
+      update_sites(where: { manager_id: { _eq: $uid } }, _set: { manager_id: null }) { affected_rows }
+    }`,
+    { uid: userId },
+  );
+}
+
+function assertCanManage(user: AppUser, target: { id: string; role: AccountRole }, action: "edit" | "reset" | "status") {
+  if (
+    !canManagePlatformAccount({
+      viewerAccountRole: viewerAccountRole(user),
+      targetAccountRole: target.role,
+      viewerId: user.id,
+      targetId: target.id,
+      action,
+    })
+  ) {
+    if (target.id === user.id && action === "status") throw new HttpError(403, "不能停用自己的账号");
+    if (target.role === "super_admin") throw new HttpError(403, "不能管理超级管理员");
+    if (target.role === "admin") throw new HttpError(403, "不能管理其他管理员");
+    throw new HttpError(403, "仅管理员可管理平台账号");
+  }
 }
 
 function isStaffViewer(user: AppUser) {
@@ -281,9 +362,10 @@ export async function listPlatformAccounts(
   if (!isStaffViewer(user) && !isAdmin(user)) throw new HttpError(403, "无权查看平台账号");
   const page = Math.max(1, query.page || 1);
   const limit = Math.min(500, Math.max(1, query.limit || 50));
-  const and: Record<string, unknown>[] = [
-    { role: { _neq: "super_admin" } },
-  ];
+  const and: Record<string, unknown>[] = [];
+  if (viewerAccountRole(user) !== "super_admin") {
+    and.push({ role: { _neq: "super_admin" } });
+  }
   const kw = query.keyword?.trim();
   if (kw) {
     and.push({
@@ -295,7 +377,7 @@ export async function listPlatformAccounts(
       ],
     });
   }
-  const where = { _and: and };
+  const where = and.length ? { _and: and } : {};
   const d = await adminGql<{
     users: UserRow[];
     users_aggregate: { aggregate: { count: number } };
@@ -343,7 +425,19 @@ export async function createPlatformAccount(
   user: AppUser,
   body: Record<string, unknown>,
 ): Promise<StaffUser> {
-  if (!isAdmin(user)) throw new HttpError(403, "仅管理员可开设平台账号");
+  const viewerRole = viewerAccountRole(user);
+  const accountRole = parseRequestedAccountRole(
+    body.accountRole ?? body.accountKind ?? body.role,
+  );
+  if (!canAssignAccountRole(viewerRole, accountRole)) {
+    throw new HttpError(
+      403,
+      accountRole === "user" ? "仅管理员可开设平台账号" : "仅超级管理员可指定管理员或超级管理员身份",
+    );
+  }
+  if (!canCreateUserAccount(viewerRole)) {
+    throw new HttpError(403, "仅管理员可开设平台账号");
+  }
   const username = String(body.username || "").trim();
   const password = String(body.password || "");
   const realName = String(body.realName || body.real_name || "").trim();
@@ -383,7 +477,7 @@ export async function createPlatformAccount(
           real_name: realName,
           phone,
           employee_no: employeeNo,
-          role: "user",
+          role: accountRole,
           created_by_id: user.id,
         },
       },
@@ -395,6 +489,96 @@ export async function createPlatformAccount(
     if (/employee_no/i.test(raw)) throw new HttpError(400, `工号「${employeeNo}」已被使用，请换一个`);
     throw error;
   }
+}
+
+export async function updatePlatformAccount(
+  user: AppUser,
+  userId: string,
+  body: Record<string, unknown>,
+): Promise<StaffUser> {
+  const target = await loadAccount(userId);
+  assertCanManage(user, target, "edit");
+  const realName = String(body.realName || body.real_name || "").trim();
+  const phone = String(body.phone || "").trim();
+  const employeeNo = String(body.employeeNo || body.employee_no || "").trim();
+  if (!realName) throw new HttpError(400, "请输入姓名");
+  if (!/^1\d{10}$/.test(phone)) throw new HttpError(400, "手机号格式不正确");
+  if (employeeNo.length < 2 || employeeNo.length > 32) throw new HttpError(400, "工号 2-32 位");
+  const dup = await adminGql<{ users: Array<{ id: string }> }>(
+    `query ($eno: String!, $id: uuid!) {
+      users(where: { employee_no: { _eq: $eno }, id: { _neq: $id } }, limit: 1) { id }
+    }`,
+    { eno: employeeNo, id: userId },
+  );
+  if (dup.users.length) throw new HttpError(400, `工号「${employeeNo}」已被使用，请换一个`);
+  const set: Record<string, unknown> = { real_name: realName, phone, employee_no: employeeNo };
+  const requested =
+    body.accountRole != null || body.accountKind != null || body.role === "admin" || body.role === "super_admin" || body.role === "user"
+      ? parseRequestedAccountRole(body.accountRole ?? body.accountKind ?? body.role)
+      : null;
+  if (requested && requested !== target.role) {
+    if (!canAssignAccountRole(viewerAccountRole(user), requested)) {
+      throw new HttpError(403, "仅超级管理员可调整账号身份");
+    }
+    await assertKeepsOneSuperAdmin(target, requested, target.status);
+    set.role = requested;
+    if (isAdminAccount(requested)) await clearSiteMemberships(userId);
+  }
+  try {
+    const d = await adminGql<{ update_users_by_pk: UserRow | null }>(
+      `mutation ($id: uuid!, $set: users_set_input!) {
+        update_users_by_pk(pk_columns: { id: $id }, _set: $set) { ${USER_FIELDS} }
+      }`,
+      { id: userId, set },
+    );
+    if (!d.update_users_by_pk) throw new HttpError(404, "账号不存在");
+    return mapUser(d.update_users_by_pk);
+  } catch (error) {
+    if (error instanceof HttpError) throw error;
+    const raw = error instanceof Error ? error.message : String(error);
+    if (/employee_no/i.test(raw)) throw new HttpError(400, `工号「${employeeNo}」已被使用，请换一个`);
+    throw error;
+  }
+}
+
+export async function updatePlatformAccountStatus(
+  user: AppUser,
+  userId: string,
+  status: string,
+): Promise<StaffUser> {
+  const next = status === "inactive" ? "inactive" : "active";
+  const target = await loadAccount(userId);
+  assertCanManage(user, target, "status");
+  if (next === "inactive") {
+    await assertKeepsOneSuperAdmin(target, target.role, next);
+  }
+  const d = await adminGql<{ update_users_by_pk: UserRow | null }>(
+    `mutation ($id: uuid!, $set: users_set_input!) {
+      update_users_by_pk(pk_columns: { id: $id }, _set: $set) { ${USER_FIELDS} }
+    }`,
+    { id: userId, set: { status: next } },
+  );
+  if (!d.update_users_by_pk) throw new HttpError(404, "账号不存在");
+  return mapUser(d.update_users_by_pk);
+}
+
+export async function resetPlatformAccountPassword(
+  user: AppUser,
+  userId: string,
+  newPassword: string,
+): Promise<StaffUser> {
+  if (newPassword.length < 6) throw new HttpError(400, "密码至少 6 位");
+  const target = await loadAccount(userId);
+  assertCanManage(user, target, "reset");
+  const hash = await bcrypt.hash(newPassword, 10);
+  const d = await adminGql<{ update_users_by_pk: UserRow | null }>(
+    `mutation ($id: uuid!, $set: users_set_input!) {
+      update_users_by_pk(pk_columns: { id: $id }, _set: $set) { ${USER_FIELDS} }
+    }`,
+    { id: userId, set: { password: hash } },
+  );
+  if (!d.update_users_by_pk) throw new HttpError(404, "账号不存在");
+  return mapUser(d.update_users_by_pk);
 }
 
 export async function listSiteStaff(user: AppUser, siteId: string) {
@@ -429,6 +613,10 @@ export async function upsertSiteStaff(
   rawRoles: unknown,
 ) {
   if (!siteId || !targetUserId) throw new HttpError(400, "缺少网格或人员");
+  const targetAccount = await loadAccount(targetUserId);
+  if (isAdminAccount(targetAccount.role)) {
+    throw new HttpError(400, "管理员账号不参与网格任职");
+  }
   const next = normalizeDuties(rawRoles);
   if (next.includes("primary_manager") && next.includes("deputy_manager")) {
     throw new HttpError(400, "同一网格正网格长与副网格长不能由同一人兼任");

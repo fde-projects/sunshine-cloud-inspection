@@ -7,6 +7,7 @@ import { createUploadToken, uploadBufferWithToken } from "@/lib/storage";
 import { fail, HttpError, ok, parseBody, q, requireUser, type AppUser } from "./http";
 import {
   CASE_FIELDS,
+  REVIEW_LIST_FIELDS,
   caseWhere,
   caseWorkStarted,
   loadCase,
@@ -77,6 +78,9 @@ import {
   createPlatformAccount,
   listPlatformAccounts,
   listSiteStaff,
+  resetPlatformAccountPassword,
+  updatePlatformAccount,
+  updatePlatformAccountStatus,
   upsertSiteStaff,
 } from "./staffing";
 
@@ -181,6 +185,26 @@ async function dispatch(ctx: {
   }
   if (method === "POST" && path === "staffing/accounts") {
     return ok(await createPlatformAccount(need(user), body));
+  }
+  {
+    const pwd = match(path, "staffing/accounts/:id/password");
+    if (method === "PUT" && pwd) {
+      return ok(
+        await resetPlatformAccountPassword(
+          need(user),
+          pwd.id,
+          String(body.newPassword || body.password || ""),
+        ),
+      );
+    }
+    const st = match(path, "staffing/accounts/:id/status");
+    if (method === "PUT" && st) {
+      return ok(await updatePlatformAccountStatus(need(user), st.id, String(body.status || "")));
+    }
+    const acc = match(path, "staffing/accounts/:id");
+    if (method === "PUT" && acc) {
+      return ok(await updatePlatformAccount(need(user), acc.id, body));
+    }
   }
   if (method === "GET" && path === "staffing/members") {
     return ok(await listSiteStaff(need(user), String(query.get("siteId") || "")));
@@ -782,6 +806,7 @@ function toPublicUser(u: AppUser) {
     employeeNo: u.employeeNo ?? null,
     role: u.role,
     roles: u.roles,
+    accountRole: u.accountRole,
     status: u.status,
     region: u.region,
     orgUnit: u.orgUnit,
@@ -924,6 +949,7 @@ async function switchPortal(user: AppUser, body: Record<string, unknown>) {
     status: user.status,
     role: user.role,
     roles: user.roles,
+    accountRole: user.accountRole,
     activeRole,
   });
   return ok({
@@ -2029,7 +2055,7 @@ const MOBILE_CASE_NESTED = `
   case_work_units(order_by: { seq: asc }) {
     id seq title status inspector_id inspection_task_id device_serial serial_photo_url serial_confirmed_at
   }
-  inspection_tasks(
+  my_inspection_tasks: inspection_tasks(
     where: { inspector_id: { _eq: $uid } }
     order_by: { created_at: desc }
   ) {
@@ -2149,7 +2175,11 @@ function mapMobileCase(row: Record<string, unknown>, userId: string) {
   const mapped = mapCase(row);
   const rawUnits = ((row.case_work_units as Record<string, unknown>[]) || []);
   const unitPack = mapMobileCaseUnits(rawUnits, userId);
-  const tasks = ((row.inspection_tasks as Record<string, unknown>[]) || []).map((t) => ({
+  const tasks = ((
+    (row.my_inspection_tasks as Record<string, unknown>[] | undefined) ||
+    (row.inspection_tasks as Record<string, unknown>[] | undefined) ||
+    []
+  )).map((t) => ({
     id: String(t.id),
     status: String(t.status || "pending"),
     workUnitId: (t.work_unit_id as string) || null,
@@ -3113,8 +3143,9 @@ async function wipeCaseLifecycle(caseId: string) {
       id: string;
       status: string;
       finish_time?: string | null;
-      case_performance?: { month?: string | null } | null;
-      case_expense_claims?: Array<{ month?: string | null }>;
+      case_performance?: { month?: string | null; review_status?: string | null } | null;
+      case_expense_claims?: Array<{ month?: string | null; status?: string | null }>;
+      assessment_events?: Array<{ month?: string | null }>;
       inspection_tasks?: Array<{
         id: string;
         device_id?: string | null;
@@ -3125,8 +3156,9 @@ async function wipeCaseLifecycle(caseId: string) {
     `query ($id: uuid!) {
       service_cases_by_pk(id: $id) {
         id status finish_time
-        case_performance { month }
-        case_expense_claims { month }
+        case_performance { month review_status }
+        case_expense_claims { month status }
+        assessment_events { month }
         inspection_tasks { id device_id device { serial_number } }
       }
     }`,
@@ -3136,11 +3168,17 @@ async function wipeCaseLifecycle(caseId: string) {
   if (!row) throw new HttpError(404, "案例不存在");
   if (row.status === "month_locked") throw new HttpError(400, "已月结案例不可重置，请先解锁该月");
 
+  // 月结只汇总已通过计件、已核定报销、扣罚事件。草稿台账/导入完工日不进月结，
+  // 不能因为当月已锁定就拦住待派单删除、作业中重置、待结算重置。
   const months: string[] = [];
-  if (row.case_performance?.month) months.push(row.case_performance.month);
-  if (row.finish_time) months.push(monthKeyShanghai(row.finish_time));
+  if (row.case_performance?.review_status === "approved" && row.case_performance.month) {
+    months.push(row.case_performance.month);
+  }
   for (const e of row.case_expense_claims || []) {
-    if (e.month) months.push(e.month);
+    if (e.status === "approved" && e.month) months.push(e.month);
+  }
+  for (const ev of row.assessment_events || []) {
+    if (ev.month) months.push(ev.month);
   }
   await assertCaseMonthsUnlocked(months);
 
@@ -3275,11 +3313,14 @@ async function deleteCase(_user: AppUser, caseId: string, confirm?: string | nul
   if (String(confirm || "").trim() !== gsp) {
     throw new HttpError(400, `请输入案例号 ${gsp} 确认删除`);
   }
-  await wipeCaseLifecycle(caseId);
+  const months = await wipeCaseLifecycle(caseId);
   await adminGql(
     `mutation ($id: uuid!) { delete_service_cases_by_pk(id: $id) { id } }`,
     { id: caseId },
   );
+  for (const month of months) {
+    await syncMonthlySettlements(month).catch(() => null);
+  }
   return ok({ success: true, gspCaseNo: gsp });
 }
 
@@ -5479,7 +5520,7 @@ async function pendingReviews(query: URLSearchParams) {
 
   const d = await adminGql<{ service_cases: Record<string, unknown>[] }>(
     `query ($where: service_cases_bool_exp!) {
-      service_cases(where: $where, order_by: { updated_at: desc }, limit: 200) { ${CASE_FIELDS} }
+      service_cases(where: $where, order_by: { updated_at: desc }, limit: 200) { ${REVIEW_LIST_FIELDS} }
     }`,
     { where },
   );
@@ -5503,7 +5544,7 @@ async function exportPendingReviews(body: Record<string, unknown>) {
 
   const d = await adminGql<{ service_cases: Record<string, unknown>[] }>(
     `query ($where: service_cases_bool_exp!) {
-      service_cases(where: $where, order_by: { updated_at: desc }, limit: 5000) { ${CASE_FIELDS} }
+      service_cases(where: $where, order_by: { updated_at: desc }, limit: 5000) { ${REVIEW_LIST_FIELDS} }
     }`,
     { where },
   );
@@ -5570,6 +5611,14 @@ async function amountBreakdown(caseId: string) {
       created_at?: string;
       user?: { real_name?: string } | null;
     }>;
+    case_expense_claims: Array<{
+      id: string;
+      inspector_id?: string | null;
+      amount?: string | number | null;
+      claim_amount?: string | number | null;
+      status: string;
+      inspector?: { real_name?: string } | null;
+    }>;
   }>(
     `query ($id: uuid!) {
       case_performances(where: { service_case_id: { _eq: $id } }, limit: 1) {
@@ -5578,6 +5627,10 @@ async function amountBreakdown(caseId: string) {
       assessment_events(where: { service_case_id: { _eq: $id } }, order_by: { created_at: desc }) {
         id category content amount remark user_id created_at
         user { real_name }
+      }
+      case_expense_claims(where: { service_case_id: { _eq: $id } }, order_by: { created_at: desc }) {
+        id inspector_id amount claim_amount status
+        inspector { real_name }
       }
     }`,
     { id: caseId },
@@ -5619,6 +5672,16 @@ async function amountBreakdown(caseId: string) {
     createdAt: e.created_at,
   }));
   const eventPenalty = events.reduce((sum, e) => sum + Number(e.amount || 0), 0);
+  const expenses = extra.case_expense_claims.map((e) => ({
+    id: e.id,
+    serviceCaseId: caseId,
+    inspectorId: String(e.inspector_id || ""),
+    inspectorName: e.inspector?.real_name || null,
+    amount: String(e.amount ?? 0),
+    claimAmount: e.claim_amount == null ? null : String(e.claim_amount),
+    status: e.status,
+  }));
+  const pendingExpenseCount = expenses.filter((e) => e.status === "submitted").length;
   return ok({
     caseId,
     gspCaseNo: row.gsp_case_no,
@@ -5629,10 +5692,10 @@ async function amountBreakdown(caseId: string) {
     deduction: deduction.toFixed(2),
     perfFinal: Number(ledger?.perf_final ?? Math.max(0, perfBase - deduction)).toFixed(2),
     eventPenalty: eventPenalty.toFixed(2),
-    pendingExpenseCount: 0,
+    pendingExpenseCount,
     items,
     events,
-    expenses: [],
+    expenses,
   });
 }
 
@@ -6905,14 +6968,58 @@ async function exportMonthly(user: AppUser, month: string, template: string) {
   return xlsxResponse(`${month}-${template === "payroll" ? "发薪表" : "对账表"}.xlsx`, buffer);
 }
 
+function monthFinishBounds(month: string) {
+  if (!/^\d{4}-\d{2}$/.test(month)) throw new HttpError(400, "月份无效");
+  const [yy, mm] = month.split("-").map(Number);
+  const from = `${month}-01T00:00:00+08:00`;
+  const to =
+    mm === 12
+      ? `${yy + 1}-01-01T00:00:00+08:00`
+      : `${yy}-${String(mm + 1).padStart(2, "0")}-01T00:00:00+08:00`;
+  return { from, to };
+}
+
 async function lockMonth(month: string, locked: boolean) {
+  const { from, to } = monthFinishBounds(month);
   const d = await adminGql<{ update_monthly_settlements: { affected_rows: number } }>(
     `mutation ($m: String!, $st: String!) {
       update_monthly_settlements(where: { month: { _eq: $m } }, _set: { status: $st }) { affected_rows }
     }`,
     { m: month, st: locked ? "locked" : "draft" },
   );
-  return ok({ month, locked: d.update_monthly_settlements.affected_rows });
+  const cases = await adminGql<{ update_service_cases: { affected_rows: number } }>(
+    `mutation ($from: timestamptz!, $to: timestamptz!, $m: String!, $fromSt: String!, $toSt: String!) {
+      update_service_cases(
+        where: {
+          status: { _eq: $fromSt }
+          _or: [
+            { finish_time: { _gte: $from, _lt: $to } }
+            { case_performance: { month: { _eq: $m } } }
+          ]
+        }
+        _set: { status: $toSt }
+      ) { affected_rows }
+    }`,
+    {
+      from,
+      to,
+      m: month,
+      fromSt: locked ? "settled" : "month_locked",
+      toSt: locked ? "month_locked" : "settled",
+    },
+  );
+  const people = d.update_monthly_settlements.affected_rows;
+  const caseCount = cases.update_service_cases.affected_rows;
+  if (!locked) {
+    await syncMonthlySettlements(month).catch(() => null);
+  }
+  return ok({
+    month,
+    locked: locked ? people : 0,
+    unlocked: locked ? 0 : people,
+    lockedCases: locked ? caseCount : 0,
+    unlockedCases: locked ? 0 : caseCount,
+  });
 }
 
 async function correctMonthly(user: AppUser, month: string, body: Record<string, unknown>) {

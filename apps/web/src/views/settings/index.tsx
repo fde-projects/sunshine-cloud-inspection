@@ -20,7 +20,7 @@ import { brandMarkText, useBrandingStore } from '../../stores/branding';
 import { updateProfileApi, changePasswordApi } from '../../api/auth';
 import { updateSystemBranding } from '../../api/system';
 import { uploadImage } from '../../api/upload';
-import { ROLE_LABEL } from '../../types';
+import { accountLabelOf } from '../../lib/account';
 import { isAntValidateError } from '../../utils/ant-form';
 
 function ProfileTab() {
@@ -281,7 +281,7 @@ export default function SettingsPage() {
         <Descriptions column={3} size="small">
           <Descriptions.Item label="用户名">{user?.username}</Descriptions.Item>
           <Descriptions.Item label="角色">
-            <Tag>{user?.role ? ROLE_LABEL[user.role] : '-'}</Tag>
+            <Tag>{accountLabelOf(user || {})}</Tag>
           </Descriptions.Item>
           <Descriptions.Item label="账号状态">
             {user?.status === 'active' ? '正常' : '停用'}

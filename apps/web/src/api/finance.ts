@@ -132,7 +132,11 @@ export async function correctMonthlySettlement(month: string, userId: string, am
   return unwrap(await request.post<ApiResponse<FinanceMonthlySettlement>>(`/monthly-settlements/${month}/correct`, { userId, amount, reason }));
 }
 export async function lockMonthlySettlements(month: string) {
-  return unwrap(await request.post<ApiResponse<{ month: string; locked: number }>>(`/monthly-settlements/${month}/lock`));
+  return unwrap(
+    await request.post<ApiResponse<{ month: string; locked: number; lockedCases: number }>>(
+      `/monthly-settlements/${month}/lock`,
+    ),
+  );
 }
 export async function unlockMonthlySettlements(month: string) {
   return unwrap(

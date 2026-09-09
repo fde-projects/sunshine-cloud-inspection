@@ -1,3 +1,4 @@
+import { isAdminAccount, parseAccountRole } from "@/lib/account";
 import { parseHardRuleBindings, parseHardRuleSamples } from "@/lib/hard-rule-match";
 import { adminGql } from "@/lib/hasura-admin";
 import type { AppUser } from "./http";
@@ -90,6 +91,13 @@ export function caseWorkStarted(row: Record<string, unknown>) {
 export const CASE_FIELDS = `
   ${CASE_CORE_FIELDS}
   po_orders { id }
+`;
+
+/** 结算审核列表专用：不要并进 CASE_FIELDS，会和作业端 nested 的同名字段冲突 */
+export const REVIEW_LIST_FIELDS = `
+  ${CASE_FIELDS}
+  assessment_events { amount }
+  case_expense_claims { status }
 `;
 
 export const PO_ITEM_FIELDS = `
@@ -199,6 +207,13 @@ export function mapCase(row: Record<string, unknown>) {
   const perfBase = Number(perf?.perf_base ?? 0);
   const deduction = Number(perf?.deduction ?? 0);
   const perfFinal = Number(perf?.perf_final ?? Math.max(0, perfBase - deduction));
+  const eventPenalty = ((row.assessment_events as Array<{ amount?: string | number }>) || []).reduce(
+    (sum, ev) => sum + Number(ev.amount || 0),
+    0,
+  );
+  const pendingExpenseCount = (
+    (row.case_expense_claims as Array<{ status?: string }>) || []
+  ).filter((c) => c.status === "submitted").length;
   return {
     id: row.id,
     gspCaseNo: row.gsp_case_no,
@@ -239,7 +254,8 @@ export function mapCase(row: Record<string, unknown>) {
     deductionStatus: "none",
     missingPerf: 0,
     missingSettle: 0,
-    pendingExpenseCount: 0,
+    eventPenalty: eventPenalty.toFixed(2),
+    pendingExpenseCount,
     approvalReady: !!row.inspector_id,
     overdue: false,
     assignments: assignments.map((a) => {
@@ -537,6 +553,8 @@ export function mapHardRule(row: Record<string, unknown>) {
 }
 
 export function mapUser(row: Record<string, unknown>) {
+  const accountRole = parseAccountRole(String(row.role || "user"));
+  const platform = isAdminAccount(accountRole);
   return {
     id: row.id,
     username: row.username,
@@ -545,8 +563,9 @@ export function mapUser(row: Record<string, unknown>) {
     phone: row.phone,
     email: row.email,
     avatar: row.avatar,
-    role: row.role === "super_admin" ? "super_admin" : row.role,
-    roles: row.role === "super_admin" ? ["super_admin"] : row.roles || [],
+    role: platform ? "super_admin" : row.role,
+    roles: platform ? ["super_admin"] : row.roles || [],
+    accountRole,
     status: row.status,
     region: row.region,
     orgUnit: row.org_unit,

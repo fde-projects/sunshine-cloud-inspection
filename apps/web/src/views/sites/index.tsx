@@ -184,7 +184,9 @@ export default function SitesPage() {
       applyStaffResult(staff.site, staff.members);
       setStaffCandidates(
         allUsers.list.filter(
-          (u) => !(u.roles?.length ? u.roles : [u.role]).includes('super_admin'),
+          (u) =>
+            !(u.roles?.length ? u.roles : [u.role]).includes('super_admin') &&
+            u.accountRole !== 'admin',
         ),
       );
     } finally {

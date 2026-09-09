@@ -2497,7 +2497,11 @@ export default function FinanceCasesPage() {
                 删除案例
               </Button>
             </Space>
-            {profileEdit && !caseStructureOpen(profileEdit) ? (
+            {profileEdit?.status === 'month_locked' ? (
+              <div style={{ marginTop: 8, color: '#888', fontSize: 12 }}>
+                已月结不能重置或删除，请先到「月度结算」解锁该月。
+              </div>
+            ) : profileEdit && !caseStructureOpen(profileEdit) ? (
               <div style={{ marginTop: 8, color: '#888', fontSize: 12 }}>
                 作业中及以后不能直接删除，请先重置为待分配。
               </div>

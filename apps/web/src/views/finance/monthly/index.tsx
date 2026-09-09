@@ -153,7 +153,10 @@ export default function FinanceMonthlyPage() {
                       setLockBusy(true);
                       try {
                         const result = await lockMonthlySettlements(month);
-                        message.success(`已锁定 ${result.locked} 人`);
+                        message.success(
+                          `已锁定 ${result.locked} 人` +
+                            (result.lockedCases ? `，${result.lockedCases} 个案例已月结` : ''),
+                        );
                         await load();
                       } finally {
                         setLockBusy(false);

@@ -1,5 +1,6 @@
 "use client";
 
+import { useLayoutEffect, useRef, useState } from 'react';
 import { Button, Image, Space, Tag } from 'antd';
 import type { RecordEntry } from '../api/record';
 import { displayPhotoUrl } from '../utils/photo-url';
@@ -66,6 +67,34 @@ export default function EntryReviewCard({
     selected &&
     (aiStatus === 'pass' || aiStatus === 'fail') &&
     selected !== aiStatus;
+  const reasonKey = `${entry.templateEntryId}:${reason}`;
+  const [reasonExpanded, setReasonExpanded] = useState(false);
+  const [reasonOverflows, setReasonOverflows] = useState(false);
+  const [measuredKey, setMeasuredKey] = useState(reasonKey);
+  const reasonRef = useRef<HTMLDivElement>(null);
+  if (measuredKey !== reasonKey) {
+    setMeasuredKey(reasonKey);
+    setReasonExpanded(false);
+    setReasonOverflows(false);
+  }
+
+  useLayoutEffect(() => {
+    const el = reasonRef.current;
+    if (!el || !reason) {
+      setReasonOverflows(false);
+      return;
+    }
+    const measure = () => {
+      if (reasonExpanded) return;
+      setReasonOverflows(el.scrollHeight > el.clientHeight + 1);
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [reason, reasonExpanded, reasonKey]);
+
+  const toggleReason = () => setReasonExpanded((open) => !open);
 
   return (
     <div className="entry-review-card">
@@ -83,7 +112,41 @@ export default function EntryReviewCard({
         )}
       </div>
 
-      {reason ? <div className="entry-review-card__reason">{reason}</div> : null}
+      {reason ? (
+        <div className="entry-review-card__reason-block">
+          <div
+            ref={reasonRef}
+            className={`entry-review-card__reason${reasonExpanded ? ' is-expanded' : ''}${
+              reasonOverflows ? ' is-toggleable' : ''
+            }`}
+            role={reasonOverflows ? 'button' : undefined}
+            tabIndex={reasonOverflows ? 0 : undefined}
+            aria-expanded={reasonOverflows ? reasonExpanded : undefined}
+            onClick={reasonOverflows ? toggleReason : undefined}
+            onKeyDown={
+              reasonOverflows
+                ? (event) => {
+                    if (event.key === 'Enter' || event.key === ' ') {
+                      event.preventDefault();
+                      toggleReason();
+                    }
+                  }
+                : undefined
+            }
+          >
+            {reason}
+          </div>
+          {reasonOverflows ? (
+            <button
+              type="button"
+              className="entry-review-card__reason-toggle"
+              onClick={toggleReason}
+            >
+              {reasonExpanded ? '收起' : '展开全部'}
+            </button>
+          ) : null}
+        </div>
+      ) : null}
 
       {selected ? (
         <div

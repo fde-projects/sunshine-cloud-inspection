@@ -282,7 +282,9 @@ insert_permissions:
         - password
   - role: super_admin
     permission:
-      check: {}
+      check:
+        role:
+          _eq: user
       columns:
         - id
         - username
@@ -485,7 +487,6 @@ update_permissions:
         - phone
         - email
         - avatar
-        - role
         - status
         - region
         - org_unit
@@ -493,8 +494,18 @@ update_permissions:
         - created_at
         - updated_at
         - password
-      filter: {}
-      check: {}
+      filter:
+        _or:
+          - id:
+              _eq: X-Hasura-User-Id
+          - role:
+              _eq: user
+      check:
+        _or:
+          - id:
+              _eq: X-Hasura-User-Id
+          - role:
+              _eq: user
 delete_permissions:
   - role: inspector
     permission:
@@ -530,4 +541,9 @@ delete_permissions:
                       _eq: X-Hasura-User-Id
   - role: super_admin
     permission:
-      filter: {}
+      filter:
+        _or:
+          - id:
+              _eq: X-Hasura-User-Id
+          - role:
+              _eq: user

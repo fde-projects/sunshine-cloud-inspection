@@ -9,6 +9,7 @@ export type StoredUser = {
   role: string;
   roles: string[];
   phone: string;
+  accountRole?: string;
 };
 
 export function getToken(): string | null {

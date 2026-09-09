@@ -28,6 +28,7 @@ import { useAuthStore } from "@/stores/auth";
 import { brandMarkText, useBrandingStore } from "@/stores/branding";
 import { flattenMenus, getMenusByRole } from "@/router/menus";
 import type { MenuConfig } from "@/types";
+import { accountLabelOf } from "@/lib/account";
 import { canSwitchPortal, normalizeRoles, roleHome } from "@/lib/portal";
 import type { AppRole } from "@/lib/types";
 import AdminMobileGuide from "@/components/AdminMobileGuide";
@@ -50,12 +51,6 @@ const iconMap: Record<string, React.ReactNode> = {
   SettingOutlined: <SettingOutlined />,
   AccountBookOutlined: <AccountBookOutlined />,
   QuestionCircleOutlined: <QuestionCircleOutlined />,
-};
-
-const roleLabel: Record<string, string> = {
-  super_admin: "超级管理员",
-  site_manager: "网格长",
-  inspector: "工程师",
 };
 
 function toMenuItems(items: MenuConfig[]): MenuProps["items"] {
@@ -283,7 +278,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
                 <Avatar className="app-user__avatar" icon={<UserOutlined />} src={user.avatar} />
                 <div className="app-user__meta">
                   <div className="app-user__name">{user.realName}</div>
-                  <div className="app-user__role">{roleLabel[user.role] || "未知角色"}</div>
+                  <div className="app-user__role">{accountLabelOf(user)}</div>
                 </div>
               </div>
             </Dropdown>

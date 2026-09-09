@@ -346,6 +346,8 @@ export default function FinanceExpensePage() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [focusLineId, setFocusLineId] = useState<string | null>(null);
   const lineSnapshotRef = useRef<DraftLine | null>(null);
+  const loadGenRef = useRef(0);
+  const draftDirtyRef = useRef(false);
   const [status, setStatus] = useState('draft');
   const [reviewNote, setReviewNote] = useState<string | null>(null);
   const [claimAmount, setClaimAmount] = useState<string | null>(null);
@@ -353,6 +355,10 @@ export default function FinanceExpensePage() {
 
   const unitLabel = item?.unitLabel || '台';
   const isMulti = item?.assignMode === 'multi';
+
+  useEffect(() => {
+    draftDirtyRef.current = false;
+  }, [id]);
 
   const openLine = (lineId: string) => {
     const line = lines.find((l) => l.id === lineId);
@@ -401,18 +407,21 @@ export default function FinanceExpensePage() {
   };
 
   useEffect(() => {
+    const gen = ++loadGenRef.current;
     void (async () => {
       setLoading(true);
       setLoadError('');
       try {
         if (isPreviewCaseId(id)) {
           const data = buildPreviewCaseDetail(userId, id);
+          if (gen !== loadGenRef.current) return;
           setItem(data);
           setUnitId(data.activeUnit?.id || data.units?.[0]?.id || '');
-          applyClaim(null);
+          if (!draftDirtyRef.current) applyClaim(null);
           return;
         }
         const data = await fetchMyFinanceCase(id);
+        if (gen !== loadGenRef.current) return;
         setItem(data);
         const units = data.units || [];
         const qUnit = search.get('unitId');
@@ -426,15 +435,17 @@ export default function FinanceExpensePage() {
           nextUnit = mine[0]?.id || units[0]?.id || '';
         }
         setUnitId(nextUnit);
+        if (draftDirtyRef.current) return;
         const myClaim =
           (data.expenses || []).find((e) => e.inspectorId === userId) ||
           (data.expenses || []).find((e) => e.workUnitId === nextUnit);
         applyClaim(myClaim);
       } catch {
+        if (gen !== loadGenRef.current) return;
         setItem(undefined);
         setLoadError('费用明细加载失败，请检查网络后重试');
       } finally {
-        setLoading(false);
+        if (gen === loadGenRef.current) setLoading(false);
       }
     })();
   }, [id, search, userId, retryTick]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -468,6 +479,7 @@ export default function FinanceExpensePage() {
   };
 
   const updateLine = (lineId: string, patch: Partial<DraftLine>) => {
+    draftDirtyRef.current = true;
     setLines((prev) =>
       prev.map((line) => (line.id === lineId ? { ...line, ...patch } : line)),
     );
@@ -555,6 +567,7 @@ export default function FinanceExpensePage() {
 
   const onPick = async (files: FileList | null) => {
     if (!files?.length || !pickTarget || readonly) return;
+    draftDirtyRef.current = true;
     const multi = pickMulti;
     setUploading(true);
     try {

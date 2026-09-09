@@ -24,6 +24,13 @@ import {
   updateUserStatus,
   resetUserPassword,
 } from '../../api/user';
+import {
+  ACCOUNT_ROLE_LABEL,
+  canCreateAdminAccount,
+  canManagePlatformAccount,
+  sessionAccountRole,
+  type AccountRole,
+} from '../../lib/account';
 import { roleTagsOf } from '../../lib/staffing-roles';
 import { useAuthStore } from '../../stores/auth';
 import type { UserInfo, UserRole, CommonStatus } from '../../types';
@@ -31,11 +38,19 @@ import { isAntValidateError } from '../../utils/ant-form';
 import { chineseErrorMessage } from '../../utils/displayLabels';
 import FillTable, { listTablePagination } from '../../components/FillTable';
 
+const ACCOUNT_ROLE_OPTIONS: { value: AccountRole; label: string }[] = [
+  { value: 'user', label: '普通用户' },
+  { value: 'admin', label: ACCOUNT_ROLE_LABEL.admin },
+  { value: 'super_admin', label: ACCOUNT_ROLE_LABEL.super_admin },
+];
+
 /** 账号管理：只管登录身份；网格编制在「网格管理 → 人员」 */
 export default function UsersPage() {
   const router = useRouter();
   const currentUser = useAuthStore((s) => s.user);
   const isAdmin = currentUser?.role === 'super_admin';
+  const myAccountRole = sessionAccountRole(currentUser || {});
+  const canCreateAdmin = canCreateAdminAccount(myAccountRole);
 
   useEffect(() => {
     if (currentUser && !isAdmin) router.replace('/sites');
@@ -47,18 +62,31 @@ export default function UsersPage() {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
   const [keyword, setKeyword] = useState('');
-  const [dutyFilter, setDutyFilter] = useState<'primary' | 'deputy' | 'inspector' | 'plain' | undefined>();
+  const [dutyFilter, setDutyFilter] = useState<
+    'primary' | 'deputy' | 'inspector' | 'plain' | 'admin' | 'super_admin' | undefined
+  >();
 
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<UserInfo | null>(null);
   const [form] = Form.useForm();
   const pendingFormValues = useRef<Record<string, unknown> | null>(null);
+  const watchedAccountRole = Form.useWatch('accountRole', form) as AccountRole | undefined;
 
   const [pwdOpen, setPwdOpen] = useState(false);
   const [pwdUser, setPwdUser] = useState<UserInfo | null>(null);
   const [pwdForm] = Form.useForm();
 
   const canStaffAccounts = isAdmin;
+
+  const canManage = (record: UserInfo, action: 'edit' | 'reset' | 'status' = 'edit') =>
+    !!currentUser &&
+    canManagePlatformAccount({
+      viewerAccountRole: myAccountRole,
+      targetAccountRole: sessionAccountRole(record),
+      viewerId: currentUser.id,
+      targetId: record.id,
+      action,
+    });
 
   const loadList = useCallback(async () => {
     setLoading(true);
@@ -72,8 +100,19 @@ export default function UsersPage() {
       if (dutyFilter === 'primary') list = list.filter((u) => u.duties?.primary);
       else if (dutyFilter === 'deputy') list = list.filter((u) => u.duties?.deputy);
       else if (dutyFilter === 'inspector') list = list.filter((u) => u.duties?.inspector);
+      else if (dutyFilter === 'admin') list = list.filter((u) => sessionAccountRole(u) === 'admin');
+      else if (dutyFilter === 'super_admin') list = list.filter((u) => sessionAccountRole(u) === 'super_admin');
       else if (dutyFilter === 'plain') {
-        list = list.filter((u) => !u.duties?.primary && !u.duties?.deputy && !u.duties?.inspector);
+        list = list.filter((u) => {
+          const acc = sessionAccountRole(u);
+          return (
+            acc !== 'admin' &&
+            acc !== 'super_admin' &&
+            !u.duties?.primary &&
+            !u.duties?.deputy &&
+            !u.duties?.inspector
+          );
+        });
       }
       setData(list);
       setTotal(dutyFilter ? list.length : res.total);
@@ -95,13 +134,20 @@ export default function UsersPage() {
       return;
     }
     setEditing(null);
-    pendingFormValues.current = {};
+    pendingFormValues.current = { accountRole: 'user' };
     setModalOpen(true);
   };
 
   const openEdit = (record: UserInfo) => {
+    if (!canManage(record, 'edit')) {
+      message.info('不能管理该账号');
+      return;
+    }
     setEditing(record);
-    pendingFormValues.current = { ...record };
+    pendingFormValues.current = {
+      ...record,
+      accountRole: sessionAccountRole(record),
+    };
     setModalOpen(true);
   };
 
@@ -113,6 +159,7 @@ export default function UsersPage() {
       realName?: string;
       employeeNo?: string;
       password?: string;
+      accountRole?: AccountRole;
     };
     try {
       values = await form.validateFields();
@@ -126,18 +173,27 @@ export default function UsersPage() {
           realName: values.realName,
           employeeNo: values.employeeNo,
           phone: values.phone,
+          ...(canCreateAdmin ? { accountRole: values.accountRole || sessionAccountRole(editing) } : {}),
         });
         message.success('账号已更新');
         if (editing.id === currentUser?.id) await useAuthStore.getState().fetchMe();
       } else {
+        const accountRole = canCreateAdmin ? values.accountRole || 'user' : 'user';
         await createUser({
           username: values.username,
           password: values.password,
           realName: values.realName,
           employeeNo: values.employeeNo,
           phone: values.phone,
+          accountRole,
         });
-        message.success('普通账号已创建。任职请到「网格管理 → 人员」勾选。');
+        message.success(
+          accountRole === 'super_admin'
+            ? '超级管理员账号已创建。'
+            : accountRole === 'admin'
+              ? '管理员账号已创建。登录后可分担管理工作。'
+              : '普通账号已创建。任职请到「网格管理 → 人员」勾选。',
+        );
       }
       setModalOpen(false);
       void loadList();
@@ -208,9 +264,11 @@ export default function UsersPage() {
                     ? 'blue'
                     : t === '超级管理员'
                       ? 'gold'
-                      : t.includes('待任命')
-                        ? 'default'
-                        : 'green'
+                      : t === '管理员'
+                        ? 'purple'
+                        : t.includes('待任命')
+                          ? 'default'
+                          : 'green'
                 }
               >
                 {t}
@@ -236,29 +294,41 @@ export default function UsersPage() {
         if (!canStaffAccounts) {
           return <Typography.Text type="secondary">只读</Typography.Text>;
         }
+        const allowEdit = canManage(record, 'edit');
+        const allowReset = canManage(record, 'reset');
+        const allowStatus = canManage(record, 'status');
+        if (!allowEdit && !allowReset && !allowStatus) {
+          return <Typography.Text type="secondary">无权管理</Typography.Text>;
+        }
         return (
           <Space wrap>
-            <Button type="link" icon={<EditOutlined />} onClick={() => openEdit(record)}>
-              编辑
-            </Button>
-            <Button
-              type="link"
-              onClick={() => {
-                setPwdUser(record);
-                pwdForm.resetFields();
-                setPwdOpen(true);
-              }}
-            >
-              重置密码
-            </Button>
-            <Popconfirm
-              title={`确认${record.status === 'active' ? '停用' : '启用'}该账号？`}
-              onConfirm={() => void toggleStatus(record)}
-            >
-              <Button type="link" danger={record.status === 'active'}>
-                {record.status === 'active' ? '停用' : '启用'}
+            {allowEdit ? (
+              <Button type="link" icon={<EditOutlined />} onClick={() => openEdit(record)}>
+                编辑
               </Button>
-            </Popconfirm>
+            ) : null}
+            {allowReset ? (
+              <Button
+                type="link"
+                onClick={() => {
+                  setPwdUser(record);
+                  pwdForm.resetFields();
+                  setPwdOpen(true);
+                }}
+              >
+                重置密码
+              </Button>
+            ) : null}
+            {allowStatus ? (
+              <Popconfirm
+                title={`确认${record.status === 'active' ? '停用' : '启用'}该账号？`}
+                onConfirm={() => void toggleStatus(record)}
+              >
+                <Button type="link" danger={record.status === 'active'}>
+                  {record.status === 'active' ? '停用' : '启用'}
+                </Button>
+              </Popconfirm>
+            ) : null}
           </Space>
         );
       },
@@ -271,7 +341,7 @@ export default function UsersPage() {
         type="info"
         showIcon
         style={{ marginBottom: 12 }}
-        message="账号只负责登录。此处统开普通账号；正长 / 副长 / 工程师请到「网格管理 → 人员」勾选。"
+        message="账号只负责登录。超级管理员开号时可指定普通用户、管理员或超级管理员，默认普通用户。正长 / 副长 / 工程师请到「网格管理 → 人员」勾选。"
       />
 
       <Space className="admin-toolbar" style={{ marginBottom: 16 }} wrap>
@@ -297,6 +367,8 @@ export default function UsersPage() {
             { value: 'primary', label: '正网格长' },
             { value: 'deputy', label: '副网格长' },
             { value: 'inspector', label: '工程师' },
+            { value: 'admin', label: '管理员' },
+            { value: 'super_admin', label: '超级管理员' },
             { value: 'plain', label: '普通账号' },
           ]}
         />
@@ -346,9 +418,11 @@ export default function UsersPage() {
                             ? 'blue'
                             : t === '超级管理员'
                               ? 'gold'
-                              : t.includes('待任命')
-                                ? 'default'
-                                : 'green'
+                              : t === '管理员'
+                                ? 'purple'
+                                : t.includes('待任命')
+                                  ? 'default'
+                                  : 'green'
                         }
                       >
                         {t}
@@ -358,40 +432,46 @@ export default function UsersPage() {
                 ) : null}
               </div>
               <div className="admin-mobile-card__actions">
-                {canStaffAccounts ? (
+                {canStaffAccounts && (canManage(record, 'edit') || canManage(record, 'reset') || canManage(record, 'status')) ? (
                   <>
-                    <Button
-                      size="middle"
-                      icon={<EditOutlined />}
-                      onClick={() => {
-                        closeSheet();
-                        openEdit(record);
-                      }}
-                    >
-                      编辑
-                    </Button>
-                    <Button
-                      size="middle"
-                      onClick={() => {
-                        closeSheet();
-                        setPwdUser(record);
-                        pwdForm.resetFields();
-                        setPwdOpen(true);
-                      }}
-                    >
-                      重置密码
-                    </Button>
-                    <Popconfirm
-                      title={`确认${record.status === 'active' ? '停用' : '启用'}该账号？`}
-                      onConfirm={() => void toggleStatus(record)}
-                    >
-                      <Button size="middle" danger={record.status === 'active'}>
-                        {record.status === 'active' ? '停用' : '启用'}
+                    {canManage(record, 'edit') ? (
+                      <Button
+                        size="middle"
+                        icon={<EditOutlined />}
+                        onClick={() => {
+                          closeSheet();
+                          openEdit(record);
+                        }}
+                      >
+                        编辑
                       </Button>
-                    </Popconfirm>
+                    ) : null}
+                    {canManage(record, 'reset') ? (
+                      <Button
+                        size="middle"
+                        onClick={() => {
+                          closeSheet();
+                          setPwdUser(record);
+                          pwdForm.resetFields();
+                          setPwdOpen(true);
+                        }}
+                      >
+                        重置密码
+                      </Button>
+                    ) : null}
+                    {canManage(record, 'status') ? (
+                      <Popconfirm
+                        title={`确认${record.status === 'active' ? '停用' : '启用'}该账号？`}
+                        onConfirm={() => void toggleStatus(record)}
+                      >
+                        <Button size="middle" danger={record.status === 'active'}>
+                          {record.status === 'active' ? '停用' : '启用'}
+                        </Button>
+                      </Popconfirm>
+                    ) : null}
                   </>
                 ) : (
-                  <Typography.Text type="secondary">只读</Typography.Text>
+                  <Typography.Text type="secondary">{canStaffAccounts ? '无权管理' : '只读'}</Typography.Text>
                 )}
               </div>
             </>
@@ -432,14 +512,14 @@ export default function UsersPage() {
                 rules={[{ required: true, message: '请输入用户名' }]}
                 extra="登录名全局唯一，不能和其他账号重复"
               >
-                <Input />
+                <Input autoComplete="off" />
               </Form.Item>
               <Form.Item
                 name="password"
                 label="密码"
                 rules={[{ required: true, min: 6, message: '至少6位' }]}
               >
-                <Input.Password />
+                <Input.Password autoComplete="new-password" />
               </Form.Item>
             </>
           )}
@@ -470,8 +550,22 @@ export default function UsersPage() {
           >
             <Input />
           </Form.Item>
+          {canCreateAdmin ? (
+            <Form.Item
+              name="accountRole"
+              label="身份"
+              rules={[{ required: true, message: '请选择身份' }]}
+              extra="系统至少保留一个启用中的超级管理员。"
+            >
+              <Select options={ACCOUNT_ROLE_OPTIONS} />
+            </Form.Item>
+          ) : null}
           <Typography.Paragraph type="secondary" style={{ marginBottom: 0 }}>
-            账号只用于登录。正长 / 副长 / 工程师请到「网格管理 → 人员」勾选。
+            {watchedAccountRole === 'super_admin'
+              ? '超级管理员可开号、改身份，并管理其他管理员。请只给内部核心人员。'
+              : watchedAccountRole === 'admin'
+                ? '管理员登录后可分担管理工作，但不能指定管理员/超管身份，也不能管理其他管理员或超管。'
+                : '普通用户只用于登录。正长 / 副长 / 工程师请到「网格管理 → 人员」勾选。'}
           </Typography.Paragraph>
         </Form>
       </Modal>

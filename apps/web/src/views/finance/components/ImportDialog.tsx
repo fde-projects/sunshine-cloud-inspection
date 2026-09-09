@@ -278,6 +278,10 @@ export default function ImportDialog({
     importStatus.done === false &&
     Number(importStatus.nextOffset || 0) > 0;
 
+  const parsedCount = Number(
+    preview?.totalOrders ?? preview?.totalRows ?? preview?.preview?.length ?? 0,
+  );
+  const canConfirm = !!file && !!preview && parsedCount > 0;
   const modalWidth = useDrawerWidth(760);
 
   return (
@@ -285,7 +289,12 @@ export default function ImportDialog({
       width={modalWidth}
       open={open}
       title={title}
-      onCancel={onClose}
+      onCancel={() => {
+        if (!loading) onClose();
+      }}
+      closable={!loading}
+      maskClosable={!loading}
+      keyboard={!loading}
       className="admin-import-modal"
       footer={
         <Space wrap className="admin-modal-footer-actions">
@@ -296,7 +305,9 @@ export default function ImportDialog({
           >
             下载模板
           </Button>
-          <Button onClick={onClose}>关闭</Button>
+          <Button disabled={loading} onClick={onClose}>
+            关闭
+          </Button>
           <Button disabled={!file || loading} onClick={() => void runPreview()}>
             解析预览
           </Button>
@@ -307,7 +318,7 @@ export default function ImportDialog({
           )}
           <Button
             type="primary"
-            disabled={!file || !preview?.preview}
+            disabled={!canConfirm}
             loading={loading}
             onClick={() => void runConfirm(false)}
           >
@@ -416,12 +427,16 @@ export default function ImportDialog({
           <Alert
             style={{ marginTop: preview.dupPlan ? 12 : 0 }}
             showIcon
-            type={(preview.failures?.length || 0) > 0 ? 'warning' : 'success'}
-            message={`已解析 ${preview.totalOrders ?? preview.totalRows ?? 0} 条${
-              kind === 'po'
-                ? `；原始条目 ${preview.sourceItemRows ?? '-'}，标准化明细 ${preview.normalizedItemCount ?? '-'}`
-                : ''
-            }；格式问题 ${preview.failures?.length || 0} 条`}
+            type={parsedCount <= 0 || (preview.failures?.length || 0) > 0 ? 'warning' : 'success'}
+            message={
+              parsedCount <= 0
+                ? '没有解析到可入库的行，请核对表头是否含「条目编码」「单价」（价格库）或 PO/案例号'
+                : `已解析 ${preview.totalOrders ?? preview.totalRows ?? 0} 条${
+                    kind === 'po'
+                      ? `；原始条目 ${preview.sourceItemRows ?? '-'}，标准化明细 ${preview.normalizedItemCount ?? '-'}`
+                      : ''
+                  }；格式问题 ${preview.failures?.length || 0} 条`
+            }
             description={
               (preview.failures?.length || 0) > 0 ? (
                 <ul style={{ margin: '8px 0 0', paddingLeft: 18, maxHeight: 140, overflow: 'auto' }}>

@@ -1,6 +1,6 @@
 import { jwtVerify, type JWTPayload } from "jose";
 import { NextResponse } from "next/server";
-import { loginRolesFromDuties } from "@/lib/account";
+import { loginRolesFromDuties, parseAccountRole, type AccountRole } from "@/lib/account";
 import { adminGql } from "@/lib/hasura-admin";
 import { roleFromJwtPayload, type AppRole } from "@/lib/jwt";
 
@@ -24,6 +24,7 @@ export type AppUser = {
   employeeNo?: string | null;
   role: AppRole;
   roles: AppRole[];
+  accountRole: AccountRole;
   status: string;
   region?: string | null;
   orgUnit?: string | null;
@@ -102,6 +103,7 @@ export async function requireUser(req: Request): Promise<AppUser> {
     employeeNo: row.employee_no ?? null,
     role,
     roles,
+    accountRole: parseAccountRole(row.role),
     status: row.status,
     region: row.region,
     orgUnit: row.org_unit,

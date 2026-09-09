@@ -1,9 +1,17 @@
 import { gql } from "@/lib/gql";
-import { getToken, getStoredUser } from "@/lib/session";
+import {
+  canAssignAccountRole,
+  canManagePlatformAccount,
+  isAdminAccount,
+  parseAccountRole,
+  parseRequestedAccountRole,
+  sessionAccountRole,
+} from "@/lib/account";
+import { getStoredUser } from "@/lib/session";
 import { type SiteDutyFlags } from "@/lib/site-duties";
 import { assertCreatableRoles, type StaffingAppointment } from "@/lib/staffing-roles";
 import request from "@/utils/request";
-import type { ApiResponse, CommonStatus, Paginated, UserInfo, UserRole } from "@/types";
+import type { AccountRole, ApiResponse, CommonStatus, Paginated, UserInfo, UserRole } from "@/types";
 
 export interface UserQuery {
   role?: UserRole;
@@ -18,28 +26,30 @@ const USER_FIELDS = `
 `;
 
 function mapUser(r: Record<string, unknown>): UserInfo {
-  const account = String(r.role || "user");
-  const isAdmin = account === "super_admin";
+  const accountRole = parseAccountRole(String(r.accountRole || r.account_role || r.role || "user"));
+  const platform = isAdminAccount(accountRole);
   return {
     id: String(r.id),
     username: String(r.username),
     realName: String(r.real_name ?? r.realName ?? ""),
-    employeeNo: (r.employee_no as string) ?? null,
+    employeeNo: (r.employee_no as string) ?? (r.employeeNo as string) ?? null,
     phone: String(r.phone ?? ""),
     email: r.email as string | undefined,
     avatar: r.avatar as string | undefined,
-    role: isAdmin ? "super_admin" : "inspector",
-    roles: isAdmin ? ["super_admin"] : [],
+    role: platform ? "super_admin" : ((r.role as UserRole) || "inspector"),
+    roles: platform ? ["super_admin"] : ((r.roles as UserRole[]) || []),
+    accountRole,
     status: String(r.status ?? "active"),
     region: r.region as string | undefined,
-    orgUnit: (r.org_unit as string) ?? undefined,
-    createdBy: (r.created_by_id as string) ?? null,
-    createdAt: r.created_at as string | undefined,
+    orgUnit: (r.org_unit as string) ?? (r.orgUnit as string) ?? undefined,
+    createdBy: (r.created_by_id as string) ?? (r.createdBy as string) ?? null,
+    createdAt: (r.created_at as string) ?? (r.createdAt as string) ?? undefined,
+    duties: r.duties as UserInfo["duties"],
   };
 }
 
 function hasRoleWhere(role: UserRole) {
-  if (role === "super_admin") return { role: { _eq: "super_admin" } };
+  if (role === "super_admin") return { role: { _in: ["super_admin", "admin"] } };
   return { role: { _eq: "user" } };
 }
 
@@ -113,20 +123,6 @@ export async function fetchStaffingUsers(params: UserQuery): Promise<Paginated<U
   };
 }
 
-async function hashPassword(password: string) {
-  const res = await fetch("/api/auth/hash", {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      authorization: `Bearer ${getToken() || ""}`,
-    },
-    body: JSON.stringify({ password }),
-  });
-  const json = await res.json();
-  if (!res.ok) throw new Error(json.message || "密码处理失败");
-  return json.hash as string;
-}
-
 async function viewerStaffFlags() {
   const me = getStoredUser();
   if (!me) throw new Error("未登录");
@@ -146,19 +142,31 @@ async function viewerStaffFlags() {
 }
 
 /** 是否允许管理目标账号（重置密码 / 启停 / 改资料） */
-export async function assertCanManageAccount(targetId: string) {
+export async function assertCanManageAccount(targetId: string, targetAccountRole?: AccountRole) {
   const me = getStoredUser();
   if (!me) throw new Error("未登录");
-  if (targetId === me.id) return;
-  if (me.role === "super_admin") {
+  let targetRole = targetAccountRole;
+  if (!targetRole) {
     const data = await gql<{
       users_by_pk: { created_by_id: string | null; role: string } | null;
     }>(`query ($id: uuid!) { users_by_pk(id: $id) { created_by_id role } }`, { id: targetId });
     const row = data.users_by_pk;
     if (!row) throw new Error("账号不存在");
-    if (row.role === "super_admin") throw new Error("不能管理超级管理员");
+    targetRole = parseAccountRole(row.role);
+  }
+  if (
+    canManagePlatformAccount({
+      viewerAccountRole: sessionAccountRole(me),
+      targetAccountRole: targetRole,
+      viewerId: me.id,
+      targetId,
+      action: "edit",
+    })
+  ) {
     return;
   }
+  if (targetRole === "super_admin") throw new Error("不能管理超级管理员");
+  if (targetRole === "admin") throw new Error("不能管理其他管理员");
   throw new Error("仅管理员可管理平台账号");
 }
 
@@ -203,7 +211,15 @@ export async function fetchStaffingAppointments(
 
 export async function createUser(payload: Record<string, unknown>): Promise<UserInfo> {
   const flags = await viewerStaffFlags();
-  assertCreatableRoles({ viewerRole: flags.me.role as UserRole });
+  const accountRole = parseRequestedAccountRole(payload.accountRole ?? payload.accountKind);
+  assertCreatableRoles({
+    viewerRole: flags.me.role as UserRole,
+    viewerAccountRole: sessionAccountRole(flags.me),
+    accountRole,
+  });
+  if (!canAssignAccountRole(sessionAccountRole(flags.me), accountRole)) {
+    throw new Error("仅超级管理员可指定管理员或超级管理员身份");
+  }
   const { data } = await request.post<ApiResponse<UserInfo>>(
     "/staffing/accounts",
     {
@@ -212,62 +228,58 @@ export async function createUser(payload: Record<string, unknown>): Promise<User
       realName: payload.realName ?? payload.real_name,
       phone: payload.phone,
       employeeNo: payload.employeeNo ?? payload.employee_no,
+      accountRole,
     },
     { skipErrorToast: true },
   );
-  return data.data;
+  return mapUser(data.data as unknown as Record<string, unknown>);
 }
 
 export async function updateUser(id: string, payload: Record<string, unknown>): Promise<UserInfo> {
   const me = getStoredUser();
   if (!me) throw new Error("未登录");
   if (id !== me.id) await assertCanManageAccount(id);
-
-  const set: Record<string, unknown> = {};
-  if (payload.realName !== undefined) set.real_name = payload.realName;
-  if (payload.phone !== undefined) set.phone = payload.phone;
-  if (payload.employeeNo !== undefined) {
-    const employeeNo = String(payload.employeeNo || "").trim();
-    if (employeeNo) {
-      const dup = await gql<{ users: Array<{ id: string }> }>(
-        `query ($eno: String!, $id: uuid!) {
-          users(where: { employee_no: { _eq: $eno }, id: { _neq: $id } }, limit: 1) { id }
-        }`,
-        { eno: employeeNo, id },
-      );
-      if (dup.users.length) throw new Error(`工号「${employeeNo}」已被使用，请换一个`);
+  if (payload.roles !== undefined) {
+    throw new Error("网格任职请到「网格管理 → 人员」调整，此处不能改");
+  }
+  const body: Record<string, unknown> = {
+    realName: payload.realName ?? payload.real_name,
+    phone: payload.phone,
+    employeeNo: payload.employeeNo ?? payload.employee_no,
+  };
+  if (payload.accountRole != null) {
+    const accountRole = parseRequestedAccountRole(payload.accountRole);
+    if (!canAssignAccountRole(sessionAccountRole(me), accountRole)) {
+      throw new Error("仅超级管理员可调整账号身份");
     }
-    set.employee_no = employeeNo;
+    body.accountRole = accountRole;
   }
-  if (payload.role !== undefined || payload.roles !== undefined) {
-    throw new Error("账号身份请到「网格管理 → 人员」调整任职，此处不能改登录角色");
-  }
-  if (payload.status !== undefined) set.status = payload.status;
-  if (payload.orgUnit !== undefined) set.org_unit = payload.orgUnit;
-  const data = await gql<{ update_users_by_pk: Record<string, unknown> }>(
-    `mutation ($id: uuid!, $set: users_set_input!) {
-      update_users_by_pk(pk_columns: { id: $id }, _set: $set) { ${USER_FIELDS} }
-    }`,
-    { id, set },
+  const { data } = await request.put<ApiResponse<UserInfo>>(
+    `/staffing/accounts/${id}`,
+    body,
+    { skipErrorToast: true },
   );
-  return mapUser(data.update_users_by_pk);
+  return mapUser(data.data as unknown as Record<string, unknown>);
 }
 
 export async function updateUserStatus(id: string, status: CommonStatus) {
   await assertCanManageAccount(id);
-  return updateUser(id, { status });
+  const { data } = await request.put<ApiResponse<UserInfo>>(
+    `/staffing/accounts/${id}/status`,
+    { status },
+    { skipErrorToast: true },
+  );
+  return mapUser(data.data as unknown as Record<string, unknown>);
 }
 
 export async function resetUserPassword(id: string, newPassword: string) {
   await assertCanManageAccount(id);
-  const password = await hashPassword(newPassword);
-  const data = await gql<{ update_users_by_pk: Record<string, unknown> }>(
-    `mutation ($id: uuid!, $set: users_set_input!) {
-      update_users_by_pk(pk_columns: { id: $id }, _set: $set) { ${USER_FIELDS} }
-    }`,
-    { id, set: { password } },
+  const { data } = await request.put<ApiResponse<UserInfo>>(
+    `/staffing/accounts/${id}/password`,
+    { newPassword },
+    { skipErrorToast: true },
   );
-  return mapUser(data.update_users_by_pk);
+  return mapUser(data.data as unknown as Record<string, unknown>);
 }
 
 export async function enableMyInspector() {

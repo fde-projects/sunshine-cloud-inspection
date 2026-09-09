@@ -620,29 +620,66 @@ export async function importPo(
   };
 }
 
+const PRICE_WRITE_BATCH = 80;
+
+async function savePriceOne(row: { id?: string; obj: Record<string, unknown>; label: string }) {
+  if (row.id) {
+    await adminGql(
+      `mutation ($id: uuid!, $set: price_library_set_input!) {
+        update_price_library_by_pk(pk_columns: { id: $id }, _set: $set) { id }
+      }`,
+      { id: row.id, set: row.obj },
+    );
+    return;
+  }
+  await adminGql(
+    `mutation ($obj: price_library_insert_input!) { insert_price_library_one(object: $obj) { id } }`,
+    { obj: row.obj },
+  );
+}
+
 async function savePriceEntities(
   rows: Array<{ id?: string; obj: Record<string, unknown>; label: string }>,
 ) {
   let success = 0;
   const failures: FailRow[] = [];
-  for (const row of rows) {
+  const inserts = rows.filter((row) => !row.id);
+  const updates = rows.filter((row) => row.id);
+
+  for (let i = 0; i < inserts.length; i += PRICE_WRITE_BATCH) {
+    const chunk = inserts.slice(i, i + PRICE_WRITE_BATCH);
     try {
-      if (row.id) {
-        await adminGql(
-          `mutation ($id: uuid!, $set: price_library_set_input!) {
-            update_price_library_by_pk(pk_columns: { id: $id }, _set: $set) { id }
-          }`,
-          { id: row.id, set: row.obj },
-        );
-      } else {
-        await adminGql(
-          `mutation ($obj: price_library_insert_input!) { insert_price_library_one(object: $obj) { id } }`,
-          { obj: row.obj },
-        );
+      const d = await adminGql<{ insert_price_library: { affected_rows: number } }>(
+        `mutation ($objects: [price_library_insert_input!]!) {
+          insert_price_library(objects: $objects) { affected_rows }
+        }`,
+        { objects: chunk.map((row) => row.obj) },
+      );
+      success += d.insert_price_library.affected_rows || chunk.length;
+    } catch {
+      for (const row of chunk) {
+        try {
+          await savePriceOne(row);
+          success += 1;
+        } catch (error) {
+          failures.push({
+            row: 0,
+            reason: `${row.label}: ${error instanceof Error ? error.message : "写入失败"}`,
+          });
+        }
       }
+    }
+  }
+
+  for (const row of updates) {
+    try {
+      await savePriceOne(row);
       success += 1;
     } catch (error) {
-      failures.push({ row: 0, reason: `${row.label}: ${error instanceof Error ? error.message : "写入失败"}` });
+      failures.push({
+        row: 0,
+        reason: `${row.label}: ${error instanceof Error ? error.message : "写入失败"}`,
+      });
     }
   }
   return { success, failures };
@@ -666,8 +703,12 @@ export async function importSettlePrices(
       unit: string | null;
       productModel: string | null;
       scene: string | null;
+      region?: string | null;
+      coopType?: string | null;
       workHours: number | null;
       unitPrice: number;
+      effectiveDate?: string | null;
+      status?: string;
     }>;
     failures: FailRow[];
     flat?: boolean;
@@ -686,8 +727,12 @@ export async function importSettlePrices(
             unit: price.unit,
             productModel: price.productModel,
             scene: price.scene,
+            region: price.region,
+            coopType: price.coopType,
             workHours: price.workHours,
             unitPrice: price.unitPrice,
+            effectiveDate: price.effectiveDate,
+            status: price.status,
           })),
           failures: result.failures,
           flat: true,
@@ -699,15 +744,32 @@ export async function importSettlePrices(
   }
   if (!parsed) throw new HttpError(400, "价格文件解析失败");
   const effectiveDate = new Date().toISOString().slice(0, 10);
+  const settleKey = (
+    itemCode: string,
+    productModel: string | null,
+    scene: string | null,
+    date: string,
+  ) => `${settlePriceKey(itemCode, productModel, scene)}|${date}`;
   if (preview) {
-    const keys = parsed.prices.map((p) => settlePriceKey(p.itemCode, p.productModel, p.scene));
+    const keys = parsed.prices.map((p) =>
+      settleKey(p.itemCode, p.productModel, p.scene, p.effectiveDate || effectiveDate),
+    );
     const existingRows = await gqlPages<Record<string, unknown>>(
       "price_library",
       "price_library_bool_exp",
       PRICE_GQL_FIELDS,
-      { price_type: { _eq: "settle" }, effective_date: { _eq: effectiveDate } },
+      { price_type: { _eq: "settle" } },
     );
-    const existing = new Set(existingRows.map((r) => settlePriceKey(String(r.item_code), (r.product_model as string) || null, (r.scene as string) || null)));
+    const existing = new Set(
+      existingRows.map((r) =>
+        settleKey(
+          String(r.item_code),
+          (r.product_model as string) || null,
+          (r.scene as string) || null,
+          String(r.effective_date || ""),
+        ),
+      ),
+    );
     return {
       preview: parsed.prices.slice(0, 20),
       totalRows: parsed.prices.length,
@@ -727,11 +789,16 @@ export async function importSettlePrices(
     "price_library",
     "price_library_bool_exp",
     PRICE_GQL_FIELDS,
-    { price_type: { _eq: "settle" }, effective_date: { _eq: effectiveDate } },
+    { price_type: { _eq: "settle" } },
   );
   const priceMap = new Map(
     existingRows.map((r) => [
-      settlePriceKey(String(r.item_code), (r.product_model as string) || null, (r.scene as string) || null),
+      settleKey(
+        String(r.item_code),
+        (r.product_model as string) || null,
+        (r.scene as string) || null,
+        String(r.effective_date || ""),
+      ),
       mapPrice(r),
     ]),
   );
@@ -742,7 +809,8 @@ export async function importSettlePrices(
       const itemCode = String(price.itemCode || "").trim();
       const itemName = String(price.itemName || itemCode).trim();
       if (!itemCode) throw new Error("条目编码为空");
-      const key = settlePriceKey(itemCode, price.productModel, price.scene);
+      const rowDate = price.effectiveDate || effectiveDate;
+      const key = settleKey(itemCode, price.productModel, price.scene, rowDate);
       const entity = priceMap.get(key);
       toSave.push({
         id: entity?.id,
@@ -755,10 +823,10 @@ export async function importSettlePrices(
           unit: price.unit ? String(price.unit).slice(0, 32) : null,
           product_model: price.productModel ? String(price.productModel).slice(0, 64) : null,
           scene: price.scene ? String(price.scene).slice(0, 32) : null,
-          region: null,
-          coop_type: null,
-          status: "active",
-          effective_date: effectiveDate,
+          region: price.region || null,
+          coop_type: price.coopType || null,
+          status: price.status || "active",
+          effective_date: rowDate,
           unit_price: money(price.unitPrice),
           work_hours: price.workHours === null ? null : money(price.workHours),
           created_by_id: userId,

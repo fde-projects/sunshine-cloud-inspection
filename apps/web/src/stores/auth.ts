@@ -49,6 +49,7 @@ function persist(token: string, user: UserInfo) {
     role: user.role,
     roles: user.roles || [user.role],
     phone: user.phone,
+    accountRole: user.accountRole,
   });
 }
 
@@ -81,6 +82,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         phone: stored.phone,
         role: stored.role as UserInfo["role"],
         roles: (stored.roles || []) as UserInfo["role"][],
+        accountRole: stored.accountRole as UserInfo["accountRole"],
       });
       set({
         token,

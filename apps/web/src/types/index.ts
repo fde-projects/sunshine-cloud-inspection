@@ -1,3 +1,6 @@
+import type { AccountRole } from "@/lib/account";
+
+export type { AccountRole };
 export type UserRole = "super_admin" | "site_manager" | "inspector";
 export type CommonStatus = "active" | "inactive";
 export type DeviceType = "string_inverter" | "central_inverter" | "energy_storage";
@@ -32,6 +35,8 @@ export interface UserInfo {
   avatar?: string;
   role: UserRole;
   roles?: UserRole[];
+  /** 账号层身份；管理员登录后 role 仍是 super_admin */
+  accountRole?: AccountRole;
   duties?: { primary: boolean; deputy: boolean; inspector: boolean };
   status: string;
   region?: string;

@@ -633,7 +633,7 @@ export class ExcelParserService {
     await workbook.xlsx.load(buffer as unknown as ExcelJS.Buffer);
     const sheet = workbook.worksheets[0];
     if (!sheet) return false;
-    for (let r = 1; r <= Math.min(5, sheet.rowCount); r += 1) {
+    for (let r = 1; r <= Math.min(10, sheet.rowCount); r += 1) {
       const labels: string[] = [];
       for (let c = 1; c <= Math.min(20, sheet.columnCount || 20); c += 1) {
         const label = cellText(sheet.getCell(r, c).value);

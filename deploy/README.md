@@ -15,7 +15,7 @@ Release 发布后，GitHub Actions 会构建镜像并推送到 `registry.truss3.
 
 | Secret | 示例 / 说明 |
 |--------|-------------|
-| `DEPLOY_HOST` | `121.229.113.196` |
+| `DEPLOY_HOST` | `121.229.175.106` |
 | `DEPLOY_USER` | `root` |
 | `DEPLOY_SSH_KEY` | 部署用私钥全文（含 `BEGIN`/`END` 行） |
 
